@@ -37,6 +37,7 @@ import { HandleServers } from "./handle-servers";
 import { SetupServer } from "./setup-server";
 import { ShowHealthModal } from "./show-health-modal";
 import { ShowMonitoringModal } from "./show-monitoring-modal";
+import { ProvisionServerWizard } from "./provision-server-wizard";
 import { WelcomeSubscription } from "./welcome-stripe/welcome-subscription";
 
 export const ShowServers = () => {
@@ -46,8 +47,6 @@ export const ShowServers = () => {
 	const { mutateAsync } = api.server.remove.useMutation();
 	const { data: sshKeys } = api.sshKey.all.useQuery();
 	const { data: isCloud } = api.settings.isCloud.useQuery();
-	const { data: canCreateMoreServers } =
-		api.stripe.canCreateMoreServers.useQuery();
 	const { data: permissions } = api.user.getPermissions.useQuery();
 
 	return (
@@ -55,25 +54,31 @@ export const ShowServers = () => {
 			{query?.success && isCloud && <WelcomeSubscription />}
 			<Card className="h-full  p-2.5 rounded-xl  max-w-5xl mx-auto">
 				<div className="rounded-xl bg-background shadow-md ">
-					<CardHeader className="">
-						<CardTitle className="text-xl flex flex-row gap-2">
-							<ServerIcon className="size-6 text-muted-foreground self-center" />
-							Servers
-						</CardTitle>
-						<CardDescription>
-							Add servers to deploy your applications remotely.
-						</CardDescription>
+					<CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+						<div className="space-y-2">
+							<CardTitle className="text-xl flex flex-row gap-2">
+								<ServerIcon className="size-6 text-muted-foreground self-center" />
+								Servers
+							</CardTitle>
+							<CardDescription>
+								Add servers to deploy your applications remotely.
+							</CardDescription>
 
-						{isCloud && (
-							<span
-								className="bg-linear-to-r cursor-pointer from-blue-600 via-green-500 to-indigo-400 inline-block text-transparent bg-clip-text text-sm"
-								onClick={() => {
-									router.push("/dashboard/settings/servers?success=true");
-								}}
-							>
-								Reset Onboarding
-							</span>
-						)}
+							{isCloud && (
+								<span
+									className="bg-linear-to-r cursor-pointer from-blue-600 via-green-500 to-indigo-400 inline-block text-transparent bg-clip-text text-sm"
+									onClick={() => {
+										router.push("/dashboard/settings/servers?success=true");
+									}}
+								>
+									Reset Onboarding
+								</span>
+							)}
+						</div>
+
+						<div className="flex flex-wrap items-center gap-2 lg:justify-end">
+							<ProvisionServerWizard />
+						</div>
 					</CardHeader>
 					<CardContent className="space-y-2 py-8 border-t">
 						{isPending ? (
@@ -86,7 +91,7 @@ export const ShowServers = () => {
 								{sshKeys?.length === 0 && data?.length === 0 ? (
 									<div className="flex flex-col items-center gap-3 min-h-[25vh] justify-center">
 										<KeyIcon className="size-8" />
-										<span className="text-base text-muted-foreground">
+										<span className="text-base text-muted-foreground text-center">
 											No SSH Keys found. Add a SSH Key to start adding servers.{" "}
 											<Link
 												href="/dashboard/settings/ssh-keys"
@@ -95,6 +100,11 @@ export const ShowServers = () => {
 												Add SSH Key
 											</Link>
 										</span>
+										<p className="text-sm text-muted-foreground text-center max-w-md">
+											You can still provision a new server with a provider
+											credential from this page.
+										</p>
+										<ProvisionServerWizard />
 									</div>
 								) : (
 									<>
@@ -105,7 +115,7 @@ export const ShowServers = () => {
 													Start adding servers to deploy your applications
 													remotely.
 												</span>
-												{permissions?.server.create && <HandleServers />}
+												<ProvisionServerWizard />
 											</div>
 										) : (
 											<div className="flex flex-col gap-4 min-h-[25vh]">
@@ -419,15 +429,9 @@ export const ShowServers = () => {
 													})}
 												</div>
 
-												{permissions?.server.create && (
-													<div className="flex flex-row gap-2 flex-wrap w-full justify-end mt-4">
-														{data && data?.length > 0 && (
-															<div>
-																<HandleServers />
-															</div>
-														)}
-													</div>
-												)}
+												<div className="flex flex-row gap-2 flex-wrap w-full justify-end mt-4">
+													<ProvisionServerWizard />
+												</div>
 											</div>
 										)}
 									</>
