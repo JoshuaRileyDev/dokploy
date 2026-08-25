@@ -78,18 +78,14 @@ const ProviderCard = ({
 			: "Coming soon";
 
 	return (
-		<Button
-			variant="outline"
-			className="h-auto w-full items-start justify-start gap-4 p-4 text-left"
-			onClick={() => onSelect(provider.id as ProviderId)}
-			disabled={disabled}
-		>
-			<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted">
-				<CloudProviderLogo icon={provider.icon} className="size-7" />
-			</div>
-			<div className="flex min-w-0 flex-1 flex-col gap-1">
-				<div className="flex items-center gap-2">
-					<span className="font-semibold">{provider.label}</span>
+		<div className="rounded-lg border bg-background p-4 transition-colors hover:bg-muted/30">
+			<div className="flex items-start gap-4">
+				<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted">
+					<CloudProviderLogo icon={provider.icon} className="size-7" />
+				</div>
+				<div className="flex min-w-0 flex-1 flex-col gap-3">
+					<div className="flex items-center gap-2">
+						<span className="font-semibold">{provider.label}</span>
 						<Badge
 							variant={
 								provider.availability === "supported" && hasCredentials
@@ -101,12 +97,30 @@ const ProviderCard = ({
 						>
 							{statusLabel}
 						</Badge>
+					</div>
+					<span className="line-clamp-2 text-sm text-muted-foreground">
+						{provider.description}
+					</span>
+					<Button
+						type="button"
+						variant={
+							hasCredentials && provider.availability === "supported"
+								? "default"
+								: "outline"
+						}
+						className="w-fit"
+						onClick={() => onSelect(provider.id as ProviderId)}
+						disabled={disabled}
+					>
+						{provider.availability === "supported"
+							? hasCredentials
+								? "Select"
+								: "Not configured"
+							: "Coming soon"}
+					</Button>
 				</div>
-				<span className="text-sm text-muted-foreground line-clamp-2">
-					{provider.description}
-				</span>
 			</div>
-		</Button>
+		</div>
 	);
 };
 
@@ -240,18 +254,44 @@ export const ProvisionServerWizard = () => {
 			<DialogContent className="sm:max-w-[90vw] max-h-[90vh] overflow-hidden p-0">
 				<div className="flex max-h-[90vh] min-h-0 flex-col">
 					<DialogHeader className="border-b px-6 py-5">
-						<div className="flex items-start justify-between gap-4">
+						<div className="space-y-4 pr-10">
 							<div className="space-y-1">
 								<DialogTitle className="flex items-center gap-2">
 									<CloudIcon className="size-5" />
 									Provision New Server
 								</DialogTitle>
-								<DialogDescription>
-									{step === "provider"
-										? "Search providers, then choose where to provision."
-										: selectedProviderDefinition
-											? `Configure your ${selectedProviderDefinition.label} server`
-											: "Configure your new server"}
+								<DialogDescription className="leading-relaxed">
+									{step === "provider" ? (
+										<>
+											<span className="block">
+												Search providers, compare availability, and choose where to
+												provision.
+											</span>
+											<span className="block">
+												Use credentials management if you need to connect a provider
+												first.
+											</span>
+										</>
+									) : selectedProviderDefinition ? (
+										<>
+											<span className="block">
+												Configure your {selectedProviderDefinition.label} server and
+												continue.
+											</span>
+											<span className="block">
+												Then pick the location, size, and image for the server.
+											</span>
+										</>
+									) : (
+										<>
+											<span className="block">
+												Configure your new server and continue.
+											</span>
+											<span className="block">
+												Then pick the location, size, and image for the server.
+											</span>
+										</>
+									)}
 								</DialogDescription>
 							</div>
 
