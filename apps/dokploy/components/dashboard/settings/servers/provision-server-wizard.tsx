@@ -251,7 +251,7 @@ export const ProvisionServerWizard = () => {
 					<span>Provision Server</span>
 				</Button>
 			</DialogTrigger>
-			<DialogContent className="sm:max-w-[90vw] max-h-[90vh] overflow-hidden p-0">
+			<DialogContent className="w-[92vw] max-w-[72rem] sm:max-w-[72rem] max-h-[90vh] overflow-hidden p-0">
 				<div className="flex max-h-[90vh] min-h-0 flex-col">
 					<DialogHeader className="border-b px-6 py-5">
 						<div className="space-y-4 pr-10">
@@ -352,7 +352,7 @@ export const ProvisionServerWizard = () => {
 							</div>
 
 							<ScrollArea className="flex-1 px-6 py-6">
-								<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+								<div className="grid gap-4 md:grid-cols-2">
 									{filteredProviders.map((provider) => (
 										<ProviderCard
 											key={provider.id}
