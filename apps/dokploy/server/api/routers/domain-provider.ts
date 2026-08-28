@@ -13,10 +13,46 @@ import {
 import { eq } from "drizzle-orm";
 import { getDecryptedDomainProvider } from "@dokploy/server/services/domain-provider";
 
+const validateCreateDomainProviderInput = (
+	input: z.infer<typeof apiCreateDomainProvider>,
+) => {
+	if (input.type === "netlify") {
+		if (!input.authMethod) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Auth method is required for Netlify",
+			});
+		}
+
+		if (input.authMethod === "oauth" && (!input.clientId || !input.clientSecret)) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Client ID and Client Secret are required for OAuth",
+			});
+		}
+
+		if (input.authMethod === "direct" && !input.apiToken) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Access Token is required for direct auth",
+			});
+		}
+	}
+
+	if (input.type === "namecheap" && (!input.apiKey || !input.apiUser || !input.clientIp)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "API Key, API User and Client IP are required for Namecheap",
+		});
+	}
+};
+
 export const domainProviderRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(apiCreateDomainProvider)
 		.mutation(async ({ input, ctx }) => {
+			validateCreateDomainProviderInput(input);
+
 			const result = await db
 				.insert(domainProviders)
 				.values({

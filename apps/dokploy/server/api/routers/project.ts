@@ -1,4 +1,8 @@
 import {
+	addNewEnvironment,
+	addNewProject,
+	checkProjectAccess,
+	checkServiceAccess,
 	createApplication,
 	createBackup,
 	createCompose,
@@ -32,15 +36,14 @@ import {
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
 import {
-	addNewEnvironment,
-	addNewProject,
 	checkPermission,
-	checkProjectAccess,
+	findMemberById,
 	findMemberByUserId,
 } from "@dokploy/server/services/permission";
 import { serviceColumns } from "@dokploy/server/services/project";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { parse as parseDotenv } from "dotenv";
+import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
@@ -56,6 +59,7 @@ import {
 	apiUpdateProject,
 	applications,
 	compose,
+	deployments,
 	environments,
 	libsql,
 	mariadb,
@@ -82,13 +86,20 @@ export const projectRouter = createTRPCRouter({
 					});
 				}
 
+				await validateProjectParent({
+					organizationId: ctx.session.activeOrganizationId,
+					parentProjectId: input.parentProjectId ?? null,
+				});
+
 				const project = await createProject(
 					input,
 					ctx.session.activeOrganizationId,
 				);
 				await addNewProject(ctx, project.project.projectId);
 
-				await addNewEnvironment(ctx, project?.environment?.environmentId || "");
+				if (project.environment?.environmentId) {
+					await addNewEnvironment(ctx, project.environment.environmentId);
+				}
 
 				await audit(ctx, {
 					action: "create",
@@ -220,6 +231,57 @@ export const projectRouter = createTRPCRouter({
 		}),
 	all: protectedProcedure.query(async ({ ctx }) => {
 		if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
+			const { accessedProjects } = await findMemberByUserId(
+				ctx.user.id,
+				ctx.session.activeOrganizationId,
+			);
+
+			if (accessedProjects.length === 0) {
+				return [];
+			}
+
+			return await db.query.projects.findMany({
+				columns: {
+					projectId: true,
+					name: true,
+					description: true,
+					createdAt: true,
+					organizationId: true,
+					wildcardDomain: true,
+					useOrganizationWildcard: true,
+				},
+				where: and(
+					sql`${projects.projectId} IN (${sql.join(
+						accessedProjects.map((projectId) => sql`${projectId}`),
+						sql`, `,
+					)})`,
+					eq(projects.organizationId, ctx.session.activeOrganizationId),
+					eq(projects.isFolder, false),
+				),
+				orderBy: desc(projects.createdAt),
+			});
+		}
+
+		return await db.query.projects.findMany({
+			columns: {
+				projectId: true,
+				name: true,
+				description: true,
+				createdAt: true,
+				organizationId: true,
+				wildcardDomain: true,
+				useOrganizationWildcard: true,
+			},
+			where: and(
+				eq(projects.organizationId, ctx.session.activeOrganizationId),
+				eq(projects.isFolder, false),
+			),
+			orderBy: desc(projects.createdAt),
+		});
+	}),
+
+	allWithServices: protectedProcedure.query(async ({ ctx }) => {
+		if (ctx.user.role === "member") {
 			const { accessedProjects, accessedEnvironments, accessedServices } =
 				await findMemberByUserId(ctx.user.id, ctx.session.activeOrganizationId);
 
@@ -242,6 +304,7 @@ export const projectRouter = createTRPCRouter({
 						sql`, `,
 					)})`,
 					eq(projects.organizationId, ctx.session.activeOrganizationId),
+					eq(projects.isFolder, false),
 				),
 				with: {
 					environments: {
@@ -395,10 +458,1221 @@ export const projectRouter = createTRPCRouter({
 					},
 				},
 			},
-			where: eq(projects.organizationId, ctx.session.activeOrganizationId),
+			where: and(
+				eq(projects.organizationId, ctx.session.activeOrganizationId),
+				eq(projects.isFolder, false),
+			),
 			orderBy: desc(projects.createdAt),
 		});
 	}),
+	allWithServicesTree: protectedProcedure.query(async ({ ctx }) => {
+		if (ctx.user.role === "member") {
+			const { accessedProjects, accessedEnvironments, accessedServices } =
+				await findMemberById(ctx.user.id, ctx.session.activeOrganizationId);
+
+			if (accessedProjects.length === 0) {
+				return [];
+			}
+
+			const projectList = await db.query.projects.findMany({
+				where: and(
+					sql`${projects.projectId} IN (${sql.join(
+						accessedProjects.map((projectId) => sql`${projectId}`),
+						sql`, `,
+					)})`,
+					eq(projects.organizationId, ctx.session.activeOrganizationId),
+					eq(projects.isFolder, false),
+				),
+				with: {
+					environments: {
+						where: buildEnvironmentFilter(accessedEnvironments),
+						with: {
+							applications: {
+								where: buildServiceFilter(
+									applications.applicationId,
+									accessedServices,
+								),
+								with: { domains: true },
+							},
+							mariadb: {
+								where: buildServiceFilter(mariadb.mariadbId, accessedServices),
+							},
+							mongo: {
+								where: buildServiceFilter(mongo.mongoId, accessedServices),
+							},
+							mysql: {
+								where: buildServiceFilter(mysql.mysqlId, accessedServices),
+							},
+							postgres: {
+								where: buildServiceFilter(
+									postgres.postgresId,
+									accessedServices,
+								),
+							},
+							redis: {
+								where: buildServiceFilter(redis.redisId, accessedServices),
+							},
+							compose: {
+								where: buildServiceFilter(compose.composeId, accessedServices),
+								with: { domains: true },
+							},
+						},
+					},
+				},
+				orderBy: [asc(projects.name), desc(projects.createdAt)],
+			});
+
+			return buildProjectTree(projectList);
+		}
+
+		const projectList = await db.query.projects.findMany({
+			with: {
+				environments: {
+					with: {
+						applications: {
+							with: {
+								domains: true,
+							},
+						},
+						mariadb: true,
+						mongo: true,
+						mysql: true,
+						postgres: true,
+						redis: true,
+						compose: {
+							with: {
+								domains: true,
+							},
+						},
+					},
+				},
+			},
+			where: and(
+				eq(projects.organizationId, ctx.session.activeOrganizationId),
+				eq(projects.isFolder, false),
+			),
+			orderBy: [asc(projects.name), desc(projects.createdAt)],
+		});
+
+		return buildProjectTree(projectList);
+	}),
+	summary: protectedProcedure.query(async ({ ctx }) => {
+		if (ctx.user.role === "member") {
+			const { accessedProjects, accessedEnvironments, accessedServices } =
+				await findMemberById(ctx.user.id, ctx.session.activeOrganizationId);
+
+			if (accessedProjects.length === 0) {
+				return [];
+			}
+
+			const projectList = await db.query.projects.findMany({
+				columns: {
+					projectId: true,
+					name: true,
+					description: true,
+					createdAt: true,
+				},
+				where: and(
+					sql`${projects.projectId} IN (${sql.join(
+						accessedProjects.map((projectId) => sql`${projectId}`),
+						sql`, `,
+					)})`,
+					eq(projects.organizationId, ctx.session.activeOrganizationId),
+				),
+				with: {
+					environments: {
+						where: buildEnvironmentFilter(accessedEnvironments),
+						columns: {
+							environmentId: true,
+						},
+						with: {
+							applications: {
+								where: buildServiceFilter(
+									applications.applicationId,
+									accessedServices,
+								),
+								columns: { applicationStatus: true },
+							},
+							compose: {
+								where: buildServiceFilter(compose.composeId, accessedServices),
+								columns: { composeStatus: true },
+							},
+							mariadb: {
+								where: buildServiceFilter(mariadb.mariadbId, accessedServices),
+								columns: { applicationStatus: true },
+							},
+							mongo: {
+								where: buildServiceFilter(mongo.mongoId, accessedServices),
+								columns: { applicationStatus: true },
+							},
+							mysql: {
+								where: buildServiceFilter(mysql.mysqlId, accessedServices),
+								columns: { applicationStatus: true },
+							},
+							postgres: {
+								where: buildServiceFilter(postgres.postgresId, accessedServices),
+								columns: { applicationStatus: true },
+							},
+							redis: {
+								where: buildServiceFilter(redis.redisId, accessedServices),
+								columns: { applicationStatus: true },
+							},
+						},
+					},
+				},
+				orderBy: desc(projects.createdAt),
+			});
+
+			return projectList.map((project) => {
+				const servicesCount = {
+					applications: 0,
+					compose: 0,
+					mariadb: 0,
+					mongo: 0,
+					mysql: 0,
+					postgres: 0,
+					redis: 0,
+					total: 0,
+				};
+
+				const statusCount: Record<string, number> = {
+					idle: 0,
+					running: 0,
+					done: 0,
+					error: 0,
+					paused: 0,
+				};
+
+				for (const environment of project.environments) {
+					servicesCount.applications += environment.applications.length;
+					servicesCount.compose += environment.compose.length;
+					servicesCount.mariadb += environment.mariadb.length;
+					servicesCount.mongo += environment.mongo.length;
+					servicesCount.mysql += environment.mysql.length;
+					servicesCount.postgres += environment.postgres.length;
+					servicesCount.redis += environment.redis.length;
+
+					for (const app of environment.applications) {
+						statusCount[app.applicationStatus] =
+							(statusCount[app.applicationStatus] || 0) + 1;
+					}
+					for (const service of environment.compose) {
+						statusCount[service.composeStatus] =
+							(statusCount[service.composeStatus] || 0) + 1;
+					}
+					for (const service of environment.mariadb) {
+						statusCount[service.applicationStatus] =
+							(statusCount[service.applicationStatus] || 0) + 1;
+					}
+					for (const service of environment.mongo) {
+						statusCount[service.applicationStatus] =
+							(statusCount[service.applicationStatus] || 0) + 1;
+					}
+					for (const service of environment.mysql) {
+						statusCount[service.applicationStatus] =
+							(statusCount[service.applicationStatus] || 0) + 1;
+					}
+					for (const service of environment.postgres) {
+						statusCount[service.applicationStatus] =
+							(statusCount[service.applicationStatus] || 0) + 1;
+					}
+					for (const service of environment.redis) {
+						statusCount[service.applicationStatus] =
+							(statusCount[service.applicationStatus] || 0) + 1;
+					}
+				}
+
+				servicesCount.total =
+					servicesCount.applications +
+					servicesCount.compose +
+					servicesCount.mariadb +
+					servicesCount.mongo +
+					servicesCount.mysql +
+					servicesCount.postgres +
+					servicesCount.redis;
+
+				return {
+					projectId: project.projectId,
+					name: project.name,
+					description: project.description,
+					createdAt: project.createdAt,
+					environmentsCount: project.environments.length,
+					servicesCount,
+					statusCount,
+				};
+			});
+		}
+
+		const projectList = await db.query.projects.findMany({
+			columns: {
+				projectId: true,
+				name: true,
+				description: true,
+				createdAt: true,
+			},
+			where: eq(projects.organizationId, ctx.session.activeOrganizationId),
+			with: {
+				environments: {
+					columns: {
+						environmentId: true,
+					},
+					with: {
+						applications: {
+							columns: { applicationStatus: true },
+						},
+						compose: {
+							columns: { composeStatus: true },
+						},
+						mariadb: {
+							columns: { applicationStatus: true },
+						},
+						mongo: {
+							columns: { applicationStatus: true },
+						},
+						mysql: {
+							columns: { applicationStatus: true },
+						},
+						postgres: {
+							columns: { applicationStatus: true },
+						},
+						redis: {
+							columns: { applicationStatus: true },
+						},
+					},
+				},
+			},
+			orderBy: desc(projects.createdAt),
+		});
+
+		return projectList.map((project) => {
+			const servicesCount = {
+				applications: 0,
+				compose: 0,
+				mariadb: 0,
+				mongo: 0,
+				mysql: 0,
+				postgres: 0,
+				redis: 0,
+				total: 0,
+			};
+
+			const statusCount: Record<string, number> = {
+				idle: 0,
+				running: 0,
+				done: 0,
+				error: 0,
+				paused: 0,
+			};
+
+			for (const environment of project.environments) {
+				servicesCount.applications += environment.applications.length;
+				servicesCount.compose += environment.compose.length;
+				servicesCount.mariadb += environment.mariadb.length;
+				servicesCount.mongo += environment.mongo.length;
+				servicesCount.mysql += environment.mysql.length;
+				servicesCount.postgres += environment.postgres.length;
+				servicesCount.redis += environment.redis.length;
+
+				for (const app of environment.applications) {
+					statusCount[app.applicationStatus] =
+						(statusCount[app.applicationStatus] || 0) + 1;
+				}
+				for (const service of environment.compose) {
+					statusCount[service.composeStatus] =
+						(statusCount[service.composeStatus] || 0) + 1;
+				}
+				for (const service of environment.mariadb) {
+					statusCount[service.applicationStatus] =
+						(statusCount[service.applicationStatus] || 0) + 1;
+				}
+				for (const service of environment.mongo) {
+					statusCount[service.applicationStatus] =
+						(statusCount[service.applicationStatus] || 0) + 1;
+				}
+				for (const service of environment.mysql) {
+					statusCount[service.applicationStatus] =
+						(statusCount[service.applicationStatus] || 0) + 1;
+				}
+				for (const service of environment.postgres) {
+					statusCount[service.applicationStatus] =
+						(statusCount[service.applicationStatus] || 0) + 1;
+				}
+				for (const service of environment.redis) {
+					statusCount[service.applicationStatus] =
+						(statusCount[service.applicationStatus] || 0) + 1;
+				}
+			}
+
+			servicesCount.total =
+				servicesCount.applications +
+				servicesCount.compose +
+				servicesCount.mariadb +
+				servicesCount.mongo +
+				servicesCount.mysql +
+				servicesCount.postgres +
+				servicesCount.redis;
+
+			return {
+				projectId: project.projectId,
+				name: project.name,
+				description: project.description,
+				createdAt: project.createdAt,
+				environmentsCount: project.environments.length,
+				servicesCount,
+				statusCount,
+			};
+		});
+	}),
+	servicesByProjectId: protectedProcedure
+		.input(apiFindOneProject)
+		.query(async ({ input, ctx }) => {
+			const project = await findProjectById(input.projectId);
+
+			if (project.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this project",
+				});
+			}
+
+			let accessedEnvironments: string[] | undefined = undefined;
+			let accessedServices: string[] | undefined = undefined;
+
+			if (ctx.user.role === "member") {
+				await checkProjectAccess(
+					ctx.user.id,
+					"access",
+					ctx.session.activeOrganizationId,
+					input.projectId,
+				);
+
+				const memberAccess = await findMemberById(
+					ctx.user.id,
+					ctx.session.activeOrganizationId,
+				);
+				accessedEnvironments = memberAccess.accessedEnvironments;
+				accessedServices = memberAccess.accessedServices;
+			}
+
+			const projectEnvironments = await db.query.environments.findMany({
+				where: and(
+					eq(environments.projectId, input.projectId),
+					buildEnvironmentFilter(accessedEnvironments),
+				),
+				columns: {
+					environmentId: true,
+					name: true,
+				},
+				with: {
+					applications: {
+						where: accessedServices
+							? buildServiceFilter(applications.applicationId, accessedServices)
+							: undefined,
+						columns: {
+							applicationId: true,
+							appName: true,
+							name: true,
+							description: true,
+							applicationStatus: true,
+							createdAt: true,
+							serverId: true,
+						},
+					},
+					compose: {
+						where: accessedServices
+							? buildServiceFilter(compose.composeId, accessedServices)
+							: undefined,
+						columns: {
+							composeId: true,
+							appName: true,
+							name: true,
+							description: true,
+							composeStatus: true,
+							createdAt: true,
+							serverId: true,
+						},
+					},
+					mariadb: {
+						where: accessedServices
+							? buildServiceFilter(mariadb.mariadbId, accessedServices)
+							: undefined,
+						columns: {
+							mariadbId: true,
+							appName: true,
+							name: true,
+							description: true,
+							applicationStatus: true,
+							createdAt: true,
+							serverId: true,
+						},
+					},
+					mongo: {
+						where: accessedServices
+							? buildServiceFilter(mongo.mongoId, accessedServices)
+							: undefined,
+						columns: {
+							mongoId: true,
+							appName: true,
+							name: true,
+							description: true,
+							applicationStatus: true,
+							createdAt: true,
+							serverId: true,
+						},
+					},
+					mysql: {
+						where: accessedServices
+							? buildServiceFilter(mysql.mysqlId, accessedServices)
+							: undefined,
+						columns: {
+							mysqlId: true,
+							appName: true,
+							name: true,
+							description: true,
+							applicationStatus: true,
+							createdAt: true,
+							serverId: true,
+						},
+					},
+					postgres: {
+						where: accessedServices
+							? buildServiceFilter(postgres.postgresId, accessedServices)
+							: undefined,
+						columns: {
+							postgresId: true,
+							appName: true,
+							name: true,
+							description: true,
+							applicationStatus: true,
+							createdAt: true,
+							serverId: true,
+						},
+					},
+					redis: {
+						where: accessedServices
+							? buildServiceFilter(redis.redisId, accessedServices)
+							: undefined,
+						columns: {
+							redisId: true,
+							appName: true,
+							name: true,
+							description: true,
+							applicationStatus: true,
+							createdAt: true,
+							serverId: true,
+						},
+					},
+				},
+			});
+
+			return projectEnvironments.flatMap((environment) => [
+				...environment.applications.map((service) => ({
+					id: service.applicationId,
+					type: "application" as const,
+					appName: service.appName,
+					name: service.name,
+					description: service.description,
+					status: service.applicationStatus,
+					createdAt: service.createdAt,
+					environmentId: environment.environmentId,
+					environmentName: environment.name,
+					serverId: service.serverId,
+				})),
+				...environment.compose.map((service) => ({
+					id: service.composeId,
+					type: "compose" as const,
+					appName: service.appName,
+					name: service.name,
+					description: service.description,
+					status: service.composeStatus,
+					createdAt: service.createdAt,
+					environmentId: environment.environmentId,
+					environmentName: environment.name,
+					serverId: service.serverId,
+				})),
+				...environment.mariadb.map((service) => ({
+					id: service.mariadbId,
+					type: "mariadb" as const,
+					appName: service.appName,
+					name: service.name,
+					description: service.description,
+					status: service.applicationStatus,
+					createdAt: service.createdAt,
+					environmentId: environment.environmentId,
+					environmentName: environment.name,
+					serverId: service.serverId,
+				})),
+				...environment.mongo.map((service) => ({
+					id: service.mongoId,
+					type: "mongo" as const,
+					appName: service.appName,
+					name: service.name,
+					description: service.description,
+					status: service.applicationStatus,
+					createdAt: service.createdAt,
+					environmentId: environment.environmentId,
+					environmentName: environment.name,
+					serverId: service.serverId,
+				})),
+				...environment.mysql.map((service) => ({
+					id: service.mysqlId,
+					type: "mysql" as const,
+					appName: service.appName,
+					name: service.name,
+					description: service.description,
+					status: service.applicationStatus,
+					createdAt: service.createdAt,
+					environmentId: environment.environmentId,
+					environmentName: environment.name,
+					serverId: service.serverId,
+				})),
+				...environment.postgres.map((service) => ({
+					id: service.postgresId,
+					type: "postgres" as const,
+					appName: service.appName,
+					name: service.name,
+					description: service.description,
+					status: service.applicationStatus,
+					createdAt: service.createdAt,
+					environmentId: environment.environmentId,
+					environmentName: environment.name,
+					serverId: service.serverId,
+				})),
+				...environment.redis.map((service) => ({
+					id: service.redisId,
+					type: "redis" as const,
+					appName: service.appName,
+					name: service.name,
+					description: service.description,
+					status: service.applicationStatus,
+					createdAt: service.createdAt,
+					environmentId: environment.environmentId,
+					environmentName: environment.name,
+					serverId: service.serverId,
+				})),
+			]).sort(
+				(a, b) =>
+					new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+			);
+		}),
+	deploymentsByProjectId: protectedProcedure
+		.input(apiFindOneProject)
+		.query(async ({ input, ctx }) => {
+			const project = await findProjectById(input.projectId);
+
+			if (project.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this project",
+				});
+			}
+
+			let accessedEnvironments: string[] | undefined = undefined;
+			let accessedServices: string[] | undefined = undefined;
+
+			if (ctx.user.role === "member") {
+				await checkProjectAccess(
+					ctx.user.id,
+					"access",
+					ctx.session.activeOrganizationId,
+					input.projectId,
+				);
+
+				const memberAccess = await findMemberById(
+					ctx.user.id,
+					ctx.session.activeOrganizationId,
+				);
+				accessedEnvironments = memberAccess.accessedEnvironments;
+				accessedServices = memberAccess.accessedServices;
+			}
+
+			const projectEnvironments = await db.query.environments.findMany({
+				where: and(
+					eq(environments.projectId, input.projectId),
+					buildEnvironmentFilter(accessedEnvironments),
+				),
+				columns: {
+					environmentId: true,
+					name: true,
+				},
+				with: {
+					applications: {
+						where: accessedServices
+							? buildServiceFilter(applications.applicationId, accessedServices)
+							: undefined,
+						columns: {
+							applicationId: true,
+							name: true,
+							appName: true,
+						},
+					},
+					compose: {
+						where: accessedServices
+							? buildServiceFilter(compose.composeId, accessedServices)
+							: undefined,
+						columns: {
+							composeId: true,
+							name: true,
+							appName: true,
+						},
+					},
+				},
+			});
+
+			const applicationMap = new Map<
+				string,
+				{ serviceType: "application"; serviceName: string; appName: string; environmentId: string; environmentName: string }
+			>();
+			const composeMap = new Map<
+				string,
+				{ serviceType: "compose"; serviceName: string; appName: string; environmentId: string; environmentName: string }
+			>();
+
+			for (const environment of projectEnvironments) {
+				for (const app of environment.applications) {
+					applicationMap.set(app.applicationId, {
+						serviceType: "application",
+						serviceName: app.name,
+						appName: app.appName,
+						environmentId: environment.environmentId,
+						environmentName: environment.name,
+					});
+				}
+				for (const service of environment.compose) {
+					composeMap.set(service.composeId, {
+						serviceType: "compose",
+						serviceName: service.name,
+						appName: service.appName,
+						environmentId: environment.environmentId,
+						environmentName: environment.name,
+					});
+				}
+			}
+
+			const applicationIds = Array.from(applicationMap.keys());
+			const composeIds = Array.from(composeMap.keys());
+
+			if (applicationIds.length === 0 && composeIds.length === 0) {
+				return [];
+			}
+
+			const whereParts = [];
+			if (applicationIds.length > 0) {
+				whereParts.push(
+					sql`${deployments.applicationId} IN (${sql.join(
+						applicationIds.map((id) => sql`${id}`),
+						sql`, `,
+					)})`,
+				);
+			}
+			if (composeIds.length > 0) {
+				whereParts.push(
+					sql`${deployments.composeId} IN (${sql.join(
+						composeIds.map((id) => sql`${id}`),
+						sql`, `,
+					)})`,
+				);
+			}
+
+			const projectDeployments = await db.query.deployments.findMany({
+				where:
+					whereParts.length === 1
+						? whereParts[0]
+						: sql`(${whereParts[0]}) OR (${whereParts[1]})`,
+				columns: {
+					deploymentId: true,
+					title: true,
+					description: true,
+					status: true,
+					createdAt: true,
+					startedAt: true,
+					finishedAt: true,
+					errorMessage: true,
+					applicationId: true,
+					composeId: true,
+					serverId: true,
+					isPreviewDeployment: true,
+				},
+				orderBy: desc(deployments.createdAt),
+			});
+
+			return projectDeployments.map((deployment) => {
+				const serviceDetails = deployment.applicationId
+					? applicationMap.get(deployment.applicationId)
+					: deployment.composeId
+						? composeMap.get(deployment.composeId)
+						: undefined;
+
+				return {
+					...deployment,
+					serviceType: serviceDetails?.serviceType || null,
+					serviceId: deployment.applicationId || deployment.composeId || null,
+					serviceName: serviceDetails?.serviceName || null,
+					serviceAppName: serviceDetails?.appName || null,
+					environmentId: serviceDetails?.environmentId || null,
+					environmentName: serviceDetails?.environmentName || null,
+				};
+			});
+		}),
+	healthByProjectId: protectedProcedure
+		.input(apiFindOneProject)
+		.query(async ({ input, ctx }) => {
+			const project = await findProjectById(input.projectId);
+
+			if (project.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this project",
+				});
+			}
+
+			let accessedEnvironments: string[] | undefined = undefined;
+			let accessedServices: string[] | undefined = undefined;
+
+			if (ctx.user.role === "member") {
+				await checkProjectAccess(
+					ctx.user.id,
+					"access",
+					ctx.session.activeOrganizationId,
+					input.projectId,
+				);
+
+				const memberAccess = await findMemberById(
+					ctx.user.id,
+					ctx.session.activeOrganizationId,
+				);
+				accessedEnvironments = memberAccess.accessedEnvironments;
+				accessedServices = memberAccess.accessedServices;
+			}
+
+			const projectEnvironments = await db.query.environments.findMany({
+				where: and(
+					eq(environments.projectId, input.projectId),
+					buildEnvironmentFilter(accessedEnvironments),
+				),
+				columns: {
+					environmentId: true,
+				},
+				with: {
+					applications: {
+						where: accessedServices
+							? buildServiceFilter(applications.applicationId, accessedServices)
+							: undefined,
+						columns: {
+							applicationId: true,
+							applicationStatus: true,
+						},
+					},
+					compose: {
+						where: accessedServices
+							? buildServiceFilter(compose.composeId, accessedServices)
+							: undefined,
+						columns: {
+							composeId: true,
+							composeStatus: true,
+						},
+					},
+					mariadb: {
+						where: accessedServices
+							? buildServiceFilter(mariadb.mariadbId, accessedServices)
+							: undefined,
+						columns: {
+							mariadbId: true,
+							applicationStatus: true,
+						},
+					},
+					mongo: {
+						where: accessedServices
+							? buildServiceFilter(mongo.mongoId, accessedServices)
+							: undefined,
+						columns: {
+							mongoId: true,
+							applicationStatus: true,
+						},
+					},
+					mysql: {
+						where: accessedServices
+							? buildServiceFilter(mysql.mysqlId, accessedServices)
+							: undefined,
+						columns: {
+							mysqlId: true,
+							applicationStatus: true,
+						},
+					},
+					postgres: {
+						where: accessedServices
+							? buildServiceFilter(postgres.postgresId, accessedServices)
+							: undefined,
+						columns: {
+							postgresId: true,
+							applicationStatus: true,
+						},
+					},
+					redis: {
+						where: accessedServices
+							? buildServiceFilter(redis.redisId, accessedServices)
+							: undefined,
+						columns: {
+							redisId: true,
+							applicationStatus: true,
+						},
+					},
+				},
+			});
+
+			const services = projectEnvironments.flatMap((environment) => [
+				...environment.applications.map((service) => ({
+					id: service.applicationId,
+					status: service.applicationStatus,
+				})),
+				...environment.compose.map((service) => ({
+					id: service.composeId,
+					status: service.composeStatus,
+				})),
+				...environment.mariadb.map((service) => ({
+					id: service.mariadbId,
+					status: service.applicationStatus,
+				})),
+				...environment.mongo.map((service) => ({
+					id: service.mongoId,
+					status: service.applicationStatus,
+				})),
+				...environment.mysql.map((service) => ({
+					id: service.mysqlId,
+					status: service.applicationStatus,
+				})),
+				...environment.postgres.map((service) => ({
+					id: service.postgresId,
+					status: service.applicationStatus,
+				})),
+				...environment.redis.map((service) => ({
+					id: service.redisId,
+					status: service.applicationStatus,
+				})),
+			]);
+
+			const applicationIds = projectEnvironments.flatMap((environment) =>
+				environment.applications.map((service) => service.applicationId),
+			);
+			const composeIds = projectEnvironments.flatMap((environment) =>
+				environment.compose.map((service) => service.composeId),
+			);
+
+			let deploymentsList: Array<{
+				deploymentId: string;
+				status: "running" | "done" | "error" | "cancelled" | null;
+				createdAt: string;
+			}> = [];
+
+			if (applicationIds.length > 0 || composeIds.length > 0) {
+				const whereParts = [];
+
+				if (applicationIds.length > 0) {
+					whereParts.push(
+						sql`${deployments.applicationId} IN (${sql.join(
+							applicationIds.map((id) => sql`${id}`),
+							sql`, `,
+						)})`,
+					);
+				}
+				if (composeIds.length > 0) {
+					whereParts.push(
+						sql`${deployments.composeId} IN (${sql.join(
+							composeIds.map((id) => sql`${id}`),
+							sql`, `,
+						)})`,
+					);
+				}
+
+				deploymentsList = await db.query.deployments.findMany({
+					where:
+						whereParts.length === 1
+							? whereParts[0]
+							: sql`(${whereParts[0]}) OR (${whereParts[1]})`,
+					columns: {
+						deploymentId: true,
+						status: true,
+						createdAt: true,
+					},
+					orderBy: desc(deployments.createdAt),
+				});
+			}
+
+			const statusCount: Record<string, number> = {
+				idle: 0,
+				running: 0,
+				done: 0,
+				error: 0,
+				paused: 0,
+			};
+
+			for (const service of services) {
+				statusCount[service.status] = (statusCount[service.status] || 0) + 1;
+			}
+
+			const failedDeployments = deploymentsList.filter(
+				(item) => item.status === "error",
+			);
+			const runningDeployments = deploymentsList.filter(
+				(item) => item.status === "running",
+			);
+
+			const lastDeploymentAt = deploymentsList[0]?.createdAt || null;
+			const unhealthyServiceIds = services
+				.filter((service) => service.status === "error")
+				.map((service) => service.id);
+
+			return {
+				projectId: input.projectId,
+				summary: {
+					totalServices: services.length,
+					unhealthyServices: unhealthyServiceIds.length,
+					failedDeployments: failedDeployments.length,
+					runningDeployments: runningDeployments.length,
+					lastDeploymentAt,
+					healthy:
+						unhealthyServiceIds.length === 0 &&
+						failedDeployments.length === 0,
+				},
+				statusCount,
+				unhealthyServiceIds,
+			};
+		}),
+	applicationsByProjectId: protectedProcedure
+		.input(apiFindOneProject)
+		.query(async ({ input, ctx }) => {
+			const project = await findProjectById(input.projectId);
+
+			if (project.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this project",
+				});
+			}
+
+			let accessedEnvironments: string[] | undefined = undefined;
+			let accessedServices: string[] | undefined = undefined;
+
+			if (ctx.user.role === "member") {
+				await checkProjectAccess(
+					ctx.user.id,
+					"access",
+					ctx.session.activeOrganizationId,
+					input.projectId,
+				);
+
+				const memberAccess = await findMemberById(
+					ctx.user.id,
+					ctx.session.activeOrganizationId,
+				);
+				accessedEnvironments = memberAccess.accessedEnvironments;
+				accessedServices = memberAccess.accessedServices;
+			}
+
+			const environmentFilter = accessedEnvironments
+				? accessedEnvironments.length === 0
+					? sql`false`
+					: sql`${environments.environmentId} IN (${sql.join(
+							accessedEnvironments.map((envId) => sql`${envId}`),
+							sql`, `,
+						)})`
+				: undefined;
+
+			const projectEnvironments = await db.query.environments.findMany({
+				where: and(
+					eq(environments.projectId, input.projectId),
+					environmentFilter,
+				),
+				columns: {
+					environmentId: true,
+					name: true,
+				},
+				with: {
+					applications: {
+						where: accessedServices
+							? buildServiceFilter(applications.applicationId, accessedServices)
+							: undefined,
+						columns: {
+							applicationId: true,
+							appName: true,
+							name: true,
+							description: true,
+							applicationStatus: true,
+							createdAt: true,
+							environmentId: true,
+							serverId: true,
+							sourceType: true,
+						},
+					},
+				},
+			});
+
+			return projectEnvironments.flatMap((environment) =>
+				environment.applications.map((application) => ({
+					...application,
+					environmentName: environment.name,
+				})),
+			);
+		}),
+	applicationEnvironmentVariablesMeta: protectedProcedure
+		.input(
+			z.object({
+				applicationId: z.string(),
+			}),
+		)
+		.query(async ({ input, ctx }) => {
+			if (ctx.user.role === "member") {
+				await checkServiceAccess(
+					ctx.user.id,
+					input.applicationId,
+					ctx.session.activeOrganizationId,
+					"access",
+				);
+			}
+
+			const application = await db.query.applications.findFirst({
+				where: eq(applications.applicationId, input.applicationId),
+				columns: {
+					applicationId: true,
+					env: true,
+					previewEnv: true,
+				},
+				with: {
+					environment: {
+						with: {
+							project: {
+								columns: {
+									organizationId: true,
+								},
+							},
+						},
+					},
+				},
+			});
+
+			if (!application) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Application not found",
+				});
+			}
+
+			if (
+				application.environment.project.organizationId !==
+				ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this application",
+				});
+			}
+
+			const envMeta = extractEnvVarMetadata(application.env, "env");
+			const previewEnvMeta = extractEnvVarMetadata(
+				application.previewEnv,
+				"previewEnv",
+			);
+
+			return {
+				applicationId: application.applicationId,
+				total: envMeta.length + previewEnvMeta.length,
+				env: envMeta,
+				previewEnv: previewEnvMeta,
+			};
+		}),
+	applicationEnvironmentVariablesReveal: protectedProcedure
+		.input(
+			z.object({
+				applicationId: z.string(),
+			}),
+		)
+		.query(async ({ input, ctx }) => {
+			if (ctx.user.role === "member") {
+				await checkServiceAccess(
+					ctx.user.id,
+					input.applicationId,
+					ctx.session.activeOrganizationId,
+					"access",
+				);
+			}
+
+			const application = await db.query.applications.findFirst({
+				where: eq(applications.applicationId, input.applicationId),
+				columns: {
+					applicationId: true,
+					env: true,
+					previewEnv: true,
+				},
+				with: {
+					environment: {
+						with: {
+							project: {
+								columns: {
+									organizationId: true,
+								},
+							},
+						},
+					},
+				},
+			});
+
+			if (!application) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Application not found",
+				});
+			}
+
+			if (
+				application.environment.project.organizationId !==
+				ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this application",
+				});
+			}
+
+			return {
+				applicationId: application.applicationId,
+				env: application.env,
+				previewEnv: application.previewEnv,
+			};
+		}),
+	applicationEnvironmentVariables: protectedProcedure
+		.input(
+			z.object({
+				applicationId: z.string(),
+			}),
+		)
+		.query(async ({ input, ctx }) => {
+			if (ctx.user.role === "member") {
+				await checkServiceAccess(
+					ctx.user.id,
+					input.applicationId,
+					ctx.session.activeOrganizationId,
+					"access",
+				);
+			}
+
+			const application = await getApplicationEnvById(input.applicationId);
+
+			if (
+				application.environment.project.organizationId !==
+				ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this application",
+				});
+			}
+
+			return {
+				applicationId: application.applicationId,
+				env: application.env,
+				previewEnv: application.previewEnv,
+			};
+		}),
 
 	allForPermissions: withPermission("member", "update").query(
 		async ({ ctx }) => {
@@ -772,6 +2046,24 @@ export const projectRouter = createTRPCRouter({
 					});
 				}
 
+				if (
+					typeof input.isFolder === "boolean" &&
+					input.isFolder !== currentProject.isFolder
+				) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Project type cannot be changed after creation",
+					});
+				}
+
+				if (Object.prototype.hasOwnProperty.call(input, "parentProjectId")) {
+					await validateProjectParent({
+						organizationId: ctx.session.activeOrganizationId,
+						parentProjectId: input.parentProjectId ?? null,
+						projectId: input.projectId,
+					});
+				}
+
 				if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
 					const { accessedProjects } = await findMemberByUserId(
 						ctx.user.id,
@@ -789,8 +2081,9 @@ export const projectRouter = createTRPCRouter({
 					await checkPermission(ctx, { projectEnvVars: ["write"] });
 				}
 
-				const project = await updateProjectById(input.projectId, {
-					...input,
+				const { projectId, ...projectData } = input;
+				const project = await updateProjectById(projectId, {
+					...projectData,
 				});
 
 				if (project) {
@@ -816,6 +2109,7 @@ export const projectRouter = createTRPCRouter({
 			const project = await db.query.projects.findFirst({
 				where: eq(projects.projectId, input.projectId),
 				columns: {
+					organizationId: true,
 					wildcardDomain: true,
 					useOrganizationWildcard: true,
 				},
@@ -874,8 +2168,8 @@ export const projectRouter = createTRPCRouter({
 				})
 				.where(eq(projects.projectId, input.projectId))
 				.returning({
-					wildcardDomain: true,
-					useOrganizationWildcard: true,
+					wildcardDomain: projects.wildcardDomain,
+					useOrganizationWildcard: projects.useOrganizationWildcard,
 				});
 
 			return result[0];
@@ -951,6 +2245,8 @@ export const projectRouter = createTRPCRouter({
 								name: input.name,
 								description: input.description,
 								env: sourceEnvironment?.project.env,
+								isFolder: false,
+								parentProjectId: null,
 							},
 							ctx.session.activeOrganizationId,
 						).then((value) => value.environment);
@@ -1314,8 +2610,116 @@ export const projectRouter = createTRPCRouter({
 					cause: error,
 				});
 			}
-		}),
+	}),
 });
+
+type TreeProjectNode = Awaited<
+	ReturnType<typeof db.query.projects.findMany>
+>[number] & {
+	children: TreeProjectNode[];
+};
+
+function buildProjectTree(
+	projectList: Awaited<ReturnType<typeof db.query.projects.findMany>>,
+) {
+	const nodeMap = new Map<string, TreeProjectNode>();
+	const roots: TreeProjectNode[] = [];
+
+	for (const project of projectList) {
+		nodeMap.set(project.projectId, {
+			...project,
+			children: [],
+		});
+	}
+
+	for (const project of projectList) {
+		const node = nodeMap.get(project.projectId);
+		if (!node) continue;
+
+		if (project.parentProjectId) {
+			const parentNode = nodeMap.get(project.parentProjectId);
+			if (parentNode?.isFolder) {
+				parentNode.children.push(node);
+				continue;
+			}
+		}
+		roots.push(node);
+	}
+
+	return roots;
+}
+
+async function validateProjectParent(input: {
+	organizationId: string;
+	parentProjectId: string | null;
+	projectId?: string;
+}) {
+	const { organizationId, parentProjectId, projectId } = input;
+	if (!parentProjectId) return;
+
+	if (projectId && parentProjectId === projectId) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "A project cannot be its own parent",
+		});
+	}
+
+	const parentProject = await db.query.projects.findFirst({
+		where: and(
+			eq(projects.projectId, parentProjectId),
+			eq(projects.organizationId, organizationId),
+		),
+		columns: {
+			projectId: true,
+			isFolder: true,
+			parentProjectId: true,
+		},
+	});
+
+	if (!parentProject) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Parent folder not found in this organization",
+		});
+	}
+
+	if (!parentProject.isFolder) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Projects can only be placed inside folders",
+		});
+	}
+
+	if (!projectId) return;
+
+	const visited = new Set<string>();
+	let currentParentId: string | null = parentProject.parentProjectId;
+	visited.add(parentProject.projectId);
+
+	while (currentParentId) {
+		if (currentParentId === projectId) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Cannot move a folder into one of its sub-folders",
+			});
+		}
+		if (visited.has(currentParentId)) {
+			break;
+		}
+		visited.add(currentParentId);
+
+		const ancestor = await db.query.projects.findFirst({
+			where: and(
+				eq(projects.projectId, currentParentId),
+				eq(projects.organizationId, organizationId),
+			),
+			columns: {
+				parentProjectId: true,
+			},
+		});
+		currentParentId = ancestor?.parentProjectId ?? null;
+	}
+}
 
 function buildServiceFilter(
 	fieldName: AnyPgColumn,
@@ -1327,4 +2731,62 @@ function buildServiceFilter(
 				accessedServices.map((serviceId) => sql`${serviceId}`),
 				sql`, `,
 			)})`;
+}
+
+function buildEnvironmentFilter(accessedEnvironments?: string[]) {
+	if (!accessedEnvironments) {
+		return undefined;
+	}
+
+	return accessedEnvironments.length === 0
+		? sql`false`
+		: sql`${environments.environmentId} IN (${sql.join(
+				accessedEnvironments.map((envId) => sql`${envId}`),
+				sql`, `,
+			)})`;
+}
+
+function extractEnvVarMetadata(
+	envText: string | null,
+	source: "env" | "previewEnv",
+) {
+	const parsed = parseDotenv(envText ?? "");
+
+	return Object.keys(parsed).map((key) => ({
+		key,
+		source,
+		isSecret:
+			/(token|secret|password|key|private|credential|auth)/i.test(key),
+	}));
+}
+
+async function getApplicationEnvById(applicationId: string) {
+	const application = await db.query.applications.findFirst({
+		where: eq(applications.applicationId, applicationId),
+		columns: {
+			applicationId: true,
+			env: true,
+			previewEnv: true,
+		},
+		with: {
+			environment: {
+				with: {
+					project: {
+						columns: {
+							organizationId: true,
+						},
+					},
+				},
+			},
+		},
+	});
+
+	if (!application) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Application not found",
+		});
+	}
+
+	return application;
 }

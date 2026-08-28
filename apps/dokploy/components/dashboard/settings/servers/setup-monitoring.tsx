@@ -80,7 +80,7 @@ const Schema = z.object({
 type Schema = z.infer<typeof Schema>;
 
 export const SetupMonitoring = ({ serverId }: Props) => {
-	const { data: serverData } = serverId
+	const { data } = serverId
 		? api.server.one.useQuery(
 				{
 					serverId: serverId || "",
@@ -89,14 +89,7 @@ export const SetupMonitoring = ({ serverId }: Props) => {
 					enabled: !!serverId,
 				},
 			)
-		: { data: null };
-
-	const { data: webServerSettings } =
-		api.settings.getWebServerSettings.useQuery(undefined, {
-			enabled: !serverId,
-		});
-
-	const data = serverId ? serverData : webServerSettings;
+		: api.user.getServerMetrics.useQuery();
 
 	const url = useUrl();
 
@@ -523,117 +516,48 @@ export const SetupMonitoring = ({ serverId }: Props) => {
 
 							<FormField
 								control={form.control}
-								name="metricsConfig.server.thresholds.cpu"
-								render={({ field }) => (
-									<FormItem>
-										<FormLabel>CPU Threshold (%)</FormLabel>
-										<FormControl>
-											<NumberInput {...field} />
-										</FormControl>
-										<FormDescription>
-											Alert when CPU usage exceeds this percentage
-										</FormDescription>
-										<FormMessage />
-									</FormItem>
-								)}
-							/>
-
-							<FormField
-								control={form.control}
-								name="metricsConfig.server.thresholds.memory"
-								render={({ field }) => (
-									<FormItem>
-										<FormLabel>Memory Threshold (%)</FormLabel>
-										<FormControl>
-											<NumberInput {...field} />
-										</FormControl>
-										<FormDescription>
-											Alert when memory usage exceeds this percentage
-										</FormDescription>
-										<FormMessage />
-									</FormItem>
-								)}
-							/>
-
-							<FormField
-								control={form.control}
 								name="metricsConfig.server.token"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Metrics Token</FormLabel>
+										<FormLabel>Token</FormLabel>
 										<FormControl>
-											<div className="flex gap-2">
-												<div className="relative flex-1">
-													<Input
-														type={showToken ? "text" : "password"}
-														placeholder="Enter your metrics token"
-														{...field}
-													/>
-													<Button
-														type="button"
-														variant="secondary"
-														size="icon"
-														className="absolute right-0 top-1/2 -translate-y-1/2"
-														onClick={() => setShowToken(!showToken)}
-														title={showToken ? "Hide token" : "Show token"}
-													>
-														{showToken ? (
-															<EyeOff className="h-4 w-4" />
-														) : (
-															<Eye className="h-4 w-4" />
-														)}
-													</Button>
-												</div>
+											<div className="relative">
+												<Input
+													{...field}
+													type={showToken ? "text" : "password"}
+													placeholder="Enter token"
+												/>
 												<Button
 													type="button"
-													variant="outline"
+													variant="ghost"
 													size="icon"
-													onClick={() => {
-														const newToken = generateToken();
-														form.setValue(
-															"metricsConfig.server.token",
-															newToken,
-														);
-														toast.success("Token generated successfully");
-													}}
-													title="Generate new token"
+													className="absolute right-0 top-0"
+													onClick={() => setShowToken(!showToken)}
 												>
-													<RefreshCw className="h-4 w-4" />
+													{showToken ? <EyeOff /> : <Eye />}
 												</Button>
 											</div>
 										</FormControl>
-										<FormDescription>
-											Token for authenticating metrics requests
-										</FormDescription>
 										<FormMessage />
 									</FormItem>
 								)}
 							/>
 
-							<FormField
-								control={form.control}
-								name="metricsConfig.server.urlCallback"
-								render={({ field }) => (
-									<FormItem>
-										<FormLabel>Metrics Callback URL</FormLabel>
-										<FormControl>
-											<Input
-												placeholder="https://your-callback-url.com"
-												{...field}
-											/>
-										</FormControl>
-										<FormDescription>
-											URL where metrics will be sent
-										</FormDescription>
-										<FormMessage />
-									</FormItem>
-								)}
-							/>
-						</div>
-						<div className="flex items-center justify-end gap-2">
-							<Button type="submit" isLoading={form.formState.isSubmitting}>
-								Save changes
-							</Button>
+							<div className="flex justify-end gap-2">
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => {
+										form.reset();
+										setSearch("");
+										setSearchExclude("");
+									}}
+								>
+									<RefreshCw className="mr-2 size-4" />
+									Reset
+								</Button>
+								<Button type="submit">Save</Button>
+							</div>
 						</div>
 					</form>
 				</Form>

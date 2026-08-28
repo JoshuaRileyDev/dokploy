@@ -92,6 +92,7 @@ export const RandomizeCompose = ({ composeId }: Props) => {
 			suffix,
 		}).then(async (data) => {
 			await utils.project.all.invalidate();
+			await utils.project.allWithServices.invalidate();
 			setCompose(data);
 		});
 	};

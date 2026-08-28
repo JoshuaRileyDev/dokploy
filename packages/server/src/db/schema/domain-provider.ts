@@ -88,25 +88,18 @@ const namecheapProviderSchema = z.object({
 	enablePurchase: z.boolean().default(false),
 });
 
-export const apiCreateDomainProvider = z.union([
-	// OAuth Netlify
-	z.object({
-		name: z.string().min(1, "Name is required"),
-		type: z.literal("netlify"),
-		authMethod: z.literal("oauth"),
-		clientId: z.string().min(1, "Client ID is required for OAuth"),
-		clientSecret: z.string().min(1, "Client Secret is required for OAuth"),
-	}),
-	// Direct Netlify
-	z.object({
-		name: z.string().min(1, "Name is required"),
-		type: z.literal("netlify"),
-		authMethod: z.literal("direct"),
-		apiToken: z.string().min(1, "Access Token is required for direct auth"),
-	}),
-	// Namecheap
-	namecheapProviderSchema,
-]);
+export const apiCreateDomainProvider = z.object({
+	name: z.string().min(1, "Name is required"),
+	type: z.enum(["netlify", "namecheap"]),
+	authMethod: z.enum(["oauth", "direct"]).optional(),
+	apiKey: z.string().optional(),
+	apiToken: z.string().optional(),
+	clientId: z.string().optional(),
+	clientSecret: z.string().optional(),
+	apiUser: z.string().optional(),
+	clientIp: z.string().optional(),
+	enablePurchase: z.boolean().default(false),
+});
 
 export const apiUpdateDomainProvider = z.object({
 	domainProviderId: z.string(),

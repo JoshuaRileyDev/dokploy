@@ -44,6 +44,7 @@ import {
 	mysql,
 	organization,
 	postgres,
+	libsql,
 	redis,
 	server,
 } from "@/server/db/schema";
@@ -212,6 +213,220 @@ export const serverRouter = createTRPCRouter({
 		});
 		return result.filter((s) => accessibleIds.has(s.serverId));
 	}),
+	getServicesByServerId: withPermission("server", "read")
+		.input(
+			z.object({
+				serverId: z.string(),
+			}),
+		)
+		.query(async ({ input, ctx }) => {
+			const currentServer = await findServerById(input.serverId);
+			if (currentServer.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this server",
+				});
+			}
+
+			const accessibleIds = await getAccessibleServerIds(ctx.session);
+			if (!accessibleIds.has(input.serverId)) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this server",
+				});
+			}
+
+			const [
+				applicationServices,
+				composeServices,
+				postgresServices,
+				mysqlServices,
+				mariadbServices,
+				mongoServices,
+				redisServices,
+				libsqlServices,
+			] = await Promise.all([
+				db.query.applications.findMany({
+					where: eq(applications.serverId, input.serverId),
+					columns: {
+						applicationId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+				db.query.compose.findMany({
+					where: eq(compose.serverId, input.serverId),
+					columns: {
+						composeId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+				db.query.postgres.findMany({
+					where: eq(postgres.serverId, input.serverId),
+					columns: {
+						postgresId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+				db.query.mysql.findMany({
+					where: eq(mysql.serverId, input.serverId),
+					columns: {
+						mysqlId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+				db.query.mariadb.findMany({
+					where: eq(mariadb.serverId, input.serverId),
+					columns: {
+						mariadbId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+				db.query.mongo.findMany({
+					where: eq(mongo.serverId, input.serverId),
+					columns: {
+						mongoId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+				db.query.redis.findMany({
+					where: eq(redis.serverId, input.serverId),
+					columns: {
+						redisId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+				db.query.libsql.findMany({
+					where: eq(libsql.serverId, input.serverId),
+					columns: {
+						libsqlId: true,
+						name: true,
+						appName: true,
+						environmentId: true,
+					},
+					with: {
+						environment: {
+							columns: { projectId: true },
+						},
+					},
+				}),
+			]);
+
+			return [
+				...applicationServices.map((item) => ({
+					id: item.applicationId,
+					type: "application" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+				...composeServices.map((item) => ({
+					id: item.composeId,
+					type: "compose" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+				...postgresServices.map((item) => ({
+					id: item.postgresId,
+					type: "postgres" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+				...mysqlServices.map((item) => ({
+					id: item.mysqlId,
+					type: "mysql" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+				...mariadbServices.map((item) => ({
+					id: item.mariadbId,
+					type: "mariadb" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+				...mongoServices.map((item) => ({
+					id: item.mongoId,
+					type: "mongo" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+				...redisServices.map((item) => ({
+					id: item.redisId,
+					type: "redis" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+				...libsqlServices.map((item) => ({
+					id: item.libsqlId,
+					type: "libsql" as const,
+					name: item.name,
+					appName: item.appName,
+					projectId: item.environment.projectId,
+					environmentId: item.environmentId,
+				})),
+			];
+		}),
 	setup: withPermission("server", "create")
 		.input(apiFindOneServer)
 		.mutation(async ({ input, ctx }) => {

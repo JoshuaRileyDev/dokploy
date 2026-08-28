@@ -80,6 +80,7 @@ export const DuplicateProject = ({
 		api.project.duplicate.useMutation({
 			onSuccess: async (newProject) => {
 				await utils.project.all.invalidate();
+				await utils.project.allWithServices.invalidate();
 
 				// If duplicating to same project+environment, invalidate the environment query
 				// to refresh the services list

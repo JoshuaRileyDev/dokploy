@@ -15,6 +15,8 @@ export const projects = pgTable("project", {
 		.$defaultFn(() => nanoid()),
 	name: text("name").notNull(),
 	description: text("description"),
+	isFolder: boolean("isFolder").notNull().default(false),
+	parentProjectId: text("parentProjectId"),
 	createdAt: text("createdAt")
 		.notNull()
 		.$defaultFn(() => new Date().toISOString()),
@@ -35,6 +37,14 @@ export const projects = pgTable("project", {
 export const projectRelations = relations(projects, ({ many, one }) => ({
 	environments: many(environments),
 	projectTags: many(projectTags),
+	parent: one(projects, {
+		fields: [projects.parentProjectId],
+		references: [projects.projectId],
+		relationName: "projectHierarchy",
+	}),
+	children: many(projects, {
+		relationName: "projectHierarchy",
+	}),
 	organization: one(organization, {
 		fields: [projects.organizationId],
 		references: [organization.id],
@@ -52,6 +62,8 @@ export const apiCreateProject = createSchema.pick({
 	name: true,
 	description: true,
 	env: true,
+	isFolder: true,
+	parentProjectId: true,
 });
 
 export const apiFindOneProject = z.object({

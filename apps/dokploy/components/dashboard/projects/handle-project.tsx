@@ -1,5 +1,4 @@
-import { standardSchemaResolver } from "@hookform/resolvers/standard-schema";
-
+import { standardSchemaResolver as zodResolver } from "@hookform/resolvers/standard-schema";
 import { PlusIcon, SquarePen } from "lucide-react";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
@@ -28,6 +27,7 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/utils/api";
 
@@ -52,18 +52,32 @@ const AddProjectSchema = z.object({
 		})
 		.transform((name) => name.trim()),
 	description: z.string().optional(),
+	isFolder: z.boolean().default(false),
+	parentProjectId: z.string().nullable().optional(),
 });
 
 type AddProject = z.infer<typeof AddProjectSchema>;
 
 interface Props {
 	projectId?: string;
+	defaultIsFolder?: boolean;
+	parentProjectId?: string | null;
+	buttonText?: string;
+	asDropdownItem?: boolean;
 }
 
-export const HandleProject = ({ projectId }: Props) => {
+export const HandleProject = ({
+	projectId,
+	defaultIsFolder = false,
+	parentProjectId = null,
+	buttonText,
+	asDropdownItem = false,
+}: Props) => {
 	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+	const isEditing = Boolean(projectId);
+	const { data: allProjects } = api.project.allWithServicesTree.useQuery();
 
 	const { mutateAsync, error, isError } = projectId
 		? api.project.update.useMutation()
@@ -86,35 +100,47 @@ export const HandleProject = ({ projectId }: Props) => {
 		defaultValues: {
 			description: "",
 			name: "",
+			isFolder: defaultIsFolder,
+			parentProjectId,
 		},
-		resolver: standardSchemaResolver(AddProjectSchema),
+		resolver: zodResolver(AddProjectSchema),
 	});
 
 	useEffect(() => {
 		form.reset({
 			description: data?.description ?? "",
 			name: data?.name ?? "",
+			isFolder: data?.isFolder ?? defaultIsFolder,
+			parentProjectId: data?.parentProjectId ?? parentProjectId,
 		});
-		// Load existing tags when editing a project
+
 		if (data?.projectTags) {
-			const tagIds = data.projectTags.map((pt) => pt.tagId);
+			const tagIds = data.projectTags.map((projectTag) => projectTag.tagId);
 			setSelectedTagIds(tagIds);
 		} else {
 			setSelectedTagIds([]);
 		}
-	}, [form, form.reset, form.formState.isSubmitSuccessful, data]);
+	}, [
+		form,
+		form.reset,
+		form.formState.isSubmitSuccessful,
+		data,
+		defaultIsFolder,
+		parentProjectId,
+	]);
 
-	const onSubmit = async (data: AddProject) => {
+	const onSubmit = async (values: AddProject) => {
 		await mutateAsync({
-			name: data.name,
-			description: data.description,
+			name: values.name,
+			description: values.description,
+			isFolder: values.isFolder,
+			parentProjectId: values.parentProjectId ?? null,
 			projectId: projectId || "",
 		})
-			.then(async (data) => {
-				// Assign tags to the project (both create and update)
+			.then(async (response) => {
 				const projectIdToUse =
 					projectId ||
-					(data && "project" in data ? data.project.projectId : undefined);
+					(response && "project" in response ? response.project.projectId : "");
 
 				if (projectIdToUse) {
 					try {
@@ -122,18 +148,21 @@ export const HandleProject = ({ projectId }: Props) => {
 							projectId: projectIdToUse,
 							tagIds: selectedTagIds,
 						});
-					} catch (error) {
+					} catch {
 						toast.error("Failed to assign tags to project");
 					}
 				}
 
 				await utils.project.all.invalidate();
+				await utils.project.allWithServices.invalidate();
+				await utils.project.allWithServicesTree.invalidate();
 				toast.success(projectId ? "Project Updated" : "Project Created");
 				setIsOpen(false);
+
 				if (!projectId) {
 					const environmentIdToUse =
-						data && "environment" in data
-							? data.environment.environmentId
+						response && "environment" in response
+							? response.environment?.environmentId
 							: undefined;
 
 					if (environmentIdToUse && projectIdToUse) {
@@ -155,22 +184,31 @@ export const HandleProject = ({ projectId }: Props) => {
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
 			<DialogTrigger asChild>
-				{projectId ? (
+				{projectId || asDropdownItem ? (
 					<DropdownMenuItem
 						className="w-full cursor-pointer space-x-3"
-						onSelect={(e) => e.preventDefault()}
+						onSelect={(event) => event.preventDefault()}
 					>
-						<SquarePen className="size-4" />
-						<span>Update</span>
+						{projectId ? (
+							<>
+								<SquarePen className="size-4" />
+								<span>Update</span>
+							</>
+						) : (
+							<>
+								<PlusIcon className="size-4" />
+								<span>{buttonText || "Create Project"}</span>
+							</>
+						)}
 					</DropdownMenuItem>
 				) : (
 					<Button>
 						<PlusIcon className="h-4 w-4" />
-						Create Project
+						{buttonText || "Create Project"}
 					</Button>
 				)}
 			</DialogTrigger>
-			<DialogContent className="sm:m:max-w-lg ">
+			<DialogContent className="sm:m:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>{projectId ? "Update" : "Add a"} project</DialogTitle>
 					<DialogDescription>The home of something big!</DialogDescription>
@@ -218,6 +256,58 @@ export const HandleProject = ({ projectId }: Props) => {
 							)}
 						/>
 
+						{!isEditing && (
+							<FormField
+								control={form.control}
+								name="isFolder"
+								render={({ field }) => (
+									<FormItem className="flex items-center justify-between rounded-lg border p-3">
+										<div className="space-y-0.5">
+											<FormLabel>Create as folder</FormLabel>
+											<p className="text-xs text-muted-foreground">
+												Folders can contain projects and sub-folders.
+											</p>
+										</div>
+										<FormControl>
+											<Switch
+												checked={field.value}
+												onCheckedChange={field.onChange}
+											/>
+										</FormControl>
+									</FormItem>
+								)}
+							/>
+						)}
+
+						{!isEditing && (
+							<FormField
+								control={form.control}
+								name="parentProjectId"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel>Parent folder (optional)</FormLabel>
+										<FormControl>
+											<select
+												className="w-full rounded-md border bg-background p-2 text-sm"
+												value={field.value ?? ""}
+												onChange={(event) => {
+													const value = event.target.value;
+													field.onChange(value.length > 0 ? value : null);
+												}}
+											>
+												<option value="">Root level</option>
+												{flattenFolderOptions(allProjects).map((folder) => (
+													<option key={folder.projectId} value={folder.projectId}>
+														{folder.label}
+													</option>
+												))}
+											</select>
+										</FormControl>
+									</FormItem>
+								)}
+							/>
+						)}
+
 						<div className="space-y-2">
 							<FormLabel>Tags</FormLabel>
 							<TagSelector
@@ -247,3 +337,34 @@ export const HandleProject = ({ projectId }: Props) => {
 		</Dialog>
 	);
 };
+
+type FolderOption = {
+	projectId: string;
+	label: string;
+};
+
+function flattenFolderOptions(
+	projects:
+		| Array<{
+				projectId: string;
+				name: string;
+				isFolder: boolean;
+				children?: any[];
+		  }>
+		| undefined,
+	depth = 0,
+): FolderOption[] {
+	if (!projects) return [];
+	const options: FolderOption[] = [];
+
+	for (const project of projects) {
+		if (!project.isFolder) continue;
+		options.push({
+			projectId: project.projectId,
+			label: `${"  ".repeat(depth)}${project.name}`,
+		});
+		options.push(...flattenFolderOptions(project.children || [], depth + 1));
+	}
+
+	return options;
+}

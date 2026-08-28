@@ -37,10 +37,10 @@ export const createProject = async (
 		});
 	}
 
-	// Automatically create a production environment
-	const newEnvironment = await createProductionEnvironment(
-		newProject.projectId,
-	);
+	// Folders are organization nodes only and don't need environments.
+	const newEnvironment = newProject.isFolder
+		? null
+		: await createProductionEnvironment(newProject.projectId);
 	return {
 		project: newProject,
 		environment: newEnvironment,

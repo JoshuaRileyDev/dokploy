@@ -131,7 +131,7 @@ export const domainsRouter = createTRPCRouter({
 
 		checkAvailability: protectedProcedure
 			.input(z.object({ domains: z.array(z.string()) }))
-			.query(async ({ input, ctx }) => {
+			.mutation(async ({ input, ctx }) => {
 				const providers = await getActiveDomainProviders(ctx.session.activeOrganizationId);
 				const namecheapProvider = providers.find((p) => p.type === "namecheap");
 

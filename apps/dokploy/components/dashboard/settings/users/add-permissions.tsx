@@ -52,7 +52,7 @@ export type Services = {
 	description?: string | null;
 	id: string;
 	createdAt: string;
-	status?: "idle" | "running" | "done" | "error";
+	status?: "idle" | "running" | "done" | "error" | "paused";
 };
 
 export const extractServices = (data: Environment | undefined) => {

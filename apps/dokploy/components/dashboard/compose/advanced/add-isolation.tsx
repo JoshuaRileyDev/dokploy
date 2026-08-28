@@ -99,6 +99,7 @@ export const IsolatedDeploymentTab = ({ composeId }: Props) => {
 				suffix: data?.appName || "",
 			}).then(async (data) => {
 				await utils.project.all.invalidate();
+				await utils.project.allWithServices.invalidate();
 				setCompose(data);
 			});
 		} catch {
