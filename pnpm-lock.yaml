@@ -32,6 +32,9 @@ importers:
       lint-staged:
         specifier: ^15.5.2
         version: 15.5.2
+      portless:
+        specifier: ^0.15.6
+        version: 0.15.6
       tsx:
         specifier: 4.22.4
         version: 4.22.4
@@ -7631,6 +7634,12 @@ packages:
   pngjs@5.0.0:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
     engines: {node: '>=10.13.0'}
+
+  portless@0.15.6:
+    resolution: {integrity: sha512-uOAwWLF32rmyEGFASzSO0VOaqb/AQxFCCzyZbPGd82UNNOfIEvc09zy92nroNibE5HNfzV4oVB0ObKbPXgkM9A==}
+    engines: {node: '>=24'}
+    os: [darwin, linux, win32]
+    hasBin: true
 
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
@@ -16750,6 +16759,8 @@ snapshots:
       queue-lit: 1.5.2
 
   pngjs@5.0.0: {}
+
+  portless@0.15.6: {}
 
   possible-typed-array-names@1.1.0: {}
 
