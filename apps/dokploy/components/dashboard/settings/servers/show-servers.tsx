@@ -221,7 +221,6 @@ const RunningServicesBadge = ({
 };
 
 export const ShowServers = () => {
-	const { t } = useTranslation("settings");
 	const router = useRouter();
 	const query = router.query;
 	const { data, refetch, isLoading } = api.server.all.useQuery();
@@ -426,15 +425,13 @@ export const ShowServers = () => {
 																				{isActive && (
 																					<>
 																						{server.sshKeyId && (
-																							<TerminalModal
-																								serverId={server.serverId}
-																							>
-																								<span>
-																									{t(
-																										"settings.common.enterTerminal",
-																									)}
-																								</span>
-																							</TerminalModal>
+																						<TerminalModal
+																							serverId={server.serverId}
+																						>
+																							<span>
+																								Enter Terminal
+																							</span>
+																						</TerminalModal>
 																						)}
 																						<SetupServer
 																							serverId={server.serverId}

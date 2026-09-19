@@ -21,6 +21,47 @@ export const DEFAULT_UPDATE_DATA: IUpdateData = {
 	updateAvailable: false,
 };
 
+export const checkPortInUse = async (
+	port: number,
+	serverId?: string,
+): Promise<{ isInUse: boolean; conflictingContainer: string | null }> => {
+	const portPattern = `:${port}->`;
+	const listCommand = "docker ps --format '{{.Names}}|{{.Ports}}'";
+
+	const { stdout } = serverId
+		? await execAsyncRemote(serverId, listCommand)
+		: await execAsync(listCommand);
+
+	for (const line of stdout.trim().split("\n")) {
+		if (!line) continue;
+		const [name = "", ports = ""] = line.split("|");
+		if (ports.includes(portPattern)) {
+			return {
+				isInUse: true,
+				conflictingContainer: name.trim() || "docker container",
+			};
+		}
+	}
+
+	const portCheckCommand = `ss -tulnp | grep -q ':${port} '`;
+	try {
+		if (serverId) {
+			await execAsyncRemote(serverId, portCheckCommand);
+		} else {
+			await execAsync(portCheckCommand);
+		}
+		return {
+			isInUse: true,
+			conflictingContainer: "host process",
+		};
+	} catch {
+		return {
+			isInUse: false,
+			conflictingContainer: null,
+		};
+	}
+};
+
 /** Returns current Dokploy docker image tag or `latest` by default. */
 export const getDokployImageTag = () => {
 	return process.env.RELEASE_TAG || "latest";

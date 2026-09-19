@@ -434,3 +434,5 @@ export const findMemberByUserId = async (
 	}
 	return result;
 };
+
+export const findMemberById = findMemberByUserId;
