@@ -24,6 +24,7 @@ const SIDEBAR_ITEMS = {
 	],
 	settings: [
 		{ key: "profile", label: "Profile", alwaysVisible: true },
+		{ key: "configuration", label: "Configuration" },
 		{ key: "web-server", label: "Web Server" },
 		{ key: "remote-servers", label: "Remote Servers" },
 		{ key: "users", label: "Users" },

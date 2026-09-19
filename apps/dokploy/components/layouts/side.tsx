@@ -8,6 +8,7 @@ import {
 	BookIcon,
 	BotIcon,
 	Boxes,
+	Cloud,
 	ChevronRight,
 	ChevronsUpDown,
 	CircleHelp,
@@ -33,6 +34,7 @@ import {
 	ShieldCheck,
 	Smartphone,
 	Star,
+	Settings2,
 	Tags,
 	Trash2,
 	User,
@@ -117,6 +119,7 @@ type EnabledOpts = {
 	auth?: AuthQueryOutput;
 	permissions?: PermissionsOutput;
 	isCloud: boolean;
+	hiddenSidebarItems?: string[];
 };
 
 type SingleNavItem = {
@@ -124,6 +127,7 @@ type SingleNavItem = {
 	title: string;
 	url: string;
 	icon?: LucideIcon;
+	sidebarKey?: string;
 	isEnabled?: (opts: EnabledOpts) => boolean;
 };
 
@@ -169,18 +173,21 @@ const MENU: Menu = {
 			title: "Home",
 			url: "/dashboard/home",
 			icon: House,
+			sidebarKey: "home",
 		},
 		{
 			isSingle: true,
 			title: "Projects",
 			url: "/dashboard/projects",
 			icon: Folder,
+			sidebarKey: "projects",
 		},
 		{
 			isSingle: true,
 			title: "Overview",
 			url: "/dashboard/overview",
 			icon: LayoutGrid,
+			sidebarKey: "overview",
 			// Only enabled for users with access to services
 			isEnabled: ({ permissions }) => !!permissions?.service.read,
 		},
@@ -189,6 +196,7 @@ const MENU: Menu = {
 			title: "Monitoring",
 			url: "/dashboard/monitoring",
 			icon: BarChartHorizontalBigIcon,
+			sidebarKey: "monitoring",
 			// Only enabled in non-cloud environments and if user has monitoring.read
 			isEnabled: ({ isCloud, permissions }) =>
 				!isCloud && !!permissions?.monitoring.read,
@@ -198,6 +206,7 @@ const MENU: Menu = {
 			title: "Schedules",
 			url: "/dashboard/schedules",
 			icon: Clock,
+			sidebarKey: "schedules",
 			isEnabled: ({ permissions }) => !!permissions?.organization.update,
 		},
 		{
@@ -205,6 +214,7 @@ const MENU: Menu = {
 			title: "Traefik File System",
 			url: "/dashboard/traefik",
 			icon: GalleryVerticalEnd,
+			sidebarKey: "traefik",
 			// Only enabled for users with access to Traefik files
 			isEnabled: ({ permissions }) => !!permissions?.traefikFiles.read,
 		},
@@ -213,6 +223,7 @@ const MENU: Menu = {
 			title: "Docker",
 			url: "/dashboard/docker",
 			icon: BlocksIcon,
+			sidebarKey: "docker",
 			// Only enabled for users with access to Docker
 			isEnabled: ({ permissions }) => !!permissions?.docker.read,
 		},
@@ -221,6 +232,7 @@ const MENU: Menu = {
 			title: "Requests",
 			url: "/dashboard/requests",
 			icon: Forward,
+			sidebarKey: "requests",
 			// Only enabled for users with access to Docker in non-cloud environments
 			isEnabled: ({ permissions, isCloud }) =>
 				!!(permissions?.docker.read && !isCloud),
@@ -289,6 +301,7 @@ const MENU: Menu = {
 			title: "Web Server",
 			url: "/dashboard/settings/server",
 			icon: Activity,
+			sidebarKey: "web-server",
 			// Only enabled for admins in non-cloud environments
 			isEnabled: ({ permissions, isCloud }) =>
 				!!(permissions?.organization.update && !isCloud),
@@ -298,18 +311,28 @@ const MENU: Menu = {
 			title: "Profile",
 			url: "/dashboard/settings/profile",
 			icon: User,
+			sidebarKey: "profile",
+		},
+		{
+			isSingle: true,
+			title: "Configuration",
+			url: "/dashboard/settings/configuration",
+			icon: Settings2,
+			sidebarKey: "configuration",
 		},
 		{
 			isSingle: true,
 			title: "Sessions",
 			icon: Smartphone,
 			url: "/dashboard/settings/sessions",
+			sidebarKey: "sessions",
 		},
 		{
 			isSingle: true,
 			title: "Remote Servers",
 			url: "/dashboard/settings/servers",
 			icon: Server,
+			sidebarKey: "remote-servers",
 			isEnabled: ({ permissions }) => !!permissions?.server.read,
 		},
 		{
@@ -317,6 +340,7 @@ const MENU: Menu = {
 			title: "Deployments",
 			url: "/dashboard/settings/deployments",
 			icon: Boxes,
+			sidebarKey: "deployments",
 			isEnabled: ({ permissions, isCloud }) =>
 				!!(permissions?.server.read && !isCloud),
 		},
@@ -325,6 +349,7 @@ const MENU: Menu = {
 			title: "Users",
 			icon: Users,
 			url: "/dashboard/settings/users",
+			sidebarKey: "users",
 			// Only enabled for users with member.read permission
 			isEnabled: ({ permissions }) => !!permissions?.member.read,
 		},
@@ -333,6 +358,7 @@ const MENU: Menu = {
 			title: "Audit Logs",
 			icon: ClipboardList,
 			url: "/dashboard/settings/audit-logs",
+			sidebarKey: "audit-logs",
 			isEnabled: ({ permissions }) => !!permissions?.auditLog.read,
 		},
 		{
@@ -340,6 +366,7 @@ const MENU: Menu = {
 			title: "SSH Keys",
 			icon: KeyRound,
 			url: "/dashboard/settings/ssh-keys",
+			sidebarKey: "ssh-keys",
 			// Only enabled for users with access to SSH keys
 			isEnabled: ({ permissions }) => !!permissions?.sshKeys.read,
 		},
@@ -348,13 +375,23 @@ const MENU: Menu = {
 			icon: BotIcon,
 			url: "/dashboard/settings/ai",
 			isSingle: true,
+			sidebarKey: "ai",
 			isEnabled: ({ permissions }) => !!permissions?.organization.update,
+		},
+		{
+			isSingle: true,
+			title: "Cloud Providers",
+			url: "/dashboard/settings/providers",
+			icon: Cloud,
+			sidebarKey: "cloud-providers",
+			isEnabled: ({ auth }) => auth?.role !== "member",
 		},
 		{
 			isSingle: true,
 			title: "Tags",
 			url: "/dashboard/settings/tags",
 			icon: Tags,
+			sidebarKey: "tags",
 			isEnabled: ({ permissions }) => !!permissions?.tag.read,
 		},
 		{
@@ -362,6 +399,7 @@ const MENU: Menu = {
 			title: "Git",
 			url: "/dashboard/settings/git-providers",
 			icon: GitBranch,
+			sidebarKey: "git",
 			// Only enabled for users with access to Git providers
 			isEnabled: ({ permissions }) => !!permissions?.gitProviders.read,
 		},
@@ -370,6 +408,7 @@ const MENU: Menu = {
 			title: "Registry",
 			url: "/dashboard/settings/registry",
 			icon: Package,
+			sidebarKey: "registry",
 			isEnabled: ({ permissions }) => !!permissions?.registry.read,
 		},
 		{
@@ -377,6 +416,7 @@ const MENU: Menu = {
 			title: "Secrets",
 			url: "/dashboard/settings/secrets",
 			icon: Vault,
+			sidebarKey: "secrets",
 			isEnabled: ({ permissions }) => !!permissions?.vaultProvider.create,
 		},
 		{
@@ -384,6 +424,7 @@ const MENU: Menu = {
 			title: "DNS Providers",
 			url: "/dashboard/settings/dns",
 			icon: Globe,
+			sidebarKey: "dns-providers",
 			isEnabled: ({ permissions }) => !!permissions?.dnsProvider.read,
 		},
 		{
@@ -391,6 +432,7 @@ const MENU: Menu = {
 			title: "S3 Destinations",
 			url: "/dashboard/settings/destinations",
 			icon: HardDrive,
+			sidebarKey: "s3-destinations",
 			isEnabled: ({ permissions }) => !!permissions?.destination.read,
 		},
 
@@ -399,6 +441,7 @@ const MENU: Menu = {
 			title: "Certificates",
 			url: "/dashboard/settings/certificates",
 			icon: ShieldCheck,
+			sidebarKey: "certificates",
 			isEnabled: ({ permissions }) => !!permissions?.certificate.read,
 		},
 		{
@@ -406,6 +449,7 @@ const MENU: Menu = {
 			title: "Notifications",
 			url: "/dashboard/settings/notifications",
 			icon: Bell,
+			sidebarKey: "notifications",
 			// Only enabled for users with access to notifications
 			isEnabled: ({ permissions }) => !!permissions?.notification.read,
 		},
@@ -414,6 +458,7 @@ const MENU: Menu = {
 			title: "Billing",
 			url: "/dashboard/settings/billing",
 			icon: CreditCard,
+			sidebarKey: "billing",
 			// Only enabled for owners in cloud environments
 			isEnabled: ({ auth, isCloud }) => !!(auth?.role === "owner" && isCloud),
 		},
@@ -422,6 +467,7 @@ const MENU: Menu = {
 			title: "License",
 			url: "/dashboard/settings/license",
 			icon: Key,
+			sidebarKey: "license",
 			// Only enabled for owners
 			isEnabled: ({ auth }) => !!(auth?.role === "owner"),
 		},
@@ -430,6 +476,7 @@ const MENU: Menu = {
 			title: "SSO",
 			url: "/dashboard/settings/sso",
 			icon: LogIn,
+			sidebarKey: "sso",
 			// Enabled for admins in both cloud and self-hosted (enterprise)
 			isEnabled: ({ permissions }) => !!permissions?.organization.update,
 		},
@@ -438,6 +485,7 @@ const MENU: Menu = {
 			title: "Whitelabeling",
 			url: "/dashboard/settings/whitelabeling",
 			icon: Palette,
+			sidebarKey: "whitelabeling",
 			// Only enabled for owners in non-cloud environments (enterprise)
 			isEnabled: ({ auth, isCloud }) => !!(auth?.role === "owner" && !isCloud),
 		},
@@ -465,6 +513,7 @@ function createMenuForAuthUser(opts: {
 	auth?: AuthQueryOutput;
 	permissions?: PermissionsOutput;
 	isCloud: boolean;
+	hiddenSidebarItems?: string[];
 	whitelabeling?: {
 		docsUrl?: string | null;
 		supportUrl?: string | null;
@@ -484,8 +533,15 @@ function createMenuForAuthUser(opts: {
 						auth: opts.auth,
 						permissions: opts.permissions,
 						isCloud: opts.isCloud,
+						hiddenSidebarItems: opts.hiddenSidebarItems,
 					}),
 		) as T[];
+
+	const filterHidden = <T extends { sidebarKey?: string }>(items: readonly T[]) =>
+		items.filter((item) => {
+			if (!item.sidebarKey) return true;
+			return !opts.hiddenSidebarItems?.includes(item.sidebarKey);
+		}) as T[];
 
 	// Apply whitelabeling URL overrides to help items
 	const helpItems = filterEnabled(MENU.help).map((item) => {
@@ -499,8 +555,8 @@ function createMenuForAuthUser(opts: {
 	});
 
 	return {
-		home: filterEnabled(MENU.home),
-		settings: filterEnabled(MENU.settings),
+		home: filterHidden(filterEnabled(MENU.home)),
+		settings: filterHidden(filterEnabled(MENU.settings)),
 		help: helpItems,
 	};
 }
@@ -941,6 +997,7 @@ export default function Page({ children }: Props) {
 	const pathname = usePathname();
 	const { data: auth } = api.user.get.useQuery();
 	const { data: permissions } = api.user.getPermissions.useQuery();
+	const { data: userPreferences } = api.userPreferences.get.useQuery();
 	const { data: dokployVersion } = api.settings.getDokployVersion.useQuery();
 	const { data: whitelabeling } = api.whitelabeling.get.useQuery(undefined, {
 		staleTime: 5 * 60 * 1000,
@@ -958,6 +1015,7 @@ export default function Page({ children }: Props) {
 		auth,
 		permissions,
 		isCloud: !!isCloud,
+		hiddenSidebarItems: (userPreferences?.hiddenSidebarItems as string[]) ?? [],
 		whitelabeling,
 	});
 
