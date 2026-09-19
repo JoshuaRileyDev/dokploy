@@ -9,17 +9,20 @@ import { clusterRouter } from "./routers/cluster";
 import { composeRouter } from "./routers/compose";
 import { deploymentRouter } from "./routers/deployment";
 import { destinationRouter } from "./routers/destination";
+import { domainProviderRouter } from "./routers/domain-provider";
 import { dnsProviderRouter } from "./routers/dns-provider";
 import { dockerRouter } from "./routers/docker";
 import { dockerDiskUsageRouter } from "./routers/docker-disk-usage";
 import { dockerImageRouter } from "./routers/docker-image";
 import { dockerVolumeRouter } from "./routers/docker-volume";
 import { domainRouter } from "./routers/domain";
+import { domainsRouter } from "./routers/domains";
 import { environmentRouter } from "./routers/environment";
 import { gitProviderRouter } from "./routers/git-provider";
 import { giteaRouter } from "./routers/gitea";
 import { githubRouter } from "./routers/github";
 import { gitlabRouter } from "./routers/gitlab";
+import { oauthRouter } from "./routers/oauth";
 import { libsqlRouter } from "./routers/libsql";
 import { mariadbRouter } from "./routers/mariadb";
 import { mongoRouter } from "./routers/mongo";
@@ -34,6 +37,7 @@ import { portRouter } from "./routers/port";
 import { postgresRouter } from "./routers/postgres";
 import { previewDeploymentRouter } from "./routers/preview-deployment";
 import { projectRouter } from "./routers/project";
+import { serviceMigrationRouter } from "./routers/service-migration";
 import { auditLogRouter } from "./routers/proprietary/audit-log";
 import { customRoleRouter } from "./routers/proprietary/custom-role";
 import { forwardAuthRouter } from "./routers/proprietary/forward-auth";
@@ -54,6 +58,8 @@ import { stripeRouter } from "./routers/stripe";
 import { swarmRouter } from "./routers/swarm";
 import { tagRouter } from "./routers/tag";
 import { userRouter } from "./routers/user";
+import { userPreferencesRouter } from "./routers/user-preferences";
+import { cloudProviderRouter } from "./routers/cloud-provider";
 import { vaultProviderRouter } from "./routers/vault-provider";
 import { volumeBackupsRouter } from "./routers/volume-backups";
 /**
@@ -73,16 +79,19 @@ export const appRouter = createTRPCRouter({
 	compose: composeRouter,
 	deployment: deploymentRouter,
 	destination: destinationRouter,
+	domainProvider: domainProviderRouter,
 	dnsProvider: dnsProviderRouter,
 	docker: dockerRouter,
 	dockerDiskUsage: dockerDiskUsageRouter,
 	dockerImage: dockerImageRouter,
 	dockerVolume: dockerVolumeRouter,
 	domain: domainRouter,
+	domains: domainsRouter,
 	gitea: giteaRouter,
 	gitProvider: gitProviderRouter,
 	github: githubRouter,
 	gitlab: gitlabRouter,
+	oauth: oauthRouter,
 	libsql: libsqlRouter,
 	mariadb: mariadbRouter,
 	mongo: mongoRouter,
@@ -93,6 +102,7 @@ export const appRouter = createTRPCRouter({
 	postgres: postgresRouter,
 	previewDeployment: previewDeploymentRouter,
 	project: projectRouter,
+	serviceMigration: serviceMigrationRouter,
 	redirects: redirectsRouter,
 	redis: redisRouter,
 	registry: registryRouter,
@@ -103,6 +113,7 @@ export const appRouter = createTRPCRouter({
 	stripe: stripeRouter,
 	swarm: swarmRouter,
 	user: userRouter,
+	userPreferences: userPreferencesRouter,
 	vaultProvider: vaultProviderRouter,
 	ai: aiRouter,
 	organization: organizationRouter,
@@ -120,6 +131,7 @@ export const appRouter = createTRPCRouter({
 	tag: tagRouter,
 	patch: patchRouter,
 	overview: overviewRouter,
+	cloudProvider: cloudProviderRouter,
 });
 
 // export type definition of API
