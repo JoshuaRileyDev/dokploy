@@ -89,16 +89,19 @@ export const ShowProvisioningJobs = () => {
 	const { data: jobs, isLoading } = api.cloudProvider.job.list.useQuery(
 		undefined,
 		{
-			refetchInterval: (data) => {
-				// In React Query v4, the callback receives the data directly
-				if (!data || data.length === 0) {
+			refetchInterval: (query) => {
+				const jobsData = Array.isArray(query.state.data)
+					? query.state.data
+					: [];
+
+				if (jobsData.length === 0) {
 					// No data yet - poll aggressively to catch new jobs
 					return 2000;
 				}
 
 				// Check if there are any active jobs in the last 24 hours
 				const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-				const hasActiveJobs = data.some((job) => {
+				const hasActiveJobs = jobsData.some((job) => {
 					const jobDate = new Date(job.createdAt);
 					const isRecent = jobDate > oneDayAgo;
 					const isActive =
