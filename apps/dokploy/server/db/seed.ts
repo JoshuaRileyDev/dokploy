@@ -1,5 +1,8 @@
-import bcrypt from "bcrypt";
-import { and, eq } from "drizzle-orm";
+import { execFile } from "node:child_process";
+import { access, appendFile, chmod, mkdir, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import { db } from "@dokploy/server/db";
 import {
 	account,
@@ -9,26 +12,38 @@ import {
 	organization,
 	projects,
 	server,
+	sshKeys,
 	user,
 } from "@dokploy/server/db/schema";
+import bcrypt from "bcrypt";
+import { and, eq } from "drizzle-orm";
 
 const now = new Date();
+const execFileAsync = promisify(execFile);
 
-const seedAdminEmail = (
-	process.env.SEED_ADMIN_EMAIL ?? "admin@dokploy.local"
-)
+const seedAdminEmail = (process.env.SEED_ADMIN_EMAIL ?? "admin@dokploy.local")
 	.trim()
 	.toLowerCase();
 const seedAdminPassword = process.env.SEED_ADMIN_PASSWORD ?? "admin1234";
 const seedAdminFirstName = process.env.SEED_ADMIN_FIRST_NAME ?? "Admin";
 const seedAdminLastName = process.env.SEED_ADMIN_LAST_NAME ?? "User";
 
-const seedServerName = process.env.SEED_SERVER_NAME ?? "Local Development Server";
+const seedServerName =
+	process.env.SEED_SERVER_NAME ?? "Local Development Server";
 const seedServerDescription =
 	process.env.SEED_SERVER_DESCRIPTION ?? "Seeded local development server";
 const seedServerIpAddress = process.env.SEED_SERVER_IP ?? "127.0.0.1";
 const seedServerPort = Number(process.env.SEED_SERVER_PORT ?? "22");
-const seedServerUsername = process.env.SEED_SERVER_USERNAME ?? "root";
+const seedServerUsername =
+	process.env.SEED_SERVER_USERNAME ??
+	process.env.USER ??
+	process.env.LOGNAME ??
+	"root";
+const seedSshKeyName =
+	process.env.SEED_SSH_KEY_NAME ?? "Dokploy Local Development Key";
+const seedSshKeyPath =
+	process.env.SEED_SSH_KEY_PATH ??
+	path.join(os.homedir(), ".ssh", "dokploy-local");
 
 const seedProjectName = process.env.SEED_PROJECT_NAME ?? "Starter Project";
 const seedProjectDescription =
@@ -53,10 +68,53 @@ const logCreated = (label: string, created: boolean) => {
 	console.log(`${created ? "Created" : "Updated"} ${label}`);
 };
 
+const ensureLocalSshKey = async () => {
+	const publicKeyPath = `${seedSshKeyPath}.pub`;
+	await mkdir(path.dirname(seedSshKeyPath), { recursive: true, mode: 0o700 });
+
+	try {
+		await access(seedSshKeyPath);
+		await access(publicKeyPath);
+	} catch {
+		await execFileAsync("ssh-keygen", [
+			"-t",
+			"ed25519",
+			"-f",
+			seedSshKeyPath,
+			"-N",
+			"",
+			"-C",
+			"dokploy-local-development",
+		]);
+	}
+
+	const privateKey = await readFile(seedSshKeyPath, "utf8");
+	const publicKey = (await readFile(publicKeyPath, "utf8")).trim();
+	const authorizedKeysPath = path.join(os.homedir(), ".ssh", "authorized_keys");
+	let authorizedKeys = "";
+	try {
+		authorizedKeys = await readFile(authorizedKeysPath, "utf8");
+	} catch {
+		// Create it below when local SSH authorization is first configured.
+	}
+	if (!authorizedKeys.split("\n").some((line) => line.trim() === publicKey)) {
+		await appendFile(
+			authorizedKeysPath,
+			`${authorizedKeys.endsWith("\n") || !authorizedKeys ? "" : "\n"}${publicKey}\n`,
+		);
+	}
+	await chmod(seedSshKeyPath, 0o600);
+	await chmod(publicKeyPath, 0o644);
+	await chmod(authorizedKeysPath, 0o600);
+
+	return { privateKey, publicKey };
+};
+
 const seed = async () => {
 	if (!Number.isFinite(seedServerPort) || seedServerPort < 1) {
 		throw new Error(`Invalid SEED_SERVER_PORT value: ${seedServerPort}`);
 	}
+	const localSshKey = await ensureLocalSshKey();
 
 	await db.transaction(async (tx) => {
 		let adminUser = await tx.query.user.findFirst({
@@ -182,6 +240,42 @@ const seed = async () => {
 				.where(eq(member.id, existingMembership.id));
 		}
 
+		let seededSshKey = await tx.query.sshKeys.findFirst({
+			where: and(
+				eq(sshKeys.organizationId, adminOrganization.id),
+				eq(sshKeys.name, seedSshKeyName),
+			),
+		});
+		let createdSshKey = false;
+
+		if (!seededSshKey) {
+			const [createdSshKeyRow] = await tx
+				.insert(sshKeys)
+				.values({
+					name: seedSshKeyName,
+					description: "Dedicated key for the local Dokploy development server",
+					privateKey: localSshKey.privateKey,
+					publicKey: localSshKey.publicKey,
+					organizationId: adminOrganization.id,
+				})
+				.returning();
+			seededSshKey = createdSshKeyRow;
+			createdSshKey = true;
+		} else {
+			await tx
+				.update(sshKeys)
+				.set({
+					privateKey: localSshKey.privateKey,
+					publicKey: localSshKey.publicKey,
+					organizationId: adminOrganization.id,
+				})
+				.where(eq(sshKeys.sshKeyId, seededSshKey.sshKeyId));
+		}
+
+		if (!seededSshKey) {
+			throw new Error("Failed to create or load the local seed SSH key");
+		}
+
 		let seededServer = await tx.query.server.findFirst({
 			where: and(
 				eq(server.organizationId, adminOrganization.id),
@@ -199,6 +293,7 @@ const seed = async () => {
 					ipAddress: seedServerIpAddress,
 					port: seedServerPort,
 					username: seedServerUsername,
+					sshKeyId: seededSshKey.sshKeyId,
 					organizationId: adminOrganization.id,
 					createdAt: now.toISOString(),
 				})
@@ -213,6 +308,7 @@ const seed = async () => {
 					ipAddress: seedServerIpAddress,
 					port: seedServerPort,
 					username: seedServerUsername,
+					sshKeyId: seededSshKey.sshKeyId,
 					organizationId: adminOrganization.id,
 				})
 				.where(eq(server.serverId, seededServer.serverId));
@@ -322,11 +418,14 @@ const seed = async () => {
 					dockerImage: seedApplicationImage,
 					applicationStatus: "idle",
 				})
-				.where(eq(applications.applicationId, existingApplication.applicationId));
+				.where(
+					eq(applications.applicationId, existingApplication.applicationId),
+				);
 		}
 
 		logCreated("admin user", createdAdminUser);
 		logCreated("organization", createdOrganization);
+		logCreated("SSH key", createdSshKey);
 		logCreated("server", createdServer);
 		logCreated("project", createdProject);
 		logCreated("environment", createdEnvironment);
@@ -337,10 +436,24 @@ const seed = async () => {
 	console.log("Seeded local admin credentials:");
 	console.log(`Email: ${seedAdminEmail}`);
 	console.log(`Password: ${seedAdminPassword}`);
+	console.log(`SSH key: ${seedSshKeyPath}`);
+	console.log(
+		`SSH target: ${seedServerUsername}@${seedServerIpAddress}:${seedServerPort}`,
+	);
 };
 
-seed().catch((error) => {
-	console.error("Database seed failed");
-	console.error(error);
-	process.exitCode = 1;
-});
+const main = async () => {
+	try {
+		await seed();
+	} catch (error) {
+		console.error("Database seed failed");
+		console.error(error);
+		process.exitCode = 1;
+	} finally {
+		await (
+			db as typeof db & { $client: { end: () => Promise<void> } }
+		).$client.end();
+	}
+};
+
+void main();
