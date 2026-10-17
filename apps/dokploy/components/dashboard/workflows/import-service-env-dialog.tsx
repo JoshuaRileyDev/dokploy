@@ -220,9 +220,11 @@ export const ImportServiceEnvDialog = ({ workflowRepositoryId }: Props) => {
 											{entries.map((entry) => (
 												<label
 													key={`${entry.source}:${entry.name}`}
+													htmlFor={`import-env-${entry.source}-${entry.name}`}
 													className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-muted"
 												>
 													<Checkbox
+														id={`import-env-${entry.source}-${entry.name}`}
 														disabled={!!entry.problem}
 														checked={
 															!entry.problem && selectedNames.has(entry.name)

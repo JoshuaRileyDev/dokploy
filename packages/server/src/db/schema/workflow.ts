@@ -394,11 +394,11 @@ export const apiRemoveWorkflowNotification = z.object({
 });
 
 export const apiFindWorkflowEnv = z.object({
-	workflowRepositoryId: z.string().nullable().default(null),
+	workflowRepositoryId: z.string().min(1),
 });
 
 export const apiSetWorkflowEnv = z.object({
-	workflowRepositoryId: z.string().nullable().default(null),
+	workflowRepositoryId: z.string().min(1),
 	kind: z.enum(workflowEnvKind.enumValues),
 	name: z
 		.string()

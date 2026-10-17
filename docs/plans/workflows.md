@@ -114,9 +114,9 @@ Shipped as: migration `drizzle-fork/0003_workflow_notifications`, `utils/workflo
 
 ## Phase 4: Secrets, variables, scheduling, concurrency (done)
 
-Shipped as: migration `drizzle-fork/0004_workflow_env_concurrency`, `utils/workflows/expressions.ts`, router `workflow.{env,setEnv,removeEnv}`, a Secrets & Variables tab (organization-wide) and card (per repository).
+Shipped as: migration `drizzle-fork/0004_workflow_env_concurrency`, `utils/workflows/expressions.ts`, router `workflow.{env,setEnv,removeEnv}`, and a Secrets & Variables tab in each repository's Settings modal.
 
-- Secrets and variables live in `workflow_env` (values encrypted with Dokploy's `encryptedText`). Repository values override organization values by name. Secret values are never returned by the API and are masked in logs; untrusted runs get neither.
+- Secrets and variables are per repository, stored in `workflow_env` (values encrypted with Dokploy's `encryptedText`). The table's nullable `workflowRepositoryId` is left over from an organization-wide scope that was dropped; the API always requires a repository. Secret values are never returned by the API and are masked in logs; untrusted runs get neither.
 - `schedule:` triggers use node-schedule in the Dokploy process (UTC, like GitHub), reconciled at startup and whenever repositories, workflows or settings change. Each tick re-reads the workflow from the default branch's latest commit and only runs if that cron is still there.
 - `concurrency:` (workflow level) follows GitHub: a new run replaces a pending run in the same group; with `cancel-in-progress` it also cancels the running one. Groups are scoped to the repository. Group expressions support context lookups, literals and `|| && == != !`; anything else (e.g. `format()`) keeps the raw text as the group.
 - Artifacts work between jobs of the same run (act's artifact server, stored in the run directory and removed afterwards). `actions/cache` uses act's built-in cache server, which persists on each workflow server.

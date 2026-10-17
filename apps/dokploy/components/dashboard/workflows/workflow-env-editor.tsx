@@ -37,7 +37,7 @@ import { ImportServiceEnvDialog } from "./import-service-env-dialog";
 type Kind = "secret" | "variable";
 
 interface EditProps {
-	workflowRepositoryId: string | null;
+	workflowRepositoryId: string;
 	existing?: { kind: Kind; name: string; value: string | null };
 }
 
@@ -148,7 +148,7 @@ const EditEnvDialog = ({ workflowRepositoryId, existing }: EditProps) => {
 };
 
 interface Props {
-	workflowRepositoryId: string | null;
+	workflowRepositoryId: string;
 }
 
 export const WorkflowEnvEditor = ({ workflowRepositoryId }: Props) => {
@@ -164,17 +164,14 @@ export const WorkflowEnvEditor = ({ workflowRepositoryId }: Props) => {
 		<div className="flex flex-col gap-3">
 			<div className="flex items-center justify-between gap-4">
 				<p className="text-sm text-muted-foreground">
-					{workflowRepositoryId
-						? "Only this repository's runs get these. They override organization values with the same name."
-						: "Every repository's runs get these. Fork pull requests never receive secrets."}
+					Available to this repository's runs. Pull requests from forks never
+					receive secrets.
 				</p>
 				{canEdit && (
-					<div className="flex gap-2">
-						{workflowRepositoryId && (
-							<ImportServiceEnvDialog
-								workflowRepositoryId={workflowRepositoryId}
-							/>
-						)}
+					<div className="flex shrink-0 gap-2">
+						<ImportServiceEnvDialog
+							workflowRepositoryId={workflowRepositoryId}
+						/>
 						<EditEnvDialog workflowRepositoryId={workflowRepositoryId} />
 					</div>
 				)}

@@ -13,14 +13,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
 	Table,
@@ -38,9 +30,7 @@ import {
 	githubRepositoryUrl,
 	SUPPORTED_EVENTS,
 } from "./utils";
-import { WorkflowEnvEditor } from "./workflow-env-editor";
-
-const ANY_SERVER = "any";
+import { WorkflowRepositorySettings } from "./workflow-repository-settings";
 
 interface Props {
 	workflowRepositoryId: string;
@@ -52,8 +42,6 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 	const { data: repository, isPending } = api.workflow.oneRepository.useQuery({
 		workflowRepositoryId,
 	});
-	const { data: workflowServers } = api.server.workflowServers.useQuery();
-	const update = api.workflow.updateRepository.useMutation();
 	const sync = api.workflow.syncRepository.useMutation();
 	const setEnabled = api.workflow.setDefinitionEnabled.useMutation();
 	const canEdit = !!permissions?.workflow.create;
@@ -61,17 +49,6 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 
 	const refresh = () =>
 		utils.workflow.oneRepository.invalidate({ workflowRepositoryId });
-
-	const saveSettings = (values: {
-		runGithubWorkflows?: boolean;
-		runDokployWorkflows?: boolean;
-		defaultServerId?: string | null;
-	}) =>
-		update
-			.mutateAsync({ workflowRepositoryId, ...values })
-			.then(() => toast.success("Settings saved"))
-			.catch((error) => toast.error(error.message))
-			.finally(refresh);
 
 	if (isPending || !repository) {
 		return (
@@ -123,101 +100,38 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 							</CardDescription>
 						</div>
 						{canEdit && (
-							<Button
-								variant="outline"
-								isLoading={sync.isPending}
-								onClick={() =>
-									sync
-										.mutateAsync({ workflowRepositoryId })
-										.then(() => toast.success("Workflows synced"))
-										.catch((error) => toast.error(error.message))
-										.finally(refresh)
-								}
-							>
-								<RefreshCw className="size-4" />
-								Sync
-							</Button>
+							<div className="flex gap-2">
+								<Button
+									variant="outline"
+									isLoading={sync.isPending}
+									onClick={() =>
+										sync
+											.mutateAsync({ workflowRepositoryId })
+											.then(() => toast.success("Workflows synced"))
+											.catch((error) => toast.error(error.message))
+											.finally(refresh)
+									}
+								>
+									<RefreshCw className="size-4" />
+									Sync
+								</Button>
+								<WorkflowRepositorySettings repository={repository} />
+							</div>
 						)}
 					</CardHeader>
-					<CardContent className="grid gap-6 border-t pt-6 md:grid-cols-3">
+					<CardContent className="flex flex-col gap-3 border-t pt-4">
 						{repository.syncError && (
-							<AlertBlock type="error" className="md:col-span-3">
+							<AlertBlock type="error">
 								Last sync failed: {repository.syncError}
 							</AlertBlock>
 						)}
-						<div className="flex items-start justify-between gap-4 rounded-lg border p-4">
-							<div className="space-y-1">
-								<Label htmlFor="run-dokploy">Run .dokploy/workflows</Label>
-								<p className="text-sm text-muted-foreground">
-									Workflows written for Dokploy.
-								</p>
-							</div>
-							<Switch
-								id="run-dokploy"
-								disabled={!canEdit}
-								checked={repository.runDokployWorkflows}
-								onCheckedChange={(checked) =>
-									saveSettings({ runDokployWorkflows: checked })
-								}
-							/>
+						<div>
+							<h3 className="font-medium">Workflows</h3>
+							<p className="text-sm text-muted-foreground">
+								Read from the {repository.defaultBranch} branch. Runs always use
+								the workflow files at the commit that triggered them.
+							</p>
 						</div>
-						<div className="flex items-start justify-between gap-4 rounded-lg border p-4">
-							<div className="space-y-1">
-								<Label htmlFor="run-github">Run .github/workflows</Label>
-								<p className="text-sm text-muted-foreground">
-									Leave this off if GitHub Actions still runs these, or every
-									workflow will run twice.
-								</p>
-							</div>
-							<Switch
-								id="run-github"
-								disabled={!canEdit}
-								checked={repository.runGithubWorkflows}
-								onCheckedChange={(checked) =>
-									saveSettings({ runGithubWorkflows: checked })
-								}
-							/>
-						</div>
-						<div className="space-y-2 rounded-lg border p-4">
-							<Label>Workflow server</Label>
-							<Select
-								disabled={!canEdit}
-								value={repository.defaultServerId ?? ANY_SERVER}
-								onValueChange={(value) =>
-									saveSettings({
-										defaultServerId: value === ANY_SERVER ? null : value,
-									})
-								}
-							>
-								<SelectTrigger>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value={ANY_SERVER}>
-										Any workflow server
-									</SelectItem>
-									{workflowServers?.map((server) => (
-										<SelectItem key={server.serverId} value={server.serverId}>
-											{server.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
-					</CardContent>
-				</div>
-			</Card>
-
-			<Card className="rounded-xl bg-sidebar p-2.5">
-				<div className="rounded-xl bg-background shadow-md">
-					<CardHeader>
-						<CardTitle className="text-lg">Workflows</CardTitle>
-						<CardDescription>
-							Read from the {repository.defaultBranch} branch. Runs always use
-							the workflow files at the commit that triggered them.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="border-t pt-2">
 						{repository.definitions.length === 0 ? (
 							<p className="py-10 text-center text-sm text-muted-foreground">
 								No workflow files found in .dokploy/workflows or
@@ -325,16 +239,6 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 								</TableBody>
 							</Table>
 						)}
-					</CardContent>
-				</div>
-			</Card>
-			<Card className="rounded-xl bg-sidebar p-2.5">
-				<div className="rounded-xl bg-background shadow-md">
-					<CardHeader>
-						<CardTitle className="text-lg">Secrets & Variables</CardTitle>
-					</CardHeader>
-					<CardContent className="border-t pt-4">
-						<WorkflowEnvEditor workflowRepositoryId={workflowRepositoryId} />
 					</CardContent>
 				</div>
 			</Card>

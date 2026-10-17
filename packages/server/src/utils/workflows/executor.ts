@@ -111,10 +111,7 @@ export const executeWorkflowRun = async (
 		const token = await getGithubToken(authGithub(github));
 		const base = new URL(normalizeGithubUrl(github.githubUrl));
 		const configured = run.trusted
-			? await resolveWorkflowEnv(
-					run.repository.organizationId,
-					run.workflowRepositoryId,
-				)
+			? await resolveWorkflowEnv(run.workflowRepositoryId)
 			: { secrets: {}, variables: {} };
 		const secrets: Record<string, string> = run.trusted
 			? { ...configured.secrets, GITHUB_TOKEN: token }

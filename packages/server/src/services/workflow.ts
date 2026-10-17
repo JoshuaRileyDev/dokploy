@@ -12,15 +12,7 @@ import {
 	workflowRepositories,
 } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import {
-	and,
-	arrayContains,
-	desc,
-	eq,
-	isNull,
-	notInArray,
-	or,
-} from "drizzle-orm";
+import { and, arrayContains, desc, eq, notInArray } from "drizzle-orm";
 import type { z } from "zod";
 import { authGithub } from "../utils/providers/github";
 import {
@@ -377,20 +369,15 @@ export const findNotificationChannels = async (organizationId: string) =>
 		orderBy: desc(notifications.createdAt),
 	});
 
-const repositoryScope = (workflowRepositoryId: string | null) =>
-	workflowRepositoryId
-		? eq(workflowEnv.workflowRepositoryId, workflowRepositoryId)
-		: isNull(workflowEnv.workflowRepositoryId);
-
-/** Lists secrets and variables for one scope; secret values are never returned. */
+/** Lists a repository's secrets and variables; secret values are never returned. */
 export const findWorkflowEnv = async (
 	organizationId: string,
-	workflowRepositoryId: string | null,
+	workflowRepositoryId: string,
 ) => {
 	const rows = await db.query.workflowEnv.findMany({
 		where: and(
 			eq(workflowEnv.organizationId, organizationId),
-			repositoryScope(workflowRepositoryId),
+			eq(workflowEnv.workflowRepositoryId, workflowRepositoryId),
 		),
 		orderBy: (env, { asc }) => [asc(env.kind), asc(env.name)],
 	});
@@ -401,10 +388,9 @@ export const findWorkflowEnv = async (
 };
 
 const assertRepositoryInOrganization = async (
-	workflowRepositoryId: string | null,
+	workflowRepositoryId: string,
 	organizationId: string,
 ) => {
-	if (!workflowRepositoryId) return;
 	const repository = await findWorkflowRepositoryById(workflowRepositoryId);
 	if (repository.organizationId !== organizationId) {
 		throw new TRPCError({ code: "NOT_FOUND", message: "Repository not found" });
@@ -422,7 +408,7 @@ export const setWorkflowEnv = async (
 	const existing = await db.query.workflowEnv.findFirst({
 		where: and(
 			eq(workflowEnv.organizationId, organizationId),
-			repositoryScope(input.workflowRepositoryId),
+			eq(workflowEnv.workflowRepositoryId, input.workflowRepositoryId),
 			eq(workflowEnv.kind, input.kind),
 			eq(workflowEnv.name, input.name),
 		),
@@ -456,27 +442,13 @@ export const removeWorkflowEnv = async (
 			),
 		);
 
-/** Organization-wide values first, then repository values override them by name. */
-export const resolveWorkflowEnv = async (
-	organizationId: string,
-	workflowRepositoryId: string,
-) => {
+export const resolveWorkflowEnv = async (workflowRepositoryId: string) => {
 	const rows = await db.query.workflowEnv.findMany({
-		where: and(
-			eq(workflowEnv.organizationId, organizationId),
-			or(
-				isNull(workflowEnv.workflowRepositoryId),
-				eq(workflowEnv.workflowRepositoryId, workflowRepositoryId),
-			),
-		),
+		where: eq(workflowEnv.workflowRepositoryId, workflowRepositoryId),
 	});
-	const sorted = [...rows].sort(
-		(a, b) =>
-			Number(!!a.workflowRepositoryId) - Number(!!b.workflowRepositoryId),
-	);
 	const secrets: Record<string, string> = {};
 	const variables: Record<string, string> = {};
-	for (const row of sorted) {
+	for (const row of rows) {
 		(row.kind === "secret" ? secrets : variables)[row.name] = row.value;
 	}
 	return { secrets, variables };
