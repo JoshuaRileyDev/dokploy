@@ -31,6 +31,8 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { api } from "@/utils/api";
+import { RunWorkflowDialog } from "./run-workflow-dialog";
+import { ShowWorkflowRuns } from "./show-workflow-runs";
 import {
 	describeTrigger,
 	githubRepositoryUrl,
@@ -54,6 +56,7 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 	const sync = api.workflow.syncRepository.useMutation();
 	const setEnabled = api.workflow.setDefinitionEnabled.useMutation();
 	const canEdit = !!permissions?.workflow.create;
+	const canRun = !!permissions?.workflow.run;
 
 	const refresh = () =>
 		utils.workflow.oneRepository.invalidate({ workflowRepositoryId });
@@ -227,6 +230,7 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 										<TableHead>Triggers</TableHead>
 										<TableHead>Jobs</TableHead>
 										<TableHead className="text-right">Enabled</TableHead>
+										<TableHead />
 									</TableRow>
 								</TableHeader>
 								<TableBody>
@@ -298,12 +302,38 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 														}
 													/>
 												</TableCell>
+												<TableCell className="align-top text-right">
+													{canRun &&
+														!sourceOff &&
+														definition.enabled &&
+														!definition.parseError &&
+														definition.triggers.some(
+															(trigger) =>
+																trigger.event === "workflow_dispatch",
+														) && (
+															<RunWorkflowDialog
+																workflowRepositoryId={workflowRepositoryId}
+																defaultBranch={repository.defaultBranch}
+																definition={definition}
+															/>
+														)}
+												</TableCell>
 											</TableRow>
 										);
 									})}
 								</TableBody>
 							</Table>
 						)}
+					</CardContent>
+				</div>
+			</Card>
+			<Card className="rounded-xl bg-sidebar p-2.5">
+				<div className="rounded-xl bg-background shadow-md">
+					<CardHeader>
+						<CardTitle className="text-lg">Runs</CardTitle>
+					</CardHeader>
+					<CardContent className="border-t pt-4">
+						<ShowWorkflowRuns workflowRepositoryId={workflowRepositoryId} />
 					</CardContent>
 				</div>
 			</Card>

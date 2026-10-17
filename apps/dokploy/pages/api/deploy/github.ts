@@ -6,6 +6,7 @@ import {
 	findPreviewDeploymentByApplicationId,
 	findPreviewDeploymentsByPullRequestId,
 	IS_CLOUD,
+	queueWorkflowRunsForGithubEvent,
 	removePreviewDeployment,
 	shouldDeploy,
 } from "@dokploy/server";
@@ -83,10 +84,22 @@ export default async function handler(
 		return;
 	}
 
-	if (
-		req.headers["x-github-event"] !== "push" &&
-		req.headers["x-github-event"] !== "pull_request"
-	) {
+	const githubEvent = req.headers["x-github-event"] as string;
+	if (!IS_CLOUD) {
+		// Not awaited: fetching workflow files can outlast GitHub's 10s delivery timeout.
+		queueWorkflowRunsForGithubEvent({
+			githubId: githubResult.githubId,
+			eventName: githubEvent,
+			payload: githubBody,
+		}).catch((error) => console.error("Failed to queue workflow runs", error));
+	}
+
+	if (githubEvent === "release" || githubEvent === "create") {
+		res.status(200).json({ message: "Workflow event received" });
+		return;
+	}
+
+	if (githubEvent !== "push" && githubEvent !== "pull_request") {
 		res
 			.status(400)
 			.json({ message: "We only accept push events or pull_request events" });

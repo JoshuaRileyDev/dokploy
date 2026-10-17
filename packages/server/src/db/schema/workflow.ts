@@ -1,6 +1,8 @@
 import { relations } from "drizzle-orm";
 import {
 	boolean,
+	index,
+	integer,
 	jsonb,
 	pgEnum,
 	pgTable,
@@ -18,6 +20,35 @@ import { github } from "./github";
 import { server } from "./server";
 
 export const workflowSource = pgEnum("workflowSource", ["github", "dokploy"]);
+
+export const workflowRunStatus = pgEnum("workflowRunStatus", [
+	"queued",
+	"in_progress",
+	"success",
+	"failure",
+	"cancelled",
+	"skipped",
+]);
+
+export const workflowJobStatus = pgEnum("workflowJobStatus", [
+	"queued",
+	"in_progress",
+	"success",
+	"failure",
+	"cancelled",
+	"skipped",
+]);
+
+export type WorkflowRunStatus = (typeof workflowRunStatus.enumValues)[number];
+export type WorkflowJobStatus = (typeof workflowJobStatus.enumValues)[number];
+
+export type WorkflowStepState = {
+	key: string;
+	name: string;
+	status: WorkflowJobStatus;
+	startedAt?: string;
+	durationMs?: number;
+};
 
 export const workflowRepositories = pgTable(
 	"workflow_repository",
@@ -107,6 +138,7 @@ export const workflowRepositoryRelations = relations(
 			references: [server.serverId],
 		}),
 		definitions: many(workflowDefinitions),
+		runs: many(workflowRuns),
 	}),
 );
 
@@ -119,6 +151,112 @@ export const workflowDefinitionRelations = relations(
 		}),
 	}),
 );
+
+export const workflowRuns = pgTable(
+	"workflow_run",
+	{
+		workflowRunId: text("workflowRunId")
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => nanoid()),
+		workflowRepositoryId: text("workflowRepositoryId")
+			.notNull()
+			.references(() => workflowRepositories.workflowRepositoryId, {
+				onDelete: "cascade",
+			}),
+		workflowDefinitionId: text("workflowDefinitionId").references(
+			() => workflowDefinitions.workflowDefinitionId,
+			{ onDelete: "set null" },
+		),
+		workflowPath: text("workflowPath").notNull(),
+		workflowName: text("workflowName").notNull(),
+		source: workflowSource("source").notNull(),
+		runNumber: integer("runNumber").notNull(),
+		attempt: integer("attempt").notNull().default(1),
+		event: text("event").notNull(),
+		eventAction: text("eventAction"),
+		payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+		inputs: jsonb("inputs").$type<Record<string, string>>(),
+		jobNames: jsonb("jobNames")
+			.$type<Record<string, string>>()
+			.notNull()
+			.default({}),
+		ref: text("ref").notNull(),
+		sha: text("sha").notNull(),
+		branch: text("branch"),
+		title: text("title").notNull(),
+		actor: text("actor"),
+		pullRequestNumber: integer("pullRequestNumber"),
+		trusted: boolean("trusted").notNull().default(true),
+		status: workflowRunStatus("status").notNull().default("queued"),
+		errorMessage: text("errorMessage"),
+		serverId: text("serverId").references(() => server.serverId, {
+			onDelete: "set null",
+		}),
+		logPath: text("logPath"),
+		createdAt: text("createdAt")
+			.notNull()
+			.$defaultFn(() => new Date().toISOString()),
+		startedAt: text("startedAt"),
+		finishedAt: text("finishedAt"),
+	},
+	(table) => [
+		index("workflow_run_repo_created_idx").on(
+			table.workflowRepositoryId,
+			table.createdAt,
+		),
+		index("workflow_run_status_idx").on(table.status),
+	],
+);
+
+export const workflowJobs = pgTable("workflow_job", {
+	workflowJobId: text("workflowJobId")
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => nanoid()),
+	workflowRunId: text("workflowRunId")
+		.notNull()
+		.references(() => workflowRuns.workflowRunId, { onDelete: "cascade" }),
+	actKey: text("actKey").notNull(),
+	jobId: text("jobId").notNull(),
+	name: text("name").notNull(),
+	matrix: jsonb("matrix")
+		.$type<Record<string, unknown>>()
+		.notNull()
+		.default({}),
+	status: workflowJobStatus("status").notNull().default("in_progress"),
+	steps: jsonb("steps").$type<WorkflowStepState[]>().notNull().default([]),
+	logPath: text("logPath").notNull(),
+	position: integer("position").notNull(),
+	startedAt: text("startedAt"),
+	finishedAt: text("finishedAt"),
+});
+
+export const workflowRunRelations = relations(
+	workflowRuns,
+	({ one, many }) => ({
+		repository: one(workflowRepositories, {
+			fields: [workflowRuns.workflowRepositoryId],
+			references: [workflowRepositories.workflowRepositoryId],
+		}),
+		definition: one(workflowDefinitions, {
+			fields: [workflowRuns.workflowDefinitionId],
+			references: [workflowDefinitions.workflowDefinitionId],
+		}),
+		server: one(server, {
+			fields: [workflowRuns.serverId],
+			references: [server.serverId],
+		}),
+		jobs: many(workflowJobs),
+	}),
+);
+
+export const workflowJobRelations = relations(workflowJobs, ({ one }) => ({
+	run: one(workflowRuns, {
+		fields: [workflowJobs.workflowRunId],
+		references: [workflowRuns.workflowRunId],
+	}),
+}));
 
 export const apiImportWorkflowRepository = z.object({
 	githubId: z.string().min(1),
@@ -141,4 +279,20 @@ export const apiUpdateWorkflowRepository = z.object({
 export const apiSetWorkflowDefinitionEnabled = z.object({
 	workflowDefinitionId: z.string().min(1),
 	enabled: z.boolean(),
+});
+
+export const apiFindWorkflowRuns = z.object({
+	workflowRepositoryId: z.string().optional(),
+	status: z.enum(workflowRunStatus.enumValues).optional(),
+	limit: z.number().int().min(1).max(200).default(50),
+});
+
+export const apiFindOneWorkflowRun = z.object({
+	workflowRunId: z.string().min(1),
+});
+
+export const apiDispatchWorkflow = z.object({
+	workflowDefinitionId: z.string().min(1),
+	branch: z.string().min(1),
+	inputs: z.record(z.string(), z.string()).default({}),
 });

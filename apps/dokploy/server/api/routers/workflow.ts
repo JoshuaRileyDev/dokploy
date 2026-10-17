@@ -1,12 +1,18 @@
 import {
 	assertGitProviderAccess,
+	cancelWorkflowRun,
+	dispatchWorkflowRun,
 	findGithubById,
 	findWorkflowDefinitionById,
 	findWorkflowRepositoriesByOrganization,
 	findWorkflowRepositoryById,
+	findWorkflowRunById,
+	findWorkflowRuns,
+	getWorkflowRepositoryOctokit,
 	IS_CLOUD,
 	importWorkflowRepository,
 	removeWorkflowRepository,
+	rerunWorkflowRun,
 	setWorkflowDefinitionEnabled,
 	syncWorkflowRepository,
 	updateWorkflowRepository,
@@ -16,7 +22,10 @@ import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {
+	apiDispatchWorkflow,
 	apiFindOneWorkflowRepository,
+	apiFindOneWorkflowRun,
+	apiFindWorkflowRuns,
 	apiImportWorkflowRepository,
 	apiSetWorkflowDefinitionEnabled,
 	apiUpdateWorkflowRepository,
@@ -46,6 +55,14 @@ const findOwnedRepository = async (
 		});
 	}
 	return repository;
+};
+
+const findOwnedRun = async (workflowRunId: string, organizationId: string) => {
+	const run = await findWorkflowRunById(workflowRunId);
+	if (run.repository.organizationId !== organizationId) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Run not found" });
+	}
+	return run;
 };
 
 export const workflowRouter = createTRPCRouter({
@@ -149,5 +166,102 @@ export const workflowRouter = createTRPCRouter({
 				input.workflowDefinitionId,
 				input.enabled,
 			);
+		}),
+	branches: workflowProcedure("read")
+		.input(apiFindOneWorkflowRepository)
+		.query(async ({ input, ctx }) => {
+			const repository = await findOwnedRepository(
+				input.workflowRepositoryId,
+				ctx.session.activeOrganizationId,
+			);
+			const octokit = await getWorkflowRepositoryOctokit(repository);
+			const branches = await octokit.paginate(octokit.rest.repos.listBranches, {
+				owner: repository.owner,
+				repo: repository.repository,
+				per_page: 100,
+			});
+			return branches.map((branch) => branch.name);
+		}),
+	runs: workflowProcedure("read")
+		.input(apiFindWorkflowRuns)
+		.query(({ input, ctx }) =>
+			findWorkflowRuns({
+				organizationId: ctx.session.activeOrganizationId,
+				...input,
+			}),
+		),
+	oneRun: workflowProcedure("read")
+		.input(apiFindOneWorkflowRun)
+		.query(async ({ input, ctx }) => {
+			const { repository, ...run } = await findOwnedRun(
+				input.workflowRunId,
+				ctx.session.activeOrganizationId,
+			);
+			const { github, ...repositoryFields } = repository;
+			return {
+				...run,
+				repository: {
+					...repositoryFields,
+					githubUrl: github?.githubUrl ?? null,
+				},
+			};
+		}),
+	dispatch: workflowProcedure("run")
+		.input(apiDispatchWorkflow)
+		.mutation(async ({ input, ctx }) => {
+			const definition = await findWorkflowDefinitionById(
+				input.workflowDefinitionId,
+			);
+			if (
+				definition.repository.organizationId !==
+				ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Workflow not found",
+				});
+			}
+			const run = await dispatchWorkflowRun({
+				...input,
+				actor: ctx.user.email,
+			});
+			await audit(ctx, {
+				action: "run",
+				resourceType: "workflow",
+				resourceId: run.workflowRunId,
+				resourceName: `${definition.repository.owner}/${definition.repository.repository} ${definition.path}`,
+			});
+			return run;
+		}),
+	rerun: workflowProcedure("run")
+		.input(apiFindOneWorkflowRun)
+		.mutation(async ({ input, ctx }) => {
+			const previous = await findOwnedRun(
+				input.workflowRunId,
+				ctx.session.activeOrganizationId,
+			);
+			const run = await rerunWorkflowRun(previous.workflowRunId);
+			await audit(ctx, {
+				action: "run",
+				resourceType: "workflow",
+				resourceId: run.workflowRunId,
+				resourceName: `${previous.workflowName} #${previous.runNumber}`,
+			});
+			return run;
+		}),
+	cancelRun: workflowProcedure("run")
+		.input(apiFindOneWorkflowRun)
+		.mutation(async ({ input, ctx }) => {
+			const run = await findOwnedRun(
+				input.workflowRunId,
+				ctx.session.activeOrganizationId,
+			);
+			await cancelWorkflowRun(run.workflowRunId);
+			await audit(ctx, {
+				action: "cancel",
+				resourceType: "workflow",
+				resourceId: run.workflowRunId,
+				resourceName: `${run.workflowName} #${run.runNumber}`,
+			});
 		}),
 });

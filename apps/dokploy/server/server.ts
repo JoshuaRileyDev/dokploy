@@ -10,6 +10,7 @@ import {
 	initializeNetwork,
 	initSchedules,
 	initVolumeBackupsCronJobs,
+	initWorkflowRuns,
 	sendDokployRestartNotifications,
 	setupDirectories,
 } from "@dokploy/server";
@@ -73,6 +74,7 @@ void app.prepare().then(async () => {
 			console.log("Starting Deployment Worker");
 			const { startDeploymentWorker } = await import("./queues/queueSetup");
 			await startDeploymentWorker();
+			await initWorkflowRuns();
 		}
 	} catch (e) {
 		console.error("Main Server Error", e);

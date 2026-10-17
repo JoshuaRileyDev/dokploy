@@ -132,6 +132,17 @@ export const ValidateServer = ({ serverId }: Props) => {
 													: undefined
 											}
 										/>
+										{server?.serverRoles.includes("workflow") && (
+											<StatusRow
+												label="act Installed (workflow runner)"
+												isEnabled={data?.act?.enabled}
+												description={
+													data?.act?.enabled
+														? `Installed: ${data?.act?.version}`
+														: "Run Setup Server to install it"
+												}
+											/>
+										)}
 										{isDeployServer && (
 											<>
 												<StatusRow

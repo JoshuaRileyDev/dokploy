@@ -22,8 +22,13 @@ export const describeTrigger = (trigger: WorkflowTrigger) => {
 
 export const SUPPORTED_EVENTS = new Set(Object.keys(EVENT_LABELS));
 
+export const eventLabel = (event: string, action?: string | null) => {
+	const label = EVENT_LABELS[event] ?? event;
+	return action ? `${label} (${action})` : label;
+};
+
 export const githubRepositoryUrl = (
-	githubUrl: string | undefined,
+	githubUrl: string | null | undefined,
 	owner: string,
 	repository: string,
 ) => `${githubUrl ?? "https://github.com"}/${owner}/${repository}`;

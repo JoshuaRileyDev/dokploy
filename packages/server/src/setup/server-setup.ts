@@ -18,6 +18,11 @@ import {
 	TRAEFIK_SSL_PORT,
 	TRAEFIK_VERSION,
 } from "@dokploy/server/setup/traefik-setup";
+import {
+	ACT_VERSION,
+	DEFAULT_PLATFORM_IMAGES,
+	WORKFLOW_RUNS_PATH,
+} from "@dokploy/server/utils/workflows/act";
 import slug from "slugify";
 import { Client } from "ssh2";
 import { recreateDirectory } from "../utils/filesystem/directory";
@@ -280,6 +285,14 @@ ${installRailpack()}
 echo -e "7. Configuring permissions"
 ${setupPermissions()}
 `
+}
+${
+	roles.includes("workflow")
+		? `
+echo -e "Installing the workflow runner (act)"
+${installAct()}
+`
+		: ""
 }
 				`;
 
@@ -750,6 +763,23 @@ const installRailpack = () => `
 		$SUDO_CMD bash -c "$(curl -fsSL https://railpack.com/install.sh)"
 		echo "Railpack version $RAILPACK_VERSION installed ✅"
 	fi
+`;
+
+const installAct = () => `
+	ACT_VERSION=${ACT_VERSION}
+	if command_exists act && [ "$(act --version | awk '{print $3}')" = "$ACT_VERSION" ]; then
+		echo "act $ACT_VERSION already installed ✅"
+	else
+		curl -fsSL "https://raw.githubusercontent.com/nektos/act/v$ACT_VERSION/install.sh" | $SUDO_CMD bash -s -- -b /usr/local/bin "v$ACT_VERSION"
+		echo "act $ACT_VERSION installed ✅"
+	fi
+	$SUDO_CMD mkdir -p ${WORKFLOW_RUNS_PATH}
+	if [ -n "$SUDO_CMD" ]; then
+		$SUDO_CMD chown -R $CURRENT_USER:$CURRENT_USER /etc/dokploy/workflows
+	fi
+	echo "Pulling the default runner image (${DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]}), this can take a while"
+	docker pull ${DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]}
+	echo "Workflow runner ready ✅"
 `;
 
 const setupPermissions = () => `

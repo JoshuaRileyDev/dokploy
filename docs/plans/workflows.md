@@ -55,7 +55,17 @@ UI:
 - New permission resource `workflow` (`read`, `create`, `run`, `delete`).
 - Tabs: **Runs** (empty until Phase 2), **Repositories** (list, toggles, default server, workflow files with parse status, refresh), **Import** (git provider → repo picker, reusing the application GitHub provider pickers).
 
-## Phase 2: Events and execution
+## Phase 2: Events and execution (done)
+
+Shipped as: migration `drizzle-fork/0002_workflow_runs`; `utils/workflows/{events,triggers,act,act-log,ssh,executor,queue}.ts`; `services/workflow-run.ts`; router `workflow.{runs,oneRun,dispatch,rerun,cancelRun,branches}`; pages `/dashboard/workflows/runs/[workflowRunId]` plus the Run dialog and runs list. Notes on what differs from the original sketch:
+
+- One run at a time per workflow server (in-memory FIFO, like deployments). Server choice: the repository's server, else the least busy workflow server. `runs-on` labels map to runner images, not to servers.
+- Pull requests run against the head commit, not GitHub's merge commit.
+- Fork pull requests are skipped (recorded as a skipped run) unless the author has write access; trusted runs get `GITHUB_TOKEN`, untrusted ones get no secrets and no Docker socket.
+- Re-run repeats the whole run as a new attempt; re-running only failed jobs isn't supported because act can't reuse earlier job outputs.
+- Secrets and step/job names are masked before they reach log files or the database.
+- Existing GitHub Apps must be updated by hand to subscribe to `release` and `create` events (new apps get them from the manifest).
+
 
 Event routing (split `github.ts` into `github/index.ts` dispatcher, `github/deploy.ts` existing logic, `github/workflows.ts`):
 
