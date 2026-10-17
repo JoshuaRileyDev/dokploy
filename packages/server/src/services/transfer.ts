@@ -478,7 +478,7 @@ export const transferService = async (
 		}
 		if (
 			targetServer.serverStatus !== "active" ||
-			targetServer.serverType !== "deploy"
+			!targetServer.serverRoles.includes("deploy")
 		) {
 			throw new TRPCError({
 				code: "BAD_REQUEST",

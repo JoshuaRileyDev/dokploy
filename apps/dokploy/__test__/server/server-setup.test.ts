@@ -82,10 +82,10 @@ describe("reportDockerVersion", () => {
 });
 
 describe("defaultCommand", () => {
-	it.each([false, true])(
-		"prints the detected Docker version in the setup banner (isBuildServer=%s)",
-		(isBuildServer) => {
-			const script = defaultCommand(isBuildServer);
+	it.each([[["deploy"]], [["build"]], [["build", "workflow"]]] as const)(
+		"prints the detected Docker version in the setup banner (roles=%j)",
+		(roles) => {
+			const script = defaultCommand([...roles]);
 			expect(script).toContain(reportDockerVersion());
 			expect(script).toContain(
 				'echo "| Docker            | $DOCKER_VERSION_REPORT"',
@@ -95,4 +95,28 @@ describe("defaultCommand", () => {
 			);
 		},
 	);
+});
+
+describe("defaultCommand roles", () => {
+	it.each([
+		[["deploy"], true],
+		[["deploy", "workflow"], true],
+		[["build"], false],
+		[["workflow"], false],
+		[["build", "workflow"], false],
+	] as const)(
+		"only sets up Swarm and Traefik for deploy servers (roles=%j)",
+		(roles, isDeployServer) => {
+			const script = defaultCommand([...roles]);
+			expect(script.includes("Setting up Docker Swarm")).toBe(isDeployServer);
+			expect(script.includes("Setting up Traefik")).toBe(isDeployServer);
+			expect(script).toContain("Installing Docker");
+		},
+	);
+
+	it("lists the roles in the setup banner", () => {
+		expect(defaultCommand(["build", "workflow"])).toContain(
+			'echo "| Server Roles      | build, workflow"',
+		);
+	});
 });

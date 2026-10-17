@@ -1,0 +1,115 @@
+# Workflows (built-in CI/CD)
+
+Run GitHub Actions–syntax workflows inside Dokploy, triggered by git events, on dedicated workflow servers.
+
+## Decisions
+
+- **Self-hosted only.** Hidden and rejected when `IS_CLOUD` is set (sidebar `isEnabled`, router guards, webhook handler).
+- **Workflow sources:** `.github/workflows/*.yml` and `.dokploy/workflows/*.yml`, same syntax, same parser.
+- **`.github/workflows` is opt-in per repo** (`runGithubWorkflows`, default `false`) so repos that still use GitHub Actions don't run every workflow twice. `.dokploy/workflows` is on by default.
+- **Execution v1:** [`nektos/act`](https://github.com/nektos/act) invoked over SSH on a workflow server, one server per run. **v2:** implement the server side of Gitea's runner protocol (`actions-proto-def`) so stock `act_runner` can pick up individual jobs.
+- **No custom Actions executor.** Dokploy parses only what it needs server-side (triggers, filters, jobs, `needs`, `runs-on`); act handles expressions, matrix, services, actions, outputs.
+- **Provider scope v1:** GitHub only. GitLab / Gitea / Bitbucket via per-provider adapters later.
+
+## Current state (touch points)
+
+| Area | Location | Change |
+|---|---|---|
+| Server type enum `["deploy","build"]` | `packages/server/src/db/schema/server.ts:29` | Replace with roles array |
+| Server type checks | `apps/dokploy/server/api/routers/server.ts` (~144, 249–277), `components/dashboard/settings/servers/{handle,show,setup,validate}-server(s).tsx`, `components/dashboard/onboarding/steps/server-step.tsx`, `components/dashboard/deployments/show-deployments-table.tsx`, `settings/users/add-permissions.tsx` | Use role helpers |
+| GitHub webhook | `apps/dokploy/pages/api/deploy/github.ts` (only `push`/`pull_request`) | Add event router + workflow path |
+| GitHub App manifest | `components/dashboard/settings/git/github/add-github-provider.tsx:46-52` | Add `release` event, `checks: write`, `statuses: write` |
+| Notifications | `packages/server/src/db/schema/notification.ts`, `packages/server/src/utils/notifications/build-error.ts` | Add workflow run events |
+| Queues | `apps/dokploy/server/queues/*` (BullMQ) | New workflows queue |
+| Cron | `apps/schedules` | Register `schedule:` triggers |
+| Sidebar | `apps/dokploy/components/layouts/side.tsx` | New "Workflows" item |
+
+## Phase 0: Server roles (done)
+
+- `serverRoles serverRole[]` (`deploy | build | workflow`), not null, default `{deploy}`.
+- Migration: `drizzle-fork/0000_server_roles` adds the column and backfills it from `serverType`. `serverType` stays (upstream owns it) and is derived from roles on every write (`legacyServerType`). See [fork migrations](../fork-migrations.md).
+- API: `server.create` / `server.update` take `serverRoles`; `serverType` is still accepted as a deprecated alias (`resolveServerRoles`). Adding the `workflow` role is rejected on cloud.
+- Server pickers: `server.withSSHKey` (deploy), `server.buildServers` (build), `server.workflowServers` (workflow, empty on cloud). A multi-role server appears in each matching list.
+- Setup: servers with the `deploy` role get the full Swarm/Traefik setup; any other combination gets the build setup (Docker, nixpacks, buildpacks, railpack). Installing `act` for the `workflow` role is deferred to Phase 2, where it's first used.
+- UI: role checkboxes in the server form (workflow hidden on cloud, warning for deploy+workflow), one badge per role on server cards.
+
+## Phase 1: Repositories, parsing, read-only UI
+
+Schema (`packages/server/src/db/schema/workflow.ts`):
+
+- `workflowRepository`: `workflowRepositoryId`, `organizationId`, `githubId` (+ nullable `gitlabId`/`giteaId`/`bitbucketId` for later), `owner`, `repository`, `defaultBranch`, `runGithubWorkflows` (default false), `runDokployWorkflows` (default true), `defaultServerId` → server, `createdAt`. Unique on (organization, provider, owner, repository).
+- `workflowDefinition`: `workflowRepositoryId`, `path`, `source` (`github` | `dokploy`), `name`, `triggers` (jsonb, normalized), `jobs` (jsonb: id, name, needs, runs-on), `sha`, `parseError`, `updatedAt`. Unique on (repo, path).
+
+Parsing:
+
+- Fetch files via the GitHub contents API on import, on push to the default branch, and on manual refresh.
+- Normalize `on:` (string / array / map forms) into `{ event, types?, branches?, branchesIgnore?, tags?, tagsIgnore?, paths?, pathsIgnore?, cron?, inputs? }[]`.
+- Store parse errors and show them in the UI; don't block other files.
+
+UI:
+
+- Sidebar "Workflows" → `/dashboard/workflows`, gated by `!isCloud && permissions.workflow.read`.
+- New permission resource `workflow` (`read`, `create`, `run`, `delete`).
+- Tabs: **Runs** (empty until Phase 2), **Repositories** (list, toggles, default server, workflow files with parse status, refresh), **Import** (git provider → repo picker, reusing the application GitHub provider pickers).
+
+## Phase 2: Events and execution
+
+Event routing (split `github.ts` into `github/index.ts` dispatcher, `github/deploy.ts` existing logic, `github/workflows.ts`):
+
+| Workflow trigger | GitHub delivery |
+|---|---|
+| `push` (incl. merges into a branch) | `push` |
+| `pull_request` (`opened`, `synchronize`, `reopened`, `closed`; merged = `closed` + `merged: true`) | `pull_request` |
+| `release` (`published`, `created`, `released`, …) | `release` |
+| tags | `push` on `refs/tags/*`, `create` |
+| `workflow_dispatch` | Dokploy UI (inputs form from `inputs:`) |
+| `schedule` | `apps/schedules` cron |
+
+- Look up `workflowRepository` by provider + owner/repo, filter enabled sources, match each definition's triggers (branch/tag globs, `paths` via the push/PR changed files, `types`), create runs.
+- Existing application deploy handling keeps running unchanged alongside.
+
+Schema additions:
+
+- `workflowRun`: `workflowRunId`, `workflowRepositoryId`, `workflowDefinitionId`, `runNumber` (per definition), `event`, `payload` (jsonb), `ref`, `sha`, `actor`, `status` (`queued | in_progress | success | failure | cancelled`), `serverId`, `logPath`, `createdAt`, `startedAt`, `finishedAt`.
+- `workflowJob`: `workflowRunId`, `jobKey`, `name`, `matrix` (jsonb), `status`, `startedAt`, `finishedAt`.
+- `workflowStep`: `workflowJobId`, `number`, `name`, `status`, `startedAt`, `finishedAt`.
+
+Execution (BullMQ `workflows` queue, concurrency per server):
+
+1. Pick server: `runs-on` label match against workflow servers, else repo `defaultServerId`, else fail with a clear error.
+2. Over SSH: shallow clone at `sha` into `/etc/dokploy/workflows/<runId>`, write `event.json`, write secrets file (0600).
+3. `act <event> -W <path> --eventpath event.json --secret-file … --var-file … --json` (plus `-P` platform image mappings).
+4. Parse act's JSON log stream into job/step status updates; tee raw logs to `logPath`; stream to the UI via the existing deployment-log WSS channel.
+5. Clean up workdir and secrets file in `finally`.
+6. Cancel = kill the act process group + `docker rm -f` containers labelled for the run.
+
+Security:
+
+- Fork PRs get no secrets (mirror GitHub). Reuse the PR-author trust checks already in `github.ts`.
+- Workflows never run on the Dokploy host; a server with the `workflow` role is required.
+
+UI: Runs tab (filters: status, repo, branch, event), run detail page `/dashboard/workflows/runs/[runId]` with `needs` graph, step logs, re-run all / re-run failed, cancel, and "Run workflow" dispatch dialog.
+
+## Phase 3: Notifications and GitHub status
+
+- `notifications`: add `workflowRunFailed`, `workflowRunSucceeded` booleans; `sendWorkflowRunNotifications` following `build-error.ts`. The existing `custom` type covers arbitrary failure webhooks; all other channels work automatically.
+- Optional repo/branch filter on the notification.
+- GitHub Checks API: create a check run per workflow run (or job), update on completion, link back to the Dokploy run page. Existing GitHub Apps must accept the new permissions; show a banner when the installation lacks them.
+
+## Phase 4: Secrets, variables, scheduling, concurrency
+
+- `workflowSecret` / `workflowVariable`: encrypted at rest, org- or repo-scoped, repo overrides org. Never logged; masked in log output.
+- `schedule:` triggers registered in `apps/schedules`, re-synced when definitions change.
+- `concurrency:` groups with `cancel-in-progress`.
+- Artifacts and cache: act's built-in artifact and cache servers on the workflow server, with retention cleanup.
+
+## Phase 5: Scale and providers
+
+- Server side of the Gitea runner protocol so `act_runner` on each workflow server polls for individual jobs: per-job distribution across servers, label routing, runners behind NAT.
+- Provider adapters (GitLab, Gitea, Bitbucket) normalizing webhook payloads into the GitHub event shape act expects.
+
+## Dokploy-specific actions
+
+Same syntax in `.dokploy/workflows`, plus first-party actions, starting with:
+
+- `dokploy/deploy@v1` with `applicationId` / `composeId`: queue a Dokploy deployment, wait, fail the step if it fails.

@@ -826,10 +826,10 @@ const centralizedDeploymentsWith = {
 				},
 			},
 			server: {
-				columns: { serverId: true, name: true, serverType: true },
+				columns: { serverId: true, name: true, serverRoles: true },
 			},
 			buildServer: {
-				columns: { serverId: true, name: true, serverType: true },
+				columns: { serverId: true, name: true, serverRoles: true },
 			},
 		},
 	},
@@ -845,15 +845,15 @@ const centralizedDeploymentsWith = {
 				},
 			},
 			server: {
-				columns: { serverId: true, name: true, serverType: true },
+				columns: { serverId: true, name: true, serverRoles: true },
 			},
 		},
 	},
 	server: {
-		columns: { serverId: true, name: true, serverType: true },
+		columns: { serverId: true, name: true, serverRoles: true },
 	},
 	buildServer: {
-		columns: { serverId: true, name: true, serverType: true },
+		columns: { serverId: true, name: true, serverRoles: true },
 	},
 } as const;
 

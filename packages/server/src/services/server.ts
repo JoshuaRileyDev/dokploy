@@ -1,13 +1,15 @@
 import { db } from "@dokploy/server/db";
 import {
 	type apiCreateServer,
+	legacyServerType,
 	member,
 	organization,
+	resolveServerRoles,
 	server,
 } from "@dokploy/server/db/schema";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, arrayContains, desc, eq, isNotNull } from "drizzle-orm";
 import type { z } from "zod";
 
 export type Server = typeof server.$inferSelect;
@@ -16,10 +18,14 @@ export const createServer = async (
 	input: z.infer<typeof apiCreateServer>,
 	organizationId: string,
 ) => {
+	const { serverRoles, serverType, ...rest } = input;
+	const roles = resolveServerRoles({ serverRoles, serverType }) ?? ["deploy"];
 	const newServer = await db
 		.insert(server)
 		.values({
-			...input,
+			...rest,
+			serverRoles: roles,
+			serverType: legacyServerType(roles),
 			organizationId: organizationId,
 			createdAt: new Date().toISOString(),
 		} as typeof server.$inferInsert)
@@ -94,7 +100,7 @@ export const findServersByOrganizationForVectorAgent = async (
 		where: and(
 			eq(server.organizationId, organizationId),
 			isNotNull(server.sshKeyId),
-			eq(server.serverType, "deploy"),
+			arrayContains(server.serverRoles, ["deploy"]),
 		),
 		columns: {
 			serverId: true,

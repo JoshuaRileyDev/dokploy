@@ -119,7 +119,8 @@ export const ShowServers = () => {
 												<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 													{data?.map((server) => {
 														const isActive = server.serverStatus === "active";
-														const isBuildServer = server.serverType === "build";
+														const isDeployServer =
+															server.serverRoles.includes("deploy");
 														return (
 															<Card
 																key={server.serverId}
@@ -173,15 +174,18 @@ export const ShowServers = () => {
 																					)}
 																				</>
 																			)}
-																			<Badge
-																				variant={
-																					isBuildServer
-																						? "secondary"
-																						: "default"
-																				}
-																			>
-																				{server.serverType}
-																			</Badge>
+																			{server.serverRoles.map((role) => (
+																				<Badge
+																					key={role}
+																					variant={
+																						role === "deploy"
+																							? "default"
+																							: "secondary"
+																					}
+																				>
+																					{role}
+																				</Badge>
+																			))}
 																		</div>
 																	</TooltipProvider>
 																</CardHeader>
@@ -309,7 +313,7 @@ export const ShowServers = () => {
 																					</TooltipContent>
 																				</Tooltip>
 
-																				{server.sshKeyId && !isBuildServer && (
+																				{server.sshKeyId && isDeployServer && (
 																					<Tooltip>
 																						<ShowServerActions
 																							serverId={server.serverId}
@@ -332,7 +336,7 @@ export const ShowServers = () => {
 
 																				{isCloud &&
 																					server.sshKeyId &&
-																					!isBuildServer && (
+																					isDeployServer && (
 																						<Tooltip>
 																							<ShowMonitoringModal
 																								url={`http://${server.ipAddress}:${server?.metricsConfig?.server?.port}/metrics`}

@@ -22,7 +22,15 @@ import {
 	removeForwardAuthMiddleware,
 } from "@dokploy/server/utils/traefik/forward-auth";
 import { TRPCError } from "@trpc/server";
-import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import {
+	and,
+	arrayContains,
+	asc,
+	desc,
+	eq,
+	isNotNull,
+	isNull,
+} from "drizzle-orm";
 import { findApplicationById } from "../application";
 import { findDomainById, updateDomainById } from "../domain";
 
@@ -248,7 +256,7 @@ export const getForwardAuthServerStatus = async (organizationId: string) => {
 		where: and(
 			eq(server.organizationId, organizationId),
 			isNotNull(server.sshKeyId),
-			eq(server.serverType, "deploy"),
+			arrayContains(server.serverRoles, ["deploy"]),
 		),
 		columns: { serverId: true, name: true, ipAddress: true },
 		orderBy: [desc(server.createdAt)],

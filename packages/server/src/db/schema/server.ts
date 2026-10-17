@@ -27,6 +27,9 @@ import { sshKeys } from "./ssh-key";
 import { generateAppName } from "./utils";
 export const serverStatus = pgEnum("serverStatus", ["active", "inactive"]);
 export const serverType = pgEnum("serverType", ["deploy", "build"]);
+export const serverRoleValues = ["deploy", "build", "workflow"] as const;
+export type ServerRole = (typeof serverRoleValues)[number];
+export const serverRole = pgEnum("serverRole", serverRoleValues);
 
 export const server = pgTable("server", {
 	serverId: text("serverId")
@@ -52,7 +55,13 @@ export const server = pgTable("server", {
 		.notNull()
 		.references(() => organization.id, { onDelete: "cascade" }),
 	serverStatus: serverStatus("serverStatus").notNull().default("active"),
+	// Upstream column, kept so upstream migrations still apply on this fork.
+	// Derived from serverRoles on write; read serverRoles instead.
 	serverType: serverType("serverType").notNull().default("deploy"),
+	serverRoles: serverRole("serverRoles")
+		.array()
+		.notNull()
+		.default(sql`ARRAY['deploy']::"serverRole"[]`),
 	command: text("command").notNull().default(""),
 	sshKeyId: text("sshKeyId").references(() => sshKeys.sshKeyId, {
 		onDelete: "set null",
@@ -142,8 +151,28 @@ const createSchema = createInsertSchema(server, {
 	serverId: z.string().min(1),
 	name: z.string().min(1),
 	description: z.string().optional(),
-	serverType: z.enum(["deploy", "build"]).optional(),
 });
+
+const serverRolesInput = {
+	serverRoles: z.array(z.enum(serverRoleValues)).min(1).optional(),
+	/** @deprecated Use `serverRoles`. */
+	serverType: z.enum(["deploy", "build"]).optional(),
+};
+
+export const legacyServerType = (roles: ServerRole[]) =>
+	roles.includes("deploy") ? "deploy" : "build";
+
+export const resolveServerRoles = ({
+	serverRoles,
+	serverType,
+}: {
+	serverRoles?: ServerRole[];
+	serverType?: "deploy" | "build";
+}): ServerRole[] | undefined => {
+	if (serverRoles) return [...new Set(serverRoles)];
+	if (serverType) return [serverType];
+	return undefined;
+};
 
 export const apiCreateServer = createSchema
 	.pick({
@@ -153,11 +182,11 @@ export const apiCreateServer = createSchema
 		port: true,
 		username: true,
 		sshKeyId: true,
-		serverType: true,
 		enableDockerCleanup: true,
 	})
 	.required()
 	.extend({
+		...serverRolesInput,
 		enableDockerCleanup: z.boolean().default(true),
 	});
 
@@ -180,11 +209,11 @@ export const apiUpdateServer = createSchema
 		port: true,
 		username: true,
 		sshKeyId: true,
-		serverType: true,
 		enableDockerCleanup: true,
 	})
 	.required()
 	.extend({
+		...serverRolesInput,
 		command: z.string().optional(),
 		enableDockerCleanup: z.boolean().default(true),
 	});
