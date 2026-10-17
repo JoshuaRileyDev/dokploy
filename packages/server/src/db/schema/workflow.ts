@@ -416,3 +416,15 @@ export const apiSetWorkflowEnv = z.object({
 export const apiRemoveWorkflowEnv = z.object({
 	workflowEnvId: z.string().min(1),
 });
+
+export const apiLinkedServiceEnv = z.object({
+	workflowRepositoryId: z.string().min(1),
+	serviceType: z.enum(["application", "compose"]),
+	serviceId: z.string().min(1),
+});
+
+export const apiImportLinkedServiceEnv = apiLinkedServiceEnv.extend({
+	names: z.array(z.string().min(1)).min(1),
+	kind: z.enum(workflowEnvKind.enumValues),
+	overwrite: z.boolean().default(false),
+});

@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/utils/api";
+import { ImportServiceEnvDialog } from "./import-service-env-dialog";
 
 type Kind = "secret" | "variable";
 
@@ -168,7 +169,14 @@ export const WorkflowEnvEditor = ({ workflowRepositoryId }: Props) => {
 						: "Every repository's runs get these. Fork pull requests never receive secrets."}
 				</p>
 				{canEdit && (
-					<EditEnvDialog workflowRepositoryId={workflowRepositoryId} />
+					<div className="flex gap-2">
+						{workflowRepositoryId && (
+							<ImportServiceEnvDialog
+								workflowRepositoryId={workflowRepositoryId}
+							/>
+						)}
+						<EditEnvDialog workflowRepositoryId={workflowRepositoryId} />
+					</div>
 				)}
 			</div>
 			{isPending ? (

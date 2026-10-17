@@ -5,6 +5,7 @@ import {
 	dispatchWorkflowRun,
 	findGithubById,
 	findNotificationChannels,
+	findServicesLinkedToRepository,
 	findWorkflowDefinitionById,
 	findWorkflowEnv,
 	findWorkflowNotificationRules,
@@ -14,7 +15,9 @@ import {
 	findWorkflowRuns,
 	getWorkflowRepositoryOctokit,
 	IS_CLOUD,
+	importLinkedServiceEnv,
 	importWorkflowRepository,
+	readLinkedServiceEnv,
 	removeWorkflowEnv,
 	removeWorkflowNotificationRule,
 	removeWorkflowRepository,
@@ -24,8 +27,13 @@ import {
 	syncWorkflowRepository,
 	syncWorkflowSchedules,
 	updateWorkflowRepository,
+	workflowEnvNameProblem,
 } from "@dokploy/server";
 import type { statements } from "@dokploy/server/lib/access-control";
+import {
+	checkServiceAccess,
+	checkServicePermissionAndAccess,
+} from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
@@ -36,7 +44,9 @@ import {
 	apiFindOneWorkflowRun,
 	apiFindWorkflowEnv,
 	apiFindWorkflowRuns,
+	apiImportLinkedServiceEnv,
 	apiImportWorkflowRepository,
+	apiLinkedServiceEnv,
 	apiRemoveWorkflowEnv,
 	apiRemoveWorkflowNotification,
 	apiSetWorkflowDefinitionEnabled,
@@ -352,5 +362,71 @@ export const workflowRouter = createTRPCRouter({
 				resourceId: input.workflowEnvId,
 				resourceName: "Workflow secret or variable",
 			});
+		}),
+	linkedServices: workflowProcedure("create")
+		.input(apiFindOneWorkflowRepository)
+		.query(async ({ input, ctx }) => {
+			const repository = await findOwnedRepository(
+				input.workflowRepositoryId,
+				ctx.session.activeOrganizationId,
+			);
+			const services = await findServicesLinkedToRepository(repository);
+			const accessible = await Promise.all(
+				services.map((service) =>
+					checkServiceAccess(ctx, service.serviceId, "read")
+						.then(() => true)
+						.catch(() => false),
+				),
+			);
+			return services.filter((_, index) => accessible[index]);
+		}),
+	linkedServiceEnvNames: workflowProcedure("create")
+		.input(apiLinkedServiceEnv)
+		.query(async ({ input, ctx }) => {
+			const repository = await findOwnedRepository(
+				input.workflowRepositoryId,
+				ctx.session.activeOrganizationId,
+			);
+			// Importing exposes the values to workflows, so it needs the same access as reading them.
+			await checkServicePermissionAndAccess(ctx, input.serviceId, {
+				envVars: ["read"],
+			});
+			const entries = await readLinkedServiceEnv(
+				repository,
+				input.serviceType,
+				input.serviceId,
+			);
+			return entries.map(({ name, source }) => ({
+				name,
+				source,
+				problem: workflowEnvNameProblem(name),
+			}));
+		}),
+	importLinkedServiceEnv: workflowProcedure("create")
+		.input(apiImportLinkedServiceEnv)
+		.mutation(async ({ input, ctx }) => {
+			const repository = await findOwnedRepository(
+				input.workflowRepositoryId,
+				ctx.session.activeOrganizationId,
+			);
+			await checkServicePermissionAndAccess(ctx, input.serviceId, {
+				envVars: ["read"],
+			});
+			const result = await importLinkedServiceEnv({
+				repository,
+				serviceType: input.serviceType,
+				serviceId: input.serviceId,
+				names: input.names,
+				kind: input.kind,
+				overwrite: input.overwrite,
+			});
+			await audit(ctx, {
+				action: "update",
+				resourceType: "workflow",
+				resourceId: repository.workflowRepositoryId,
+				resourceName: `Imported ${result.imported.length} ${input.kind}s into ${repository.owner}/${repository.repository}`,
+				metadata: { serviceId: input.serviceId, names: result.imported },
+			});
+			return result;
 		}),
 });
