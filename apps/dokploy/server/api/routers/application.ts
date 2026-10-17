@@ -1,4 +1,5 @@
 import {
+	autoImportWorkflowsForService,
 	clearOldDeployments,
 	createApplication,
 	createDomain,
@@ -592,6 +593,7 @@ export const applicationRouter = createTRPCRouter({
 				triggerType: input.triggerType,
 				enableSubmodules: input.enableSubmodules,
 			});
+			void autoImportWorkflowsForService("application", input.applicationId);
 			const application = await findApplicationById(input.applicationId);
 			await audit(ctx, {
 				action: "update",

@@ -1079,11 +1079,11 @@ const detectAndImportWorkflows = async (
 };
 
 /**
- * Runs before an application or compose deploy: imports the GitHub repository if it has workflow
- * files, or refreshes it if it's already imported. Never throws and gives up after a timeout,
- * so it can't delay or fail the deployment.
+ * Imports a service's GitHub repository if it has workflow files, or refreshes it if it's already
+ * imported. Called before deploys and when a GitHub source is saved; never throws and gives up
+ * after a timeout, so it can't delay or fail the caller.
  */
-export const autoImportWorkflowsBeforeDeploy = async (
+export const autoImportWorkflowsForService = async (
 	serviceType: WorkflowServiceType,
 	serviceId: string,
 ) => {
@@ -1097,7 +1097,7 @@ export const autoImportWorkflowsBeforeDeploy = async (
 			}),
 		]);
 	} catch (error) {
-		console.error("Workflow auto-import before deploy failed", error);
+		console.error("Workflow auto-import failed", error);
 	} finally {
 		clearTimeout(timer);
 	}

@@ -125,7 +125,7 @@ Shipped as: migration `drizzle-fork/0004_workflow_env_concurrency`, `utils/workf
 
 ## Deploy integration (done)
 
-- Before an application or compose deploy (`processDeploymentJob`), `autoImportWorkflowsBeforeDeploy` checks the deployed branch for `.dokploy/workflows` and `.github/workflows`. If either has files, the repository is imported (or re-synced if already imported) and schedules are reconciled. It has a 20s cap, logs failures, and never blocks or fails the deploy. Preview deployments are skipped.
+- When a GitHub source is saved on an application (`application.saveGithubProvider`) or compose service (`compose.update` with a `githubId`), and again before each deploy (`processDeploymentJob`), `autoImportWorkflowsForService` checks the deployed branch for `.dokploy/workflows` and `.github/workflows`. If either has files, the repository is imported (or re-synced if already imported) and schedules are reconciled. It has a 20s cap, logs failures, and never blocks or fails the deploy; on save it isn't awaited, so saving stays instant. Preview deployments are skipped.
 - The push that triggers the deploy that first imports a repository won't start workflow runs: the webhook is processed before the import exists. Later pushes do.
 - Application and compose pages have a Workflows tab (self-hosted, `workflow.read`, GitHub sources only) showing the repository's workflows, secrets and runs, with Sync, Settings, and an Import now button when it isn't imported yet.
 

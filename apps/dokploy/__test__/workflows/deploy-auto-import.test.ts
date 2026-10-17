@@ -11,7 +11,7 @@ const { calls, record } = vi.hoisted(() => {
 });
 
 vi.mock("@dokploy/server", () => ({
-	autoImportWorkflowsBeforeDeploy: vi.fn(async (type: string, id: string) => {
+	autoImportWorkflowsForService: vi.fn(async (type: string, id: string) => {
 		calls.push(`autoImport:${type}:${id}`);
 	}),
 	deployApplication: vi.fn(record("deployApplication")),
