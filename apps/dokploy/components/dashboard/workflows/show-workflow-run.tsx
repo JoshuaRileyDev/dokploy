@@ -253,7 +253,10 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 									</ol>
 								)}
 								{selectedJob.startedAt ? (
-									<WorkflowLogViewer logPath={selectedJob.logPath} />
+									<WorkflowLogViewer
+										logPath={selectedJob.logPath}
+										fileName={`${run.workflowName}-${run.runNumber}-${selectedJob.name}`}
+									/>
 								) : (
 									<p className="rounded-md border p-6 text-center text-sm text-muted-foreground">
 										This job didn't run
@@ -264,7 +267,10 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								)}
 							</>
 						) : selected === RUN_LOG && run.logPath ? (
-							<WorkflowLogViewer logPath={run.logPath} />
+							<WorkflowLogViewer
+								logPath={run.logPath}
+								fileName={`${run.workflowName}-${run.runNumber}-run`}
+							/>
 						) : (
 							<p className="rounded-md border p-6 text-center text-sm text-muted-foreground">
 								{finished
