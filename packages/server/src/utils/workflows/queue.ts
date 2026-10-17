@@ -1,6 +1,10 @@
 import { executeWorkflowRun } from "./executor";
 
-type QueuedRun = { workflowRunId: string; serverId: string };
+type QueuedRun = {
+	workflowRunId: string;
+	serverId: string;
+	concurrencyKey: string | null;
+};
 
 type QueueState = {
 	waiting: QueuedRun[];
@@ -14,12 +18,17 @@ const globalForQueue = globalThis as unknown as {
 globalForQueue.__dokployWorkflowQueue ??= { waiting: [], active: new Map() };
 const state = globalForQueue.__dokployWorkflowQueue;
 
-const isServerBusy = (serverId: string) =>
-	[...state.active.values()].some((run) => run.serverId === serverId);
+const isBlocked = (queued: QueuedRun) =>
+	[...state.active.values()].some(
+		(run) =>
+			run.serverId === queued.serverId ||
+			(queued.concurrencyKey !== null &&
+				run.concurrencyKey === queued.concurrencyKey),
+	);
 
 const pump = () => {
 	for (const queued of [...state.waiting]) {
-		if (isServerBusy(queued.serverId)) continue;
+		if (isBlocked(queued)) continue;
 		state.waiting = state.waiting.filter(
 			(run) => run.workflowRunId !== queued.workflowRunId,
 		);
@@ -36,14 +45,18 @@ const pump = () => {
 	}
 };
 
-export const enqueueWorkflowRun = (workflowRunId: string, serverId: string) => {
+export const enqueueWorkflowRun = (
+	workflowRunId: string,
+	serverId: string,
+	concurrencyKey: string | null = null,
+) => {
 	if (
 		state.active.has(workflowRunId) ||
 		state.waiting.some((run) => run.workflowRunId === workflowRunId)
 	) {
 		return;
 	}
-	state.waiting.push({ workflowRunId, serverId });
+	state.waiting.push({ workflowRunId, serverId, concurrencyKey });
 	pump();
 };
 

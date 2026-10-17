@@ -13,8 +13,9 @@ import { ImportWorkflowRepository } from "./import-workflow-repository";
 import { ShowWorkflowNotifications } from "./show-workflow-notifications";
 import { ShowWorkflowRepositories } from "./show-workflow-repositories";
 import { ShowWorkflowRuns } from "./show-workflow-runs";
+import { WorkflowEnvEditor } from "./workflow-env-editor";
 
-const TABS = ["runs", "repositories", "notifications"] as const;
+const TABS = ["runs", "repositories", "secrets", "notifications"] as const;
 type Tab = (typeof TABS)[number];
 
 export const ShowWorkflows = () => {
@@ -54,6 +55,7 @@ export const ShowWorkflows = () => {
 						<TabsList>
 							<TabsTrigger value="runs">Recent Runs</TabsTrigger>
 							<TabsTrigger value="repositories">Repositories</TabsTrigger>
+							<TabsTrigger value="secrets">Secrets & Variables</TabsTrigger>
 							<TabsTrigger value="notifications">Notifications</TabsTrigger>
 						</TabsList>
 						<TabsContent value="runs" className="pt-2">
@@ -61,6 +63,9 @@ export const ShowWorkflows = () => {
 						</TabsContent>
 						<TabsContent value="repositories" className="pt-2">
 							<ShowWorkflowRepositories />
+						</TabsContent>
+						<TabsContent value="secrets" className="pt-2">
+							<WorkflowEnvEditor workflowRepositoryId={null} />
 						</TabsContent>
 						<TabsContent value="notifications" className="pt-2">
 							<ShowWorkflowNotifications />

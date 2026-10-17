@@ -7,6 +7,7 @@ import {
 	pgEnum,
 	pgTable,
 	text,
+	unique,
 	uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
@@ -19,6 +20,7 @@ import { organization } from "./account";
 import { github } from "./github";
 import { notifications } from "./notification";
 import { server } from "./server";
+import { encryptedText } from "./utils";
 
 export const workflowSource = pgEnum("workflowSource", ["github", "dokploy"]);
 
@@ -196,6 +198,10 @@ export const workflowRuns = pgTable(
 		}),
 		logPath: text("logPath"),
 		checkRunId: text("checkRunId"),
+		concurrencyGroup: text("concurrencyGroup"),
+		concurrencyCancelInProgress: boolean("concurrencyCancelInProgress")
+			.notNull()
+			.default(false),
 		createdAt: text("createdAt")
 			.notNull()
 			.$defaultFn(() => new Date().toISOString()),
@@ -297,6 +303,45 @@ export const workflowNotificationRelations = relations(
 	}),
 );
 
+export const workflowEnvKind = pgEnum("workflowEnvKind", [
+	"secret",
+	"variable",
+]);
+
+export const workflowEnv = pgTable(
+	"workflow_env",
+	{
+		workflowEnvId: text("workflowEnvId")
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => nanoid()),
+		organizationId: text("organizationId")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		// Null means the value applies to every repository in the organization.
+		workflowRepositoryId: text("workflowRepositoryId").references(
+			() => workflowRepositories.workflowRepositoryId,
+			{ onDelete: "cascade" },
+		),
+		kind: workflowEnvKind("kind").notNull(),
+		name: text("name").notNull(),
+		value: encryptedText("value").notNull(),
+		updatedAt: text("updatedAt")
+			.notNull()
+			.$defaultFn(() => new Date().toISOString()),
+	},
+	(table) => [
+		unique("workflow_env_scope_name_unique")
+			.on(
+				table.organizationId,
+				table.workflowRepositoryId,
+				table.kind,
+				table.name,
+			)
+			.nullsNotDistinct(),
+	],
+);
+
 export const apiImportWorkflowRepository = z.object({
 	githubId: z.string().min(1),
 	owner: z.string().min(1),
@@ -346,4 +391,28 @@ export const apiCreateWorkflowNotification = z.object({
 
 export const apiRemoveWorkflowNotification = z.object({
 	workflowNotificationId: z.string().min(1),
+});
+
+export const apiFindWorkflowEnv = z.object({
+	workflowRepositoryId: z.string().nullable().default(null),
+});
+
+export const apiSetWorkflowEnv = z.object({
+	workflowRepositoryId: z.string().nullable().default(null),
+	kind: z.enum(workflowEnvKind.enumValues),
+	name: z
+		.string()
+		.regex(
+			/^[A-Za-z_][A-Za-z0-9_]*$/,
+			"Use letters, numbers and underscores, and don't start with a number",
+		)
+		.refine(
+			(name) => !/^GITHUB_/i.test(name),
+			"Names can't start with GITHUB_",
+		),
+	value: z.string(),
+});
+
+export const apiRemoveWorkflowEnv = z.object({
+	workflowEnvId: z.string().min(1),
 });

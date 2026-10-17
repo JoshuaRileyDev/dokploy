@@ -2,15 +2,25 @@ import { db } from "@dokploy/server/db";
 import {
 	type apiCreateWorkflowNotification,
 	type apiImportWorkflowRepository,
+	type apiSetWorkflowEnv,
 	type apiUpdateWorkflowRepository,
 	notifications,
 	server,
 	workflowDefinitions,
+	workflowEnv,
 	workflowNotifications,
 	workflowRepositories,
 } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import { and, arrayContains, desc, eq, notInArray } from "drizzle-orm";
+import {
+	and,
+	arrayContains,
+	desc,
+	eq,
+	isNull,
+	notInArray,
+	or,
+} from "drizzle-orm";
 import type { z } from "zod";
 import { authGithub } from "../utils/providers/github";
 import {
@@ -366,3 +376,108 @@ export const findNotificationChannels = async (organizationId: string) =>
 		columns: { notificationId: true, name: true, notificationType: true },
 		orderBy: desc(notifications.createdAt),
 	});
+
+const repositoryScope = (workflowRepositoryId: string | null) =>
+	workflowRepositoryId
+		? eq(workflowEnv.workflowRepositoryId, workflowRepositoryId)
+		: isNull(workflowEnv.workflowRepositoryId);
+
+/** Lists secrets and variables for one scope; secret values are never returned. */
+export const findWorkflowEnv = async (
+	organizationId: string,
+	workflowRepositoryId: string | null,
+) => {
+	const rows = await db.query.workflowEnv.findMany({
+		where: and(
+			eq(workflowEnv.organizationId, organizationId),
+			repositoryScope(workflowRepositoryId),
+		),
+		orderBy: (env, { asc }) => [asc(env.kind), asc(env.name)],
+	});
+	return rows.map(({ value, ...row }) => ({
+		...row,
+		value: row.kind === "variable" ? value : null,
+	}));
+};
+
+const assertRepositoryInOrganization = async (
+	workflowRepositoryId: string | null,
+	organizationId: string,
+) => {
+	if (!workflowRepositoryId) return;
+	const repository = await findWorkflowRepositoryById(workflowRepositoryId);
+	if (repository.organizationId !== organizationId) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Repository not found" });
+	}
+};
+
+export const setWorkflowEnv = async (
+	input: z.infer<typeof apiSetWorkflowEnv>,
+	organizationId: string,
+) => {
+	await assertRepositoryInOrganization(
+		input.workflowRepositoryId,
+		organizationId,
+	);
+	const existing = await db.query.workflowEnv.findFirst({
+		where: and(
+			eq(workflowEnv.organizationId, organizationId),
+			repositoryScope(input.workflowRepositoryId),
+			eq(workflowEnv.kind, input.kind),
+			eq(workflowEnv.name, input.name),
+		),
+		columns: { workflowEnvId: true },
+	});
+	const updatedAt = new Date().toISOString();
+	if (existing) {
+		await db
+			.update(workflowEnv)
+			.set({ value: input.value, updatedAt })
+			.where(eq(workflowEnv.workflowEnvId, existing.workflowEnvId));
+		return existing.workflowEnvId;
+	}
+	const [created] = await db
+		.insert(workflowEnv)
+		.values({ ...input, organizationId, updatedAt })
+		.returning({ workflowEnvId: workflowEnv.workflowEnvId });
+	return created?.workflowEnvId;
+};
+
+export const removeWorkflowEnv = async (
+	workflowEnvId: string,
+	organizationId: string,
+) =>
+	db
+		.delete(workflowEnv)
+		.where(
+			and(
+				eq(workflowEnv.workflowEnvId, workflowEnvId),
+				eq(workflowEnv.organizationId, organizationId),
+			),
+		);
+
+/** Organization-wide values first, then repository values override them by name. */
+export const resolveWorkflowEnv = async (
+	organizationId: string,
+	workflowRepositoryId: string,
+) => {
+	const rows = await db.query.workflowEnv.findMany({
+		where: and(
+			eq(workflowEnv.organizationId, organizationId),
+			or(
+				isNull(workflowEnv.workflowRepositoryId),
+				eq(workflowEnv.workflowRepositoryId, workflowRepositoryId),
+			),
+		),
+	});
+	const sorted = [...rows].sort(
+		(a, b) =>
+			Number(!!a.workflowRepositoryId) - Number(!!b.workflowRepositoryId),
+	);
+	const secrets: Record<string, string> = {};
+	const variables: Record<string, string> = {};
+	for (const row of sorted) {
+		(row.kind === "secret" ? secrets : variables)[row.name] = row.value;
+	}
+	return { secrets, variables };
+};

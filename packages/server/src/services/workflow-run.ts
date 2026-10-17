@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { db } from "@dokploy/server/db";
 import {
 	server,
@@ -7,7 +8,17 @@ import {
 	workflowRuns,
 } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import { and, arrayContains, desc, eq, isNotNull, sql } from "drizzle-orm";
+import {
+	and,
+	arrayContains,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	lt,
+	sql,
+} from "drizzle-orm";
+import { scheduledJobs, scheduleJob } from "node-schedule";
 import type { Octokit } from "octokit";
 import { authGithub } from "../utils/providers/github";
 import { syncWorkflowCheckRun } from "../utils/workflows/check-runs";
@@ -15,6 +26,8 @@ import {
 	type NormalizedGithubEvent,
 	normalizeGithubEvent,
 } from "../utils/workflows/events";
+import { workflowLogsDirectory } from "../utils/workflows/executor";
+import { evaluateTemplate } from "../utils/workflows/expressions";
 import {
 	fetchWorkflowFiles,
 	loadWorkflow,
@@ -141,6 +154,78 @@ export const pickWorkflowServer = async (
 	).serverId;
 };
 
+/** Resolves a workflow's `concurrency` block for a run; unsupported expressions keep the raw group text. */
+export const resolveConcurrency = (
+	workflow: ParsedWorkflow,
+	run: Pick<
+		NewRun,
+		"event" | "ref" | "sha" | "actor" | "payload" | "inputs"
+	> & {
+		workflowName: string;
+		repositoryFullName: string;
+	},
+) => {
+	if (!workflow.concurrency) {
+		return { concurrencyGroup: null, concurrencyCancelInProgress: false };
+	}
+	const pullRequest = run.payload.pull_request as
+		| { head?: { ref?: string }; base?: { ref?: string } }
+		| undefined;
+	const context = {
+		github: {
+			workflow: run.workflowName,
+			event_name: run.event,
+			ref: run.ref,
+			ref_name: run.ref.replace(/^refs\/(heads|tags)\//, ""),
+			head_ref: pullRequest?.head?.ref ?? "",
+			base_ref: pullRequest?.base?.ref ?? "",
+			sha: run.sha,
+			actor: run.actor ?? "",
+			repository: run.repositoryFullName,
+			event: run.payload,
+		},
+		inputs: run.inputs ?? {},
+	};
+	return {
+		concurrencyGroup:
+			evaluateTemplate(workflow.concurrency.group, context) ??
+			workflow.concurrency.group,
+		concurrencyCancelInProgress: workflow.concurrency.cancelInProgress,
+	};
+};
+
+const concurrencyKey = (
+	run: Pick<WorkflowRun, "workflowRepositoryId" | "concurrencyGroup">,
+) =>
+	run.concurrencyGroup
+		? `${run.workflowRepositoryId}:${run.concurrencyGroup}`
+		: null;
+
+/** GitHub semantics: a new run replaces a pending one in its group, and with cancel-in-progress it also stops the running one. */
+const applyConcurrency = async (run: WorkflowRun) => {
+	if (!run.concurrencyGroup) return;
+	const others = await db.query.workflowRuns.findMany({
+		where: and(
+			eq(workflowRuns.workflowRepositoryId, run.workflowRepositoryId),
+			eq(workflowRuns.concurrencyGroup, run.concurrencyGroup),
+			inArray(
+				workflowRuns.status,
+				run.concurrencyCancelInProgress
+					? ["queued", "in_progress"]
+					: ["queued"],
+			),
+		),
+		columns: { workflowRunId: true },
+	});
+	for (const other of others) {
+		if (other.workflowRunId === run.workflowRunId) continue;
+		await cancelWorkflowRun(
+			other.workflowRunId,
+			`Cancelled by ${run.workflowName} #${run.runNumber} in concurrency group "${run.concurrencyGroup}".`,
+		);
+	}
+};
+
 type NewRun = Omit<
 	typeof workflowRuns.$inferInsert,
 	"workflowRunId" | "runNumber" | "serverId" | "status"
@@ -200,7 +285,8 @@ export const createWorkflowRun = async (
 
 	syncWorkflowCheckRun(run.workflowRunId);
 	if (run.status === "queued" && run.serverId) {
-		enqueueWorkflowRun(run.workflowRunId, run.serverId);
+		await applyConcurrency(run);
+		enqueueWorkflowRun(run.workflowRunId, run.serverId, concurrencyKey(run));
 	} else if (run.status === "failure") {
 		sendWorkflowRunNotifications(run.workflowRunId).catch((error) =>
 			console.error("Failed to send workflow notifications", error),
@@ -314,9 +400,11 @@ const queueRunsForRepository = async (
 		event.branch === repository.defaultBranch &&
 		(await touchesWorkflowFiles(changedFiles))
 	) {
-		syncWorkflowRepository(repository.workflowRepositoryId).catch((error) =>
-			console.error("Failed to sync workflows after push", error),
-		);
+		syncWorkflowRepository(repository.workflowRepositoryId)
+			.then(() => syncWorkflowSchedules())
+			.catch((error) =>
+				console.error("Failed to sync workflows after push", error),
+			);
 	}
 
 	const sources = enabledSources(repository);
@@ -383,6 +471,16 @@ const queueRunsForRepository = async (
 					actor: event.actor,
 					pullRequestNumber: event.pullRequestNumber ?? null,
 					trusted: !event.isFork,
+					...resolveConcurrency(file.parsed, {
+						event: event.name,
+						ref: event.ref,
+						sha,
+						actor: event.actor,
+						payload,
+						inputs: null,
+						workflowName: file.parsed.name,
+						repositoryFullName: `${event.owner}/${event.repository}`,
+					}),
 				},
 				repository,
 				{ skipReason },
@@ -517,6 +615,17 @@ export const dispatchWorkflowRun = async ({
 	}
 
 	const ref = `refs/heads/${branch}`;
+	const payload = {
+		ref,
+		inputs: resolvedInputs,
+		repository: {
+			name: repository.repository,
+			full_name: `${repository.owner}/${repository.repository}`,
+			owner: { login: repository.owner },
+			default_branch: repository.defaultBranch,
+		},
+		sender: { login: actor },
+	};
 	return createWorkflowRun(
 		{
 			workflowRepositoryId: repository.workflowRepositoryId,
@@ -525,17 +634,7 @@ export const dispatchWorkflowRun = async ({
 			workflowName: file.parsed.name,
 			source: definition.source,
 			event: "workflow_dispatch",
-			payload: {
-				ref,
-				inputs: resolvedInputs,
-				repository: {
-					name: repository.repository,
-					full_name: `${repository.owner}/${repository.repository}`,
-					owner: { login: repository.owner },
-					default_branch: repository.defaultBranch,
-				},
-				sender: { login: actor },
-			},
+			payload,
 			inputs: resolvedInputs,
 			jobNames: jobNamesOf(file.parsed),
 			ref,
@@ -544,6 +643,16 @@ export const dispatchWorkflowRun = async ({
 			title: `Manually run by ${actor}`,
 			actor,
 			trusted: true,
+			...resolveConcurrency(file.parsed, {
+				event: "workflow_dispatch",
+				ref,
+				sha: commit.sha,
+				actor,
+				payload,
+				inputs: resolvedInputs,
+				workflowName: file.parsed.name,
+				repositoryFullName: `${repository.owner}/${repository.repository}`,
+			}),
 		},
 		repository,
 	);
@@ -590,14 +699,25 @@ export const rerunWorkflowRun = async (workflowRunId: string) => {
 			actor: previous.actor,
 			pullRequestNumber: previous.pullRequestNumber,
 			trusted: previous.trusted,
+			concurrencyGroup: previous.concurrencyGroup,
+			concurrencyCancelInProgress: previous.concurrencyCancelInProgress,
 		},
 		previous.repository,
 	);
 };
 
-export const cancelWorkflowRun = async (workflowRunId: string) => {
+export const cancelWorkflowRun = async (
+	workflowRunId: string,
+	reason: string | null = null,
+) => {
 	const run = await findWorkflowRunById(workflowRunId);
 	if (isFinishedRunStatus(run.status)) return run;
+	if (reason) {
+		await db
+			.update(workflowRuns)
+			.set({ errorMessage: reason })
+			.where(eq(workflowRuns.workflowRunId, workflowRunId));
+	}
 	const wasActive = cancelQueuedOrActiveRun(workflowRunId);
 	if (!wasActive) {
 		await db
@@ -611,6 +731,16 @@ export const cancelWorkflowRun = async (workflowRunId: string) => {
 
 /** Called once at startup: in-memory queue state is gone, so requeue waiting runs and fail interrupted ones. */
 export const initWorkflowRuns = async () => {
+	await syncWorkflowSchedules();
+	scheduleJob(
+		"dokploy-workflow-cleanup",
+		{ rule: "0 3 * * *", tz: "Etc/UTC" },
+		() => {
+			cleanupOldWorkflowRuns().catch((error) =>
+				console.error("Failed to clean up old workflow runs", error),
+			);
+		},
+	);
 	const interrupted = await db
 		.update(workflowRuns)
 		.set({
@@ -624,12 +754,17 @@ export const initWorkflowRuns = async () => {
 
 	const queued = await db.query.workflowRuns.findMany({
 		where: eq(workflowRuns.status, "queued"),
-		columns: { workflowRunId: true, serverId: true },
+		columns: {
+			workflowRunId: true,
+			serverId: true,
+			workflowRepositoryId: true,
+			concurrencyGroup: true,
+		},
 		orderBy: (runs, { asc }) => [asc(runs.createdAt)],
 	});
 	for (const run of queued) {
 		if (run.serverId) {
-			enqueueWorkflowRun(run.workflowRunId, run.serverId);
+			enqueueWorkflowRun(run.workflowRunId, run.serverId, concurrencyKey(run));
 			continue;
 		}
 		await db
@@ -642,4 +777,169 @@ export const initWorkflowRuns = async () => {
 			.where(eq(workflowRuns.workflowRunId, run.workflowRunId));
 		syncWorkflowCheckRun(run.workflowRunId);
 	}
+};
+
+const SCHEDULE_JOB_PREFIX = "dokploy-workflow:";
+
+/** Creates a run for a `schedule` trigger, using the workflow file on the default branch's latest commit like GitHub does. */
+export const queueScheduledWorkflowRun = async (
+	workflowDefinitionId: string,
+	cron: string,
+) => {
+	const definition = await db.query.workflowDefinitions.findFirst({
+		where: eq(workflowDefinitions.workflowDefinitionId, workflowDefinitionId),
+		with: { repository: true },
+	});
+	const githubId = definition?.repository.githubId;
+	if (!definition?.enabled || !githubId) return null;
+	const { repository } = definition;
+	const octokit = authGithub(await findGithubById(githubId));
+	const { data: commit } = await octokit.rest.repos.getCommit({
+		owner: repository.owner,
+		repo: repository.repository,
+		ref: `heads/${repository.defaultBranch}`,
+	});
+	const [file] = (
+		await fetchWorkflowFiles({
+			octokit,
+			owner: repository.owner,
+			repo: repository.repository,
+			ref: commit.sha,
+			sources: [definition.source],
+		})
+	)
+		.filter((f) => f.path === definition.path)
+		.map(loadWorkflow);
+	const stillScheduled = file?.parsed?.triggers.some(
+		(trigger) => trigger.event === "schedule" && trigger.cron?.includes(cron),
+	);
+	if (!file?.parsed || !stillScheduled) return null;
+
+	const ref = `refs/heads/${repository.defaultBranch}`;
+	const payload = {
+		schedule: cron,
+		repository: {
+			name: repository.repository,
+			full_name: `${repository.owner}/${repository.repository}`,
+			owner: { login: repository.owner },
+			default_branch: repository.defaultBranch,
+		},
+	};
+	return createWorkflowRun(
+		{
+			workflowRepositoryId: repository.workflowRepositoryId,
+			workflowDefinitionId: definition.workflowDefinitionId,
+			workflowPath: definition.path,
+			workflowName: file.parsed.name,
+			source: definition.source,
+			event: "schedule",
+			payload,
+			jobNames: jobNamesOf(file.parsed),
+			ref,
+			sha: commit.sha,
+			branch: repository.defaultBranch,
+			title: `Scheduled (${cron})`,
+			actor: null,
+			trusted: true,
+			...resolveConcurrency(file.parsed, {
+				event: "schedule",
+				ref,
+				sha: commit.sha,
+				actor: null,
+				payload,
+				inputs: null,
+				workflowName: file.parsed.name,
+				repositoryFullName: `${repository.owner}/${repository.repository}`,
+			}),
+		},
+		repository,
+	);
+};
+
+/** Reconciles node-schedule jobs with the enabled `schedule` triggers of every imported repository. */
+export const syncWorkflowSchedules = async () => {
+	const definitions = await db
+		.select({
+			workflowDefinitionId: workflowDefinitions.workflowDefinitionId,
+			source: workflowDefinitions.source,
+			triggers: workflowDefinitions.triggers,
+			runGithubWorkflows: workflowRepositories.runGithubWorkflows,
+			runDokployWorkflows: workflowRepositories.runDokployWorkflows,
+		})
+		.from(workflowDefinitions)
+		.innerJoin(
+			workflowRepositories,
+			eq(
+				workflowDefinitions.workflowRepositoryId,
+				workflowRepositories.workflowRepositoryId,
+			),
+		)
+		.where(eq(workflowDefinitions.enabled, true));
+
+	const desired = new Map<
+		string,
+		{ workflowDefinitionId: string; cron: string }
+	>();
+	for (const definition of definitions) {
+		const sourceOn =
+			definition.source === "github"
+				? definition.runGithubWorkflows
+				: definition.runDokployWorkflows;
+		if (!sourceOn) continue;
+		for (const trigger of definition.triggers) {
+			if (trigger.event !== "schedule") continue;
+			for (const cron of trigger.cron ?? []) {
+				desired.set(
+					`${SCHEDULE_JOB_PREFIX}${definition.workflowDefinitionId}:${cron}`,
+					{
+						workflowDefinitionId: definition.workflowDefinitionId,
+						cron,
+					},
+				);
+			}
+		}
+	}
+
+	for (const [name, job] of Object.entries(scheduledJobs)) {
+		if (name.startsWith(SCHEDULE_JOB_PREFIX) && !desired.has(name))
+			job.cancel();
+	}
+	for (const [name, { workflowDefinitionId, cron }] of desired) {
+		if (scheduledJobs[name]) continue;
+		// GitHub evaluates workflow crons in UTC.
+		const job = scheduleJob(name, { rule: cron, tz: "Etc/UTC" }, () => {
+			queueScheduledWorkflowRun(workflowDefinitionId, cron).catch((error) =>
+				console.error(
+					`Scheduled workflow run failed to start (${cron})`,
+					error,
+				),
+			);
+		});
+		if (!job) console.warn(`Ignoring invalid workflow cron "${cron}"`);
+	}
+};
+
+const RUN_RETENTION_DAYS = 30;
+
+/** Deletes finished runs older than the retention period, along with their log files. */
+export const cleanupOldWorkflowRuns = async () => {
+	const cutoff = new Date(
+		Date.now() - RUN_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+	).toISOString();
+	const removed = await db
+		.delete(workflowRuns)
+		.where(
+			and(
+				lt(workflowRuns.createdAt, cutoff),
+				inArray(workflowRuns.status, FINISHED_STATUSES),
+			),
+		)
+		.returning({ workflowRunId: workflowRuns.workflowRunId });
+	for (const run of removed) {
+		await rm(workflowLogsDirectory(run.workflowRunId), {
+			recursive: true,
+			force: true,
+		});
+	}
+	return removed.length;
 };

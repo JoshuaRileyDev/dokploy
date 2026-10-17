@@ -38,6 +38,7 @@ import {
 	githubRepositoryUrl,
 	SUPPORTED_EVENTS,
 } from "./utils";
+import { WorkflowEnvEditor } from "./workflow-env-editor";
 
 const ANY_SERVER = "any";
 
@@ -324,6 +325,16 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 								</TableBody>
 							</Table>
 						)}
+					</CardContent>
+				</div>
+			</Card>
+			<Card className="rounded-xl bg-sidebar p-2.5">
+				<div className="rounded-xl bg-background shadow-md">
+					<CardHeader>
+						<CardTitle className="text-lg">Secrets & Variables</CardTitle>
+					</CardHeader>
+					<CardContent className="border-t pt-4">
+						<WorkflowEnvEditor workflowRepositoryId={workflowRepositoryId} />
 					</CardContent>
 				</div>
 			</Card>

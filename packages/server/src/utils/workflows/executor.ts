@@ -11,6 +11,7 @@ import {
 } from "@dokploy/server/db/schema";
 import { eq } from "drizzle-orm";
 import { findServerById } from "../../services/server";
+import { resolveWorkflowEnv } from "../../services/workflow";
 import {
 	authGithub,
 	getGithubToken,
@@ -109,8 +110,14 @@ export const executeWorkflowRun = async (
 
 		const token = await getGithubToken(authGithub(github));
 		const base = new URL(normalizeGithubUrl(github.githubUrl));
+		const configured = run.trusted
+			? await resolveWorkflowEnv(
+					run.repository.organizationId,
+					run.workflowRepositoryId,
+				)
+			: { secrets: {}, variables: {} };
 		const secrets: Record<string, string> = run.trusted
-			? { GITHUB_TOKEN: token }
+			? { ...configured.secrets, GITHUB_TOKEN: token }
 			: {};
 		mask = createSecretMasker([token, ...Object.values(secrets)]);
 
@@ -127,7 +134,7 @@ export const executeWorkflowRun = async (
 			actor: run.actor ?? "dokploy",
 			eventPayload: run.payload,
 			secrets,
-			variables: {},
+			variables: configured.variables,
 			inputs: run.inputs ?? {},
 			trusted: run.trusted,
 		});
@@ -318,7 +325,12 @@ export const executeWorkflowRun = async (
 
 	await db
 		.update(workflowRuns)
-		.set({ status, errorMessage, finishedAt })
+		// A cancellation reason (e.g. from a concurrency group) was already stored on the run.
+		.set({
+			status,
+			finishedAt,
+			...(cancelled && !errorMessage ? {} : { errorMessage }),
+		})
 		.where(eq(workflowRuns.workflowRunId, workflowRunId));
 
 	await syncWorkflowCheckRun(workflowRunId);

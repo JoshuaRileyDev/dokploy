@@ -33,6 +33,14 @@
       "tag": "0003_workflow_notifications",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792259688983,
+      "tag": "0004_workflow_env_concurrency",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
     }
   ]
 }

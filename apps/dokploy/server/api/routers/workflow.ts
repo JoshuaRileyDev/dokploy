@@ -6,6 +6,7 @@ import {
 	findGithubById,
 	findNotificationChannels,
 	findWorkflowDefinitionById,
+	findWorkflowEnv,
 	findWorkflowNotificationRules,
 	findWorkflowRepositoriesByOrganization,
 	findWorkflowRepositoryById,
@@ -14,11 +15,14 @@ import {
 	getWorkflowRepositoryOctokit,
 	IS_CLOUD,
 	importWorkflowRepository,
+	removeWorkflowEnv,
 	removeWorkflowNotificationRule,
 	removeWorkflowRepository,
 	rerunWorkflowRun,
 	setWorkflowDefinitionEnabled,
+	setWorkflowEnv,
 	syncWorkflowRepository,
+	syncWorkflowSchedules,
 	updateWorkflowRepository,
 } from "@dokploy/server";
 import type { statements } from "@dokploy/server/lib/access-control";
@@ -30,10 +34,13 @@ import {
 	apiDispatchWorkflow,
 	apiFindOneWorkflowRepository,
 	apiFindOneWorkflowRun,
+	apiFindWorkflowEnv,
 	apiFindWorkflowRuns,
 	apiImportWorkflowRepository,
+	apiRemoveWorkflowEnv,
 	apiRemoveWorkflowNotification,
 	apiSetWorkflowDefinitionEnabled,
+	apiSetWorkflowEnv,
 	apiUpdateWorkflowRepository,
 } from "@/server/db/schema";
 
@@ -102,6 +109,7 @@ export const workflowRouter = createTRPCRouter({
 				input,
 				ctx.session.activeOrganizationId,
 			);
+			await syncWorkflowSchedules();
 			await audit(ctx, {
 				action: "create",
 				resourceType: "workflow",
@@ -121,6 +129,7 @@ export const workflowRouter = createTRPCRouter({
 				input,
 				ctx.session.activeOrganizationId,
 			);
+			await syncWorkflowSchedules();
 			await audit(ctx, {
 				action: "update",
 				resourceType: "workflow",
@@ -137,6 +146,7 @@ export const workflowRouter = createTRPCRouter({
 				ctx.session.activeOrganizationId,
 			);
 			await removeWorkflowRepository(repository.workflowRepositoryId);
+			await syncWorkflowSchedules();
 			await audit(ctx, {
 				action: "delete",
 				resourceType: "workflow",
@@ -152,6 +162,7 @@ export const workflowRouter = createTRPCRouter({
 				ctx.session.activeOrganizationId,
 			);
 			await syncWorkflowRepository(input.workflowRepositoryId);
+			await syncWorkflowSchedules();
 		}),
 	setDefinitionEnabled: workflowProcedure("create")
 		.input(apiSetWorkflowDefinitionEnabled)
@@ -172,6 +183,7 @@ export const workflowRouter = createTRPCRouter({
 				input.workflowDefinitionId,
 				input.enabled,
 			);
+			await syncWorkflowSchedules();
 		}),
 	branches: workflowProcedure("read")
 		.input(apiFindOneWorkflowRepository)
@@ -303,6 +315,42 @@ export const workflowRouter = createTRPCRouter({
 				resourceType: "workflow",
 				resourceId: input.workflowNotificationId,
 				resourceName: "Workflow notification",
+			});
+		}),
+	env: workflowProcedure("read")
+		.input(apiFindWorkflowEnv)
+		.query(({ input, ctx }) =>
+			findWorkflowEnv(
+				ctx.session.activeOrganizationId,
+				input.workflowRepositoryId,
+			),
+		),
+	setEnv: workflowProcedure("create")
+		.input(apiSetWorkflowEnv)
+		.mutation(async ({ input, ctx }) => {
+			const workflowEnvId = await setWorkflowEnv(
+				input,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "workflow",
+				resourceId: workflowEnvId,
+				resourceName: `${input.kind} ${input.name}`,
+			});
+		}),
+	removeEnv: workflowProcedure("create")
+		.input(apiRemoveWorkflowEnv)
+		.mutation(async ({ input, ctx }) => {
+			await removeWorkflowEnv(
+				input.workflowEnvId,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "workflow",
+				resourceId: input.workflowEnvId,
+				resourceName: "Workflow secret or variable",
 			});
 		}),
 });
