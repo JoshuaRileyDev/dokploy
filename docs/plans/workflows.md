@@ -33,7 +33,10 @@ Run GitHub Actions–syntax workflows inside Dokploy, triggered by git events, o
 - Setup: servers with the `deploy` role get the full Swarm/Traefik setup; any other combination gets the build setup (Docker, nixpacks, buildpacks, railpack). Installing `act` for the `workflow` role is deferred to Phase 2, where it's first used.
 - UI: role checkboxes in the server form (workflow hidden on cloud, warning for deploy+workflow), one badge per role on server cards.
 
-## Phase 1: Repositories, parsing, read-only UI
+## Phase 1: Repositories, parsing, read-only UI (done)
+
+Shipped as: migration `drizzle-fork/0001_workflow_repositories`, parser `packages/server/src/utils/workflows/parser.ts`, service `packages/server/src/services/workflow.ts`, router `workflow.*`, pages `/dashboard/workflows` (Runs / Repositories tabs, Import dialog) and `/dashboard/workflows/repositories/[workflowRepositoryId]`. `.github` workflows are always synced and listed, but only run when `runGithubWorkflows` is on.
+
 
 Schema (`packages/server/src/db/schema/workflow.ts`):
 

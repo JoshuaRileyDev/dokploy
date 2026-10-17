@@ -29,6 +29,7 @@ export const statements = {
 	traefikFiles: ["read", "write"],
 	api: ["read"],
 	telemetryProvider: ["read", "create", "delete"],
+	workflow: ["read", "create", "run", "delete"],
 
 	// Enterprise-only resources (custom roles only)
 	volume: ["read", "create", "delete"],
@@ -124,6 +125,7 @@ export const ownerRole = ac.newRole({
 	dnsProvider: ["read", "create", "update", "delete"],
 	telemetryProvider: ["read", "create", "delete"],
 	ai: ["read", "create", "update", "delete"],
+	workflow: ["read", "create", "run", "delete"],
 });
 
 /**
@@ -165,6 +167,7 @@ export const adminRole = ac.newRole({
 	dnsProvider: ["read", "create", "update", "delete"],
 	telemetryProvider: ["read", "create", "delete"],
 	ai: ["read", "create", "update", "delete"],
+	workflow: ["read", "create", "run", "delete"],
 });
 
 /**
@@ -212,4 +215,5 @@ export const memberRole = ac.newRole({
 	vaultProvider: ["read"],
 	dnsProvider: [],
 	ai: [],
+	workflow: [],
 });

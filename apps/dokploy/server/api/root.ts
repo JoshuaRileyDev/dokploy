@@ -59,6 +59,7 @@ import { transferRouter } from "./routers/transfer";
 import { userRouter } from "./routers/user";
 import { vaultProviderRouter } from "./routers/vault-provider";
 import { volumeBackupsRouter } from "./routers/volume-backups";
+import { workflowRouter } from "./routers/workflow";
 /**
  * This is the primary router for your server.
  *
@@ -126,6 +127,7 @@ export const appRouter = createTRPCRouter({
 	patch: patchRouter,
 	overview: overviewRouter,
 	transfer: transferRouter,
+	workflow: workflowRouter,
 });
 
 // export type definition of API

@@ -90,6 +90,11 @@ const RESOURCE_META: Record<string, { label: string; description: string }> = {
 		label: "API / CLI",
 		description: "Access to API keys and CLI usage",
 	},
+	workflow: {
+		label: "Workflows",
+		description:
+			"Import repositories and run their CI workflows on workflow servers",
+	},
 	// Enterprise-only resources
 	volume: {
 		label: "Volumes",
@@ -280,6 +285,25 @@ const ACTION_META: Record<
 		read: {
 			label: "Read",
 			description: "Create and manage API keys for CLI access",
+		},
+	},
+	workflow: {
+		read: {
+			label: "Read",
+			description: "View imported repositories, workflows, runs, and logs",
+		},
+		create: {
+			label: "Create",
+			description:
+				"Import repositories and change their settings, secrets, and variables",
+		},
+		run: {
+			label: "Run",
+			description: "Start, re-run, and cancel workflow runs",
+		},
+		delete: {
+			label: "Delete",
+			description: "Remove imported repositories",
 		},
 	},
 	volume: {
@@ -543,6 +567,7 @@ const ROLE_PRESETS: {
 			gitProviders: ["read"],
 			traefikFiles: ["read"],
 			api: ["read"],
+			workflow: ["read"],
 			volume: ["read"],
 			deployment: ["read"],
 			envVars: ["read"],
@@ -575,6 +600,7 @@ const ROLE_PRESETS: {
 			docker: ["read"],
 			gitProviders: ["read"],
 			api: ["read"],
+			workflow: ["read", "run"],
 			volume: ["read", "create", "delete"],
 			deployment: ["read", "create", "cancel"],
 			envVars: ["read", "write"],
@@ -612,6 +638,7 @@ const ROLE_PRESETS: {
 			gitProviders: ["read", "create", "delete"],
 			traefikFiles: ["read", "write"],
 			api: ["read"],
+			workflow: ["read", "create", "run", "delete"],
 			volume: ["read", "create", "delete"],
 			deployment: ["read", "create", "cancel"],
 			envVars: ["read", "write"],
