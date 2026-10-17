@@ -31,9 +31,12 @@ export type ActRunScriptInput = {
 	/** Untrusted runs (fork pull requests) get no Docker socket inside job containers. */
 	trusted: boolean;
 	platformImages?: Record<string, string>;
+	/** Where run directories are created; defaults to the workflow server path. */
+	baseDir?: string;
 };
 
-export const runDirectory = (runId: string) => `${WORKFLOW_RUNS_PATH}/${runId}`;
+export const runDirectory = (runId: string, baseDir = WORKFLOW_RUNS_PATH) =>
+	`${baseDir}/${runId}`;
 
 const toBase64 = (value: string) =>
 	Buffer.from(value, "utf8").toString("base64");
@@ -84,7 +87,7 @@ export const buildActArgs = (input: ActRunScriptInput, dir: string) => {
 };
 
 export const buildActRunScript = (input: ActRunScriptInput) => {
-	const dir = runDirectory(input.runId);
+	const dir = runDirectory(input.runId, input.baseDir);
 	const repoDir = `${dir}/repo`;
 	return [
 		"set -e",

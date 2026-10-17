@@ -118,6 +118,7 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								</a>
 								{run.actor && <span>by {run.actor}</span>}
 								{run.server && <span>on {run.server.name}</span>}
+								{run.runner && <span>on runner {run.runner.name}</span>}
 								<DateTooltip date={run.createdAt}>Triggered</DateTooltip>
 								<span>
 									Duration {formatDuration(run.startedAt, run.finishedAt)}
@@ -190,7 +191,9 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 						{run.jobs.length === 0 && !finished && (
 							<span className="px-2 py-1 text-sm text-muted-foreground">
 								{run.status === "queued"
-									? "Waiting for the workflow server..."
+									? run.requiresRunner
+										? `Waiting for a runner with one of: ${run.runsOn.join(", ")}`
+										: "Waiting for the workflow server..."
 									: "Starting..."}
 							</span>
 						)}

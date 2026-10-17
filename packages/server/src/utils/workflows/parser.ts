@@ -147,6 +147,38 @@ const parseRunsOn = (value: unknown): string[] => {
 	throw new WorkflowParseError('"runs-on" must be a string, list or mapping');
 };
 
+const MATRIX_REFERENCE = /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/;
+
+/** Resolves `runs-on: ${{ matrix.os }}` to the matrix's values, so runs can be routed by label. */
+const expandMatrixRunsOn = (labels: string[], strategy: unknown) => {
+	const matrix =
+		isRecord(strategy) && isRecord(strategy.matrix) ? strategy.matrix : null;
+	if (!matrix) return labels;
+	return [
+		...new Set(
+			labels.flatMap((label) => {
+				const key = label.match(MATRIX_REFERENCE)?.[1];
+				if (!key) return [label];
+				const values = Array.isArray(matrix[key]) ? matrix[key] : [];
+				const included = Array.isArray(matrix.include)
+					? matrix.include.flatMap((entry) =>
+							isRecord(entry) && entry[key] !== undefined ? [entry[key]] : [],
+						)
+					: [];
+				const expanded = [...values, ...included].filter(
+					(value): value is string => typeof value === "string",
+				);
+				return expanded.length > 0 ? expanded : [label];
+			}),
+		),
+	];
+};
+
+/** Every runs-on label across a workflow's jobs. */
+export const workflowRunsOn = (workflow: ParsedWorkflow) => [
+	...new Set(workflow.jobs.flatMap((job) => job.runsOn)),
+];
+
 const parseJobs = (jobs: unknown): WorkflowJobSummary[] => {
 	if (!isRecord(jobs) || Object.keys(jobs).length === 0) {
 		throw new WorkflowParseError('Missing or empty "jobs"');
@@ -167,7 +199,7 @@ const parseJobs = (jobs: unknown): WorkflowJobSummary[] => {
 			id,
 			name: typeof job.name === "string" ? job.name : id,
 			needs: toStringList(job.needs, `jobs.${id}.needs`) ?? [],
-			runsOn: parseRunsOn(job["runs-on"]),
+			runsOn: expandMatrixRunsOn(parseRunsOn(job["runs-on"]), job.strategy),
 			uses,
 			hasMatrix: isRecord(job.strategy) && job.strategy.matrix !== undefined,
 		};

@@ -1,4 +1,4 @@
-import { Bell, FolderGit2, History, Workflow } from "lucide-react";
+import { Bell, FolderGit2, History, Laptop, Workflow } from "lucide-react";
 import { useRouter } from "next/router";
 import {
 	Card,
@@ -12,9 +12,10 @@ import { api } from "@/utils/api";
 import { ImportWorkflowRepository } from "./import-workflow-repository";
 import { ShowWorkflowNotifications } from "./show-workflow-notifications";
 import { ShowWorkflowRepositories } from "./show-workflow-repositories";
+import { ShowWorkflowRunners } from "./show-workflow-runners";
 import { ShowWorkflowRuns } from "./show-workflow-runs";
 
-const TABS = ["runs", "repositories", "notifications"] as const;
+const TABS = ["runs", "repositories", "runners", "notifications"] as const;
 type Tab = (typeof TABS)[number];
 
 export const ShowWorkflows = () => {
@@ -60,6 +61,10 @@ export const ShowWorkflows = () => {
 								<FolderGit2 />
 								Repositories
 							</TabsTrigger>
+							<TabsTrigger value="runners">
+								<Laptop />
+								Runners
+							</TabsTrigger>
 							<TabsTrigger value="notifications">
 								<Bell />
 								Notifications
@@ -70,6 +75,9 @@ export const ShowWorkflows = () => {
 						</TabsContent>
 						<TabsContent value="repositories" className="pt-2">
 							<ShowWorkflowRepositories />
+						</TabsContent>
+						<TabsContent value="runners" className="pt-2">
+							<ShowWorkflowRunners />
 						</TabsContent>
 						<TabsContent value="notifications" className="pt-2">
 							<ShowWorkflowNotifications />

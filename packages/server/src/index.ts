@@ -70,6 +70,7 @@ export * from "./services/web-server-settings";
 export * from "./services/workflow";
 export * from "./services/workflow-env-import";
 export * from "./services/workflow-run";
+export * from "./services/workflow-runner";
 export * from "./setup/config-paths";
 export * from "./setup/forward-auth-setup";
 export * from "./setup/monitoring-setup";

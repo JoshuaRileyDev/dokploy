@@ -2,6 +2,7 @@ import {
 	assertGitProviderAccess,
 	cancelWorkflowRun,
 	createWorkflowNotificationRule,
+	createWorkflowRunner,
 	dispatchWorkflowRun,
 	findGithubById,
 	findNotificationChannels,
@@ -13,6 +14,7 @@ import {
 	findWorkflowRepositoryById,
 	findWorkflowRepositoryForService,
 	findWorkflowRunById,
+	findWorkflowRunners,
 	findWorkflowRuns,
 	getWorkflowRepositoryOctokit,
 	IS_CLOUD,
@@ -20,15 +22,18 @@ import {
 	importWorkflowRepository,
 	importWorkflowRepositoryForService,
 	readLinkedServiceEnv,
+	regenerateRunnerRegistration,
 	removeWorkflowEnv,
 	removeWorkflowNotificationRule,
 	removeWorkflowRepository,
+	removeWorkflowRunner,
 	rerunWorkflowRun,
 	setWorkflowDefinitionEnabled,
 	setWorkflowEnv,
 	syncWorkflowRepository,
 	syncWorkflowSchedules,
 	updateWorkflowRepository,
+	updateWorkflowRunner,
 	workflowEnvNameProblem,
 } from "@dokploy/server";
 import type { statements } from "@dokploy/server/lib/access-control";
@@ -41,9 +46,11 @@ import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {
 	apiCreateWorkflowNotification,
+	apiCreateWorkflowRunner,
 	apiDispatchWorkflow,
 	apiFindOneWorkflowRepository,
 	apiFindOneWorkflowRun,
+	apiFindOneWorkflowRunner,
 	apiFindWorkflowEnv,
 	apiFindWorkflowRuns,
 	apiImportLinkedServiceEnv,
@@ -54,6 +61,7 @@ import {
 	apiSetWorkflowDefinitionEnabled,
 	apiSetWorkflowEnv,
 	apiUpdateWorkflowRepository,
+	apiUpdateWorkflowRunner,
 	apiWorkflowService,
 } from "@/server/db/schema";
 
@@ -484,5 +492,63 @@ export const workflowRouter = createTRPCRouter({
 					: undefined,
 			});
 			return { workflowRepositoryId };
+		}),
+	runners: workflowProcedure("read").query(({ ctx }) =>
+		findWorkflowRunners(ctx.session.activeOrganizationId),
+	),
+	createRunner: workflowProcedure("create")
+		.input(apiCreateWorkflowRunner)
+		.mutation(async ({ input, ctx }) => {
+			const created = await createWorkflowRunner(
+				input,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "create",
+				resourceType: "workflow",
+				resourceId: created.workflowRunnerId,
+				resourceName: `Runner ${input.name}`,
+			});
+			return created;
+		}),
+	updateRunner: workflowProcedure("create")
+		.input(apiUpdateWorkflowRunner)
+		.mutation(async ({ input, ctx }) => {
+			await updateWorkflowRunner(input, ctx.session.activeOrganizationId);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "workflow",
+				resourceId: input.workflowRunnerId,
+				resourceName: `Runner ${input.name}`,
+			});
+		}),
+	regenerateRunnerToken: workflowProcedure("create")
+		.input(apiFindOneWorkflowRunner)
+		.mutation(async ({ input, ctx }) => {
+			const result = await regenerateRunnerRegistration(
+				input.workflowRunnerId,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "workflow",
+				resourceId: input.workflowRunnerId,
+				resourceName: "Runner registration token",
+			});
+			return result;
+		}),
+	removeRunner: workflowProcedure("delete")
+		.input(apiFindOneWorkflowRunner)
+		.mutation(async ({ input, ctx }) => {
+			await removeWorkflowRunner(
+				input.workflowRunnerId,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "workflow",
+				resourceId: input.workflowRunnerId,
+				resourceName: "Runner",
+			});
 		}),
 });

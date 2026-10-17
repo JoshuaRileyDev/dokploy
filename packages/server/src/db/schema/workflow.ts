@@ -155,6 +155,33 @@ export const workflowDefinitionRelations = relations(
 	}),
 );
 
+export const workflowRunners = pgTable("workflow_runner", {
+	workflowRunnerId: text("workflowRunnerId")
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => nanoid()),
+	organizationId: text("organizationId")
+		.notNull()
+		.references(() => organization.id, { onDelete: "cascade" }),
+	name: text("name").notNull(),
+	labels: text("labels").array().notNull(),
+	// Empty means the runner may take runs from any repository in the organization.
+	allowedRepositoryIds: text("allowedRepositoryIds")
+		.array()
+		.notNull()
+		.default(sql`ARRAY[]::text[]`),
+	tokenHash: text("tokenHash").unique(),
+	registrationTokenHash: text("registrationTokenHash").unique(),
+	registrationExpiresAt: text("registrationExpiresAt"),
+	lastSeenAt: text("lastSeenAt"),
+	version: text("version"),
+	os: text("os"),
+	arch: text("arch"),
+	createdAt: text("createdAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+});
+
 export const workflowRuns = pgTable(
 	"workflow_run",
 	{
@@ -199,6 +226,14 @@ export const workflowRuns = pgTable(
 		logPath: text("logPath"),
 		checkRunId: text("checkRunId"),
 		concurrencyGroup: text("concurrencyGroup"),
+		// Every runs-on label across the workflow's jobs, used to route the run to a runner.
+		runsOn: text("runsOn").array().notNull().default(sql`ARRAY[]::text[]`),
+		requiresRunner: boolean("requiresRunner").notNull().default(false),
+		workflowRunnerId: text("workflowRunnerId").references(
+			() => workflowRunners.workflowRunnerId,
+			{ onDelete: "set null" },
+		),
+		cancelRequested: boolean("cancelRequested").notNull().default(false),
 		concurrencyCancelInProgress: boolean("concurrencyCancelInProgress")
 			.notNull()
 			.default(false),
@@ -254,6 +289,10 @@ export const workflowRunRelations = relations(
 		server: one(server, {
 			fields: [workflowRuns.serverId],
 			references: [server.serverId],
+		}),
+		runner: one(workflowRunners, {
+			fields: [workflowRuns.workflowRunnerId],
+			references: [workflowRunners.workflowRunnerId],
 		}),
 		jobs: many(workflowJobs),
 	}),
@@ -432,4 +471,18 @@ export const apiImportLinkedServiceEnv = apiLinkedServiceEnv.extend({
 export const apiWorkflowService = z.object({
 	serviceType: z.enum(["application", "compose"]),
 	serviceId: z.string().min(1),
+});
+
+export const apiCreateWorkflowRunner = z.object({
+	name: z.string().min(1).max(100),
+	labels: z.array(z.string().min(1)).min(1),
+	allowedRepositoryIds: z.array(z.string()).default([]),
+});
+
+export const apiUpdateWorkflowRunner = apiCreateWorkflowRunner.extend({
+	workflowRunnerId: z.string().min(1),
+});
+
+export const apiFindOneWorkflowRunner = z.object({
+	workflowRunnerId: z.string().min(1),
 });

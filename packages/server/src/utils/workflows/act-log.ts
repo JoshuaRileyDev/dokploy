@@ -58,7 +58,12 @@ const stepKey = (entry: ActJsonLine) =>
 
 /** Turns `act --json` output into job, step and log events. Matrix jobs are keyed by act's per-instance job name. */
 export class ActLogProcessor {
-	private readonly startedJobs = new Set<string>();
+	private readonly startedJobs: Set<string>;
+
+	/** `startedJobs` lets a resumed run skip job_started events for jobs it already recorded. */
+	constructor(startedJobs: Iterable<string> = []) {
+		this.startedJobs = new Set(startedJobs);
+	}
 
 	process(line: string): ActLogEvent[] {
 		const entry = parseJson(line.trim());

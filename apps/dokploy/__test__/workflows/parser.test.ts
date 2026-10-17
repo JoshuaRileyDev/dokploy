@@ -3,6 +3,7 @@ import path from "node:path";
 import {
 	parseWorkflow,
 	WorkflowParseError,
+	workflowRunsOn,
 } from "@dokploy/server/utils/workflows/parser";
 import { describe, expect, it } from "vitest";
 
@@ -188,5 +189,46 @@ jobs:
 	])("rejects invalid workflows (%#)", (content, message) => {
 		expect(() => parseWorkflow(content, "wf")).toThrow(WorkflowParseError);
 		expect(() => parseWorkflow(content, "wf")).toThrow(message);
+	});
+});
+
+describe("runs-on matrix expansion", () => {
+	it("resolves matrix references, including include entries", () => {
+		const workflow = parseWorkflow(
+			`
+on: push
+jobs:
+  build:
+    runs-on: \${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: macos-15
+    steps: [{run: echo}]
+  lint:
+    runs-on: ubuntu-latest
+    steps: [{run: echo}]
+`,
+			"wf",
+		);
+		expect(workflow.jobs[0]?.runsOn).toEqual([
+			"ubuntu-latest",
+			"macos-latest",
+			"macos-15",
+		]);
+		expect(workflowRunsOn(workflow)).toEqual([
+			"ubuntu-latest",
+			"macos-latest",
+			"macos-15",
+		]);
+	});
+
+	it("keeps references it can't resolve", () => {
+		const workflow = parseWorkflow(
+			"on: push\njobs:\n  a:\n    runs-on: ${{ inputs.os }}\n    steps: [{run: echo}]",
+			"wf",
+		);
+		expect(workflow.jobs[0]?.runsOn).toEqual(["${{ inputs.os }}"]);
 	});
 });

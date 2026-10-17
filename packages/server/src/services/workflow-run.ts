@@ -29,7 +29,6 @@ import {
 	type NormalizedGithubEvent,
 	normalizeGithubEvent,
 } from "../utils/workflows/events";
-import { workflowLogsDirectory } from "../utils/workflows/executor";
 import { evaluateTemplate } from "../utils/workflows/expressions";
 import {
 	fetchWorkflowFiles,
@@ -38,12 +37,13 @@ import {
 	type WorkflowSourceType,
 } from "../utils/workflows/github";
 import { sendWorkflowRunNotifications } from "../utils/workflows/notifications";
-import type { ParsedWorkflow } from "../utils/workflows/parser";
+import { type ParsedWorkflow, workflowRunsOn } from "../utils/workflows/parser";
 import {
 	activeWorkflowRunCounts,
 	cancelQueuedOrActiveRun,
 	enqueueWorkflowRun,
 } from "../utils/workflows/queue";
+import { workflowLogsDirectory } from "../utils/workflows/run-recorder";
 import { findMatchingTrigger } from "../utils/workflows/triggers";
 import { findGithubById } from "./github";
 import {
@@ -52,6 +52,7 @@ import {
 	syncWorkflowRepository,
 	type WorkflowRepository,
 } from "./workflow";
+import { failStaleRunnerRuns, hasMatchingRunner } from "./workflow-runner";
 
 export type WorkflowRun = typeof workflowRuns.$inferSelect;
 
@@ -124,6 +125,7 @@ export const findWorkflowRunById = async (workflowRunId: string) => {
 		with: {
 			repository: { with: { github: true } },
 			server: { columns: { serverId: true, name: true } },
+			runner: { columns: { workflowRunnerId: true, name: true } },
 			jobs: { orderBy: (jobs, { asc }) => [asc(jobs.position)] },
 		},
 	});
@@ -240,9 +242,21 @@ export const createWorkflowRun = async (
 	repository: Pick<WorkflowRepository, "organizationId" | "defaultServerId">,
 	options: { skipReason?: string } = {},
 ) => {
-	const serverId = options.skipReason
-		? null
-		: await pickWorkflowServer(repository);
+	const requiresRunner =
+		!options.skipReason &&
+		(await hasMatchingRunner({
+			organizationId: repository.organizationId,
+			workflowRepositoryId: values.workflowRepositoryId,
+			runsOn: values.runsOn ?? [],
+		}));
+	const skipReason =
+		options.skipReason ??
+		(requiresRunner && values.trusted === false
+			? "Skipped: runners run jobs directly on their machine, so they only take trusted runs."
+			: undefined);
+	const serverId =
+		skipReason || requiresRunner ? null : await pickWorkflowServer(repository);
+	const unroutable = !skipReason && !requiresRunner && !serverId;
 
 	const run = await db.transaction(async (tx) => {
 		// Serializes run numbering per workflow so concurrent deliveries can't share a number.
@@ -271,26 +285,26 @@ export const createWorkflowRun = async (
 				...values,
 				runNumber,
 				serverId,
-				status: options.skipReason
-					? "skipped"
-					: serverId
-						? "queued"
-						: "failure",
+				requiresRunner: !skipReason && requiresRunner,
+				status: skipReason ? "skipped" : unroutable ? "failure" : "queued",
 				errorMessage:
-					options.skipReason ??
-					(serverId
-						? null
-						: "No workflow server is available. Add a server with the Workflows role, or check the repository's workflow server setting."),
-				finishedAt: options.skipReason || !serverId ? now : null,
+					skipReason ??
+					(unroutable
+						? "No workflow server is available. Add a server with the Workflows role, or check the repository's workflow server setting."
+						: null),
+				finishedAt: skipReason || unroutable ? now : null,
 			})
 			.returning();
 		return created!;
 	});
 
 	syncWorkflowCheckRun(run.workflowRunId);
-	if (run.status === "queued" && run.serverId) {
+	if (run.status === "queued") {
 		await applyConcurrency(run);
-		enqueueWorkflowRun(run.workflowRunId, run.serverId, concurrencyKey(run));
+		// Runner runs wait in the database until a matching runner claims them.
+		if (run.serverId) {
+			enqueueWorkflowRun(run.workflowRunId, run.serverId, concurrencyKey(run));
+		}
 	} else if (run.status === "failure") {
 		sendWorkflowRunNotifications(run.workflowRunId).catch((error) =>
 			console.error("Failed to send workflow notifications", error),
@@ -468,6 +482,7 @@ const queueRunsForRepository = async (
 					eventAction: event.action ?? null,
 					payload,
 					jobNames: jobNamesOf(file.parsed),
+					runsOn: workflowRunsOn(file.parsed),
 					ref: event.ref,
 					sha,
 					branch: event.branch,
@@ -641,6 +656,7 @@ export const dispatchWorkflowRun = async ({
 			payload,
 			inputs: resolvedInputs,
 			jobNames: jobNamesOf(file.parsed),
+			runsOn: workflowRunsOn(file.parsed),
 			ref,
 			sha: commit.sha,
 			branch,
@@ -696,6 +712,7 @@ export const rerunWorkflowRun = async (workflowRunId: string) => {
 			payload: previous.payload,
 			inputs: previous.inputs,
 			jobNames: previous.jobNames,
+			runsOn: previous.runsOn,
 			ref: previous.ref,
 			sha: previous.sha,
 			branch: previous.branch,
@@ -722,6 +739,13 @@ export const cancelWorkflowRun = async (
 			.set({ errorMessage: reason })
 			.where(eq(workflowRuns.workflowRunId, workflowRunId));
 	}
+	if (run.requiresRunner && run.status === "in_progress") {
+		await db
+			.update(workflowRuns)
+			.set({ cancelRequested: true })
+			.where(eq(workflowRuns.workflowRunId, workflowRunId));
+		return run;
+	}
 	const wasActive = cancelQueuedOrActiveRun(workflowRunId);
 	if (!wasActive) {
 		await db
@@ -736,6 +760,11 @@ export const cancelWorkflowRun = async (
 /** Called once at startup: in-memory queue state is gone, so requeue waiting runs and fail interrupted ones. */
 export const initWorkflowRuns = async () => {
 	await syncWorkflowSchedules();
+	scheduleJob("dokploy-workflow-stale-runners", "* * * * *", () => {
+		failStaleRunnerRuns().catch((error) =>
+			console.error("Failed to check for stale runner runs", error),
+		);
+	});
 	scheduleJob(
 		"dokploy-workflow-cleanup",
 		{ rule: "0 3 * * *", tz: "Etc/UTC" },
@@ -752,12 +781,20 @@ export const initWorkflowRuns = async () => {
 			errorMessage: "Dokploy restarted while this run was in progress.",
 			finishedAt: new Date().toISOString(),
 		})
-		.where(eq(workflowRuns.status, "in_progress"))
+		.where(
+			and(
+				eq(workflowRuns.status, "in_progress"),
+				eq(workflowRuns.requiresRunner, false),
+			),
+		)
 		.returning({ workflowRunId: workflowRuns.workflowRunId });
 	for (const run of interrupted) syncWorkflowCheckRun(run.workflowRunId);
 
 	const queued = await db.query.workflowRuns.findMany({
-		where: eq(workflowRuns.status, "queued"),
+		where: and(
+			eq(workflowRuns.status, "queued"),
+			eq(workflowRuns.requiresRunner, false),
+		),
 		columns: {
 			workflowRunId: true,
 			serverId: true,
@@ -839,6 +876,7 @@ export const queueScheduledWorkflowRun = async (
 			event: "schedule",
 			payload,
 			jobNames: jobNamesOf(file.parsed),
+			runsOn: workflowRunsOn(file.parsed),
 			ref,
 			sha: commit.sha,
 			branch: repository.defaultBranch,

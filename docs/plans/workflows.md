@@ -129,9 +129,19 @@ Shipped as: migration `drizzle-fork/0004_workflow_env_concurrency`, `utils/workf
 - The push that triggers the deploy that first imports a repository won't start workflow runs: the webhook is processed before the import exists. Later pushes do.
 - Application and compose pages have a Workflows tab (self-hosted, `workflow.read`, GitHub sources only) showing the repository's workflows, secrets and runs, with Sync, Settings, and an Import now button when it isn't imported yet.
 
+## Self-hosted runners (done)
+
+Machines that can't be reached over SSH, or that need to run jobs on the host (a Mac for iOS builds), run the `@joshuarileydev/dokploy-runner` CLI (`apps/runner`, private npm package, published by hand with `pnpm --filter @joshuarileydev/dokploy-runner publish`). Shipped as: migration `drizzle-fork/0005_workflow_runners`; `services/workflow-runner.ts`; `utils/workflows/run-recorder.ts` (shared by the SSH executor and runners); router `workflow.{runners,createRunner,updateRunner,regenerateRunnerToken,removeRunner}`; HTTP API under `/api/workflow-runner/*`; Runners tab on the Workflows page.
+
+- Registration: Dokploy creates the runner with a name, labels and optional allowed repositories, and shows a one-time `dkr_reg_` token (1 hour). `dokploy-runner register` exchanges it for a long-lived credential; only hashes are stored. Regenerating issues a new registration token; the old credential keeps working until a machine registers with the new token.
+- Routing: a run's `runsOn` is every job's `runs-on` (matrix references resolved). If any runner in the organization has an intersecting label, the run waits for a runner instead of going to the SSH queue. Untrusted (fork PR) runs that need a runner are skipped.
+- Claiming: the CLI long-polls `claim` (up to 25s). Claims are atomic (`FOR UPDATE SKIP LOCKED`) and respect concurrency groups and allowed repositories. Dokploy builds the same act script as for SSH, with the runner's labels mapped to `-self-hosted`, so those jobs run on the host.
+- Output: the CLI masks secrets locally, then posts output batches every second (at least every 5s as a heartbeat). The response carries the cancel flag; cancelling kills the run's process group. Runs whose runner stops reporting for 3 minutes are failed.
+- One run at a time per runner process. Cloud (`IS_CLOUD`) doesn't expose the runner API.
+
 ## Phase 5: Scale and providers
 
-- Server side of the Gitea runner protocol so `act_runner` on each workflow server polls for individual jobs: per-job distribution across servers, label routing, runners behind NAT.
+- Server side of the Gitea runner protocol so `act_runner` on each workflow server polls for individual jobs: per-job distribution across servers, runners behind NAT.
 - Provider adapters (GitLab, Gitea, Bitbucket) normalizing webhook payloads into the GitHub event shape act expects.
 
 ## Dokploy-specific actions

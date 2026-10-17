@@ -4,7 +4,7 @@ import {
 	buildActRunScript,
 	toDotenv,
 } from "@dokploy/server/utils/workflows/act";
-import { createSecretMasker } from "@dokploy/server/utils/workflows/executor";
+import { createSecretMasker } from "@dokploy/server/utils/workflows/run-recorder";
 import { describe, expect, it } from "vitest";
 
 const input: ActRunScriptInput = {

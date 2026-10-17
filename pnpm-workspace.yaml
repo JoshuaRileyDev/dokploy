@@ -1,6 +1,7 @@
 packages:
   - "apps/api"
   - "apps/dokploy"
+  - "apps/runner"
   - "apps/schedules"
   - "packages/server"
 
