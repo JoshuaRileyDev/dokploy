@@ -1,4 +1,4 @@
-import { Workflow } from "lucide-react";
+import { Bell, FolderGit2, History, Workflow } from "lucide-react";
 import { useRouter } from "next/router";
 import {
 	Card,
@@ -52,9 +52,18 @@ export const ShowWorkflows = () => {
 						}
 					>
 						<TabsList>
-							<TabsTrigger value="runs">Recent Runs</TabsTrigger>
-							<TabsTrigger value="repositories">Repositories</TabsTrigger>
-							<TabsTrigger value="notifications">Notifications</TabsTrigger>
+							<TabsTrigger value="runs">
+								<History />
+								Recent Runs
+							</TabsTrigger>
+							<TabsTrigger value="repositories">
+								<FolderGit2 />
+								Repositories
+							</TabsTrigger>
+							<TabsTrigger value="notifications">
+								<Bell />
+								Notifications
+							</TabsTrigger>
 						</TabsList>
 						<TabsContent value="runs" className="pt-2">
 							<ShowWorkflowRuns />
