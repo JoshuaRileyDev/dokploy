@@ -11,12 +11,14 @@ import {
 	findWorkflowNotificationRules,
 	findWorkflowRepositoriesByOrganization,
 	findWorkflowRepositoryById,
+	findWorkflowRepositoryForService,
 	findWorkflowRunById,
 	findWorkflowRuns,
 	getWorkflowRepositoryOctokit,
 	IS_CLOUD,
 	importLinkedServiceEnv,
 	importWorkflowRepository,
+	importWorkflowRepositoryForService,
 	readLinkedServiceEnv,
 	removeWorkflowEnv,
 	removeWorkflowNotificationRule,
@@ -52,6 +54,7 @@ import {
 	apiSetWorkflowDefinitionEnabled,
 	apiSetWorkflowEnv,
 	apiUpdateWorkflowRepository,
+	apiWorkflowService,
 } from "@/server/db/schema";
 
 // Workflows run arbitrary repository code on the user's servers, so they are self-hosted only.
@@ -428,5 +431,58 @@ export const workflowRouter = createTRPCRouter({
 				metadata: { serviceId: input.serviceId, names: result.imported },
 			});
 			return result;
+		}),
+	repositoryForService: workflowProcedure("read")
+		.input(apiWorkflowService)
+		.query(async ({ input, ctx }) => {
+			await checkServiceAccess(ctx, input.serviceId, "read");
+			const found = await findWorkflowRepositoryForService(
+				input.serviceType,
+				input.serviceId,
+			);
+			if (!found.eligible) return { eligible: false as const };
+			if (found.organizationId !== ctx.session.activeOrganizationId) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Service not found",
+				});
+			}
+			return {
+				eligible: true as const,
+				owner: found.owner,
+				repository: found.repository,
+				workflowRepositoryId: found.workflowRepositoryId,
+			};
+		}),
+	importRepositoryForService: workflowProcedure("create")
+		.input(apiWorkflowService)
+		.mutation(async ({ input, ctx }) => {
+			await checkServiceAccess(ctx, input.serviceId, "read");
+			const found = await findWorkflowRepositoryForService(
+				input.serviceType,
+				input.serviceId,
+			);
+			if (
+				found.eligible &&
+				found.organizationId !== ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Service not found",
+				});
+			}
+			const workflowRepositoryId = await importWorkflowRepositoryForService(
+				input.serviceType,
+				input.serviceId,
+			);
+			await audit(ctx, {
+				action: "create",
+				resourceType: "workflow",
+				resourceId: workflowRepositoryId,
+				resourceName: found.eligible
+					? `${found.owner}/${found.repository}`
+					: undefined,
+			});
+			return { workflowRepositoryId };
 		}),
 });

@@ -1,6 +1,9 @@
 import { rm } from "node:fs/promises";
+import { IS_CLOUD } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import {
+	applications,
+	compose,
 	server,
 	type WorkflowRunStatus,
 	workflowDefinitions,
@@ -45,6 +48,7 @@ import { findMatchingTrigger } from "../utils/workflows/triggers";
 import { findGithubById } from "./github";
 import {
 	findWorkflowRepositoriesByGithubRepo,
+	importWorkflowRepository,
 	syncWorkflowRepository,
 	type WorkflowRepository,
 } from "./workflow";
@@ -942,4 +946,159 @@ export const cleanupOldWorkflowRuns = async () => {
 		});
 	}
 	return removed.length;
+};
+
+export type WorkflowServiceType = "application" | "compose";
+
+const loadServiceSource = async (
+	serviceType: WorkflowServiceType,
+	serviceId: string,
+) => {
+	const columns = {
+		sourceType: true,
+		githubId: true,
+		owner: true,
+		repository: true,
+		branch: true,
+	} as const;
+	const withOrganization = {
+		environment: {
+			columns: {},
+			with: { project: { columns: { organizationId: true } } },
+		},
+	} as const;
+	const service =
+		serviceType === "application"
+			? await db.query.applications.findFirst({
+					where: eq(applications.applicationId, serviceId),
+					columns,
+					with: withOrganization,
+				})
+			: await db.query.compose.findFirst({
+					where: eq(compose.composeId, serviceId),
+					columns,
+					with: withOrganization,
+				});
+	if (!service) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Service not found" });
+	}
+	return {
+		...service,
+		organizationId: service.environment.project.organizationId,
+	};
+};
+
+/** Finds the imported workflow repository a GitHub-sourced application or compose service deploys from. */
+export const findWorkflowRepositoryForService = async (
+	serviceType: WorkflowServiceType,
+	serviceId: string,
+) => {
+	const source = await loadServiceSource(serviceType, serviceId);
+	const { githubId, owner, repository, branch, organizationId } = source;
+	if (source.sourceType !== "github" || !githubId || !owner || !repository) {
+		return { eligible: false as const };
+	}
+	const [imported] = (
+		await findWorkflowRepositoriesByGithubRepo({ githubId, owner, repository })
+	).filter((repo) => repo.organizationId === organizationId);
+	return {
+		eligible: true as const,
+		githubId,
+		owner,
+		repository,
+		branch,
+		organizationId,
+		workflowRepositoryId: imported?.workflowRepositoryId ?? null,
+	};
+};
+
+export const importWorkflowRepositoryForService = async (
+	serviceType: WorkflowServiceType,
+	serviceId: string,
+) => {
+	const found = await findWorkflowRepositoryForService(serviceType, serviceId);
+	if (!found.eligible) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Workflows need a service deployed from a GitHub provider",
+		});
+	}
+	if (found.workflowRepositoryId) return found.workflowRepositoryId;
+	const created = await importWorkflowRepository(
+		{
+			githubId: found.githubId,
+			owner: found.owner,
+			repository: found.repository,
+			defaultServerId: null,
+		},
+		found.organizationId,
+	);
+	await syncWorkflowSchedules();
+	return created.workflowRepositoryId;
+};
+
+const AUTO_IMPORT_TIMEOUT_MS = 20_000;
+
+const detectAndImportWorkflows = async (
+	serviceType: WorkflowServiceType,
+	serviceId: string,
+) => {
+	const found = await findWorkflowRepositoryForService(serviceType, serviceId);
+	if (!found.eligible) return;
+	if (found.workflowRepositoryId) {
+		await syncWorkflowRepository(found.workflowRepositoryId);
+	} else {
+		const octokit = authGithub(await findGithubById(found.githubId));
+		const ref =
+			found.branch ??
+			(
+				await octokit.rest.repos.get({
+					owner: found.owner,
+					repo: found.repository,
+				})
+			).data.default_branch;
+		const files = await fetchWorkflowFiles({
+			octokit,
+			owner: found.owner,
+			repo: found.repository,
+			ref,
+			sources: ["dokploy", "github"],
+		});
+		if (files.length === 0) return;
+		await importWorkflowRepository(
+			{
+				githubId: found.githubId,
+				owner: found.owner,
+				repository: found.repository,
+				defaultServerId: null,
+			},
+			found.organizationId,
+		);
+	}
+	await syncWorkflowSchedules();
+};
+
+/**
+ * Runs before an application or compose deploy: imports the GitHub repository if it has workflow
+ * files, or refreshes it if it's already imported. Never throws and gives up after a timeout,
+ * so it can't delay or fail the deployment.
+ */
+export const autoImportWorkflowsBeforeDeploy = async (
+	serviceType: WorkflowServiceType,
+	serviceId: string,
+) => {
+	if (IS_CLOUD) return;
+	let timer: NodeJS.Timeout | undefined;
+	try {
+		await Promise.race([
+			detectAndImportWorkflows(serviceType, serviceId),
+			new Promise<void>((resolve) => {
+				timer = setTimeout(resolve, AUTO_IMPORT_TIMEOUT_MS);
+			}),
+		]);
+	} catch (error) {
+		console.error("Workflow auto-import before deploy failed", error);
+	} finally {
+		clearTimeout(timer);
+	}
 };

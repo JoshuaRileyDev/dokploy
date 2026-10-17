@@ -37,6 +37,7 @@ import { ContainerFreeMonitoring } from "@/components/dashboard/monitoring/free/
 import { ContainerPaidMonitoring } from "@/components/dashboard/monitoring/paid/container/show-paid-container-monitoring";
 import { AssignNetworks } from "@/components/dashboard/networks/assign-networks";
 import { TransferService } from "@/components/dashboard/shared/transfer-service";
+import { ShowServiceWorkflows } from "@/components/dashboard/workflows/show-service-workflows";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
 import { AdvanceBreadcrumb } from "@/components/shared/advance-breadcrumb";
 import { StatusTooltip } from "@/components/shared/status-tooltip";
@@ -70,7 +71,8 @@ type TabState =
 	| "monitoring"
 	| "preview-deployments"
 	| "volume-backups"
-	| "icon";
+	| "icon"
+	| "workflows";
 
 const Service = (
 	props: InferGetServerSidePropsType<typeof getServerSideProps>,
@@ -261,6 +263,11 @@ const Service = (
 													Deployments
 												</TabsTrigger>
 											)}
+											{!isCloud &&
+												permissions?.workflow.read &&
+												data?.sourceType === "github" && (
+													<TabsTrigger value="workflows">Workflows</TabsTrigger>
+												)}
 											{permissions?.deployment.read && (
 												<TabsTrigger value="preview-deployments">
 													Preview Deployments
@@ -388,6 +395,16 @@ const Service = (
 											</div>
 										</TabsContent>
 									)}
+									{!isCloud &&
+										permissions?.workflow.read &&
+										data?.sourceType === "github" && (
+											<TabsContent value="workflows" className="w-full pt-2.5">
+												<ShowServiceWorkflows
+													serviceType="application"
+													serviceId={applicationId}
+												/>
+											</TabsContent>
+										)}
 									{permissions?.volumeBackup.read && (
 										<TabsContent
 											value="volume-backups"

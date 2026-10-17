@@ -428,3 +428,8 @@ export const apiImportLinkedServiceEnv = apiLinkedServiceEnv.extend({
 	kind: z.enum(workflowEnvKind.enumValues),
 	overwrite: z.boolean().default(false),
 });
+
+export const apiWorkflowService = z.object({
+	serviceType: z.enum(["application", "compose"]),
+	serviceId: z.string().min(1),
+});

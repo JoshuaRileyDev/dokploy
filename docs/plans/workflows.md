@@ -123,6 +123,12 @@ Shipped as: migration `drizzle-fork/0004_workflow_env_concurrency`, `utils/workf
 - Repository secrets can be imported from an application or compose service that deploys the same repository (same GitHub provider, owner and name). Values are resolved like a deployment (project, environment and vault references) and can come from env, build args or build secrets. Importing requires access to the service and the `envVars.read` permission, because a workflow could print an imported secret.
 - Not done: job-level `concurrency`, persisting artifacts for download from the UI, and log retention/cleanup for old runs.
 
+## Deploy integration (done)
+
+- Before an application or compose deploy (`processDeploymentJob`), `autoImportWorkflowsBeforeDeploy` checks the deployed branch for `.dokploy/workflows` and `.github/workflows`. If either has files, the repository is imported (or re-synced if already imported) and schedules are reconciled. It has a 20s cap, logs failures, and never blocks or fails the deploy. Preview deployments are skipped.
+- The push that triggers the deploy that first imports a repository won't start workflow runs: the webhook is processed before the import exists. Later pushes do.
+- Application and compose pages have a Workflows tab (self-hosted, `workflow.read`, GitHub sources only) showing the repository's workflows, secrets and runs, with Sync, Settings, and an Import now button when it isn't imported yet.
+
 ## Phase 5: Scale and providers
 
 - Server side of the Gitea runner protocol so `act_runner` on each workflow server polls for individual jobs: per-job distribution across servers, label routing, runners behind NAT.
