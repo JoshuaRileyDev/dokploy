@@ -10,6 +10,7 @@ import { TRPCError } from "@trpc/server";
 import { and, arrayContains, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Octokit } from "octokit";
 import { authGithub } from "../utils/providers/github";
+import { syncWorkflowCheckRun } from "../utils/workflows/check-runs";
 import {
 	type NormalizedGithubEvent,
 	normalizeGithubEvent,
@@ -20,6 +21,7 @@ import {
 	WORKFLOW_DIRECTORIES,
 	type WorkflowSourceType,
 } from "../utils/workflows/github";
+import { sendWorkflowRunNotifications } from "../utils/workflows/notifications";
 import type { ParsedWorkflow } from "../utils/workflows/parser";
 import {
 	activeWorkflowRunCounts,
@@ -180,7 +182,11 @@ export const createWorkflowRun = async (
 				...values,
 				runNumber,
 				serverId,
-				status: options.skipReason || !serverId ? "skipped" : "queued",
+				status: options.skipReason
+					? "skipped"
+					: serverId
+						? "queued"
+						: "failure",
 				errorMessage:
 					options.skipReason ??
 					(serverId
@@ -192,8 +198,13 @@ export const createWorkflowRun = async (
 		return created!;
 	});
 
+	syncWorkflowCheckRun(run.workflowRunId);
 	if (run.status === "queued" && run.serverId) {
 		enqueueWorkflowRun(run.workflowRunId, run.serverId);
+	} else if (run.status === "failure") {
+		sendWorkflowRunNotifications(run.workflowRunId).catch((error) =>
+			console.error("Failed to send workflow notifications", error),
+		);
 	}
 	return run;
 };
@@ -593,20 +604,23 @@ export const cancelWorkflowRun = async (workflowRunId: string) => {
 			.update(workflowRuns)
 			.set({ status: "cancelled", finishedAt: new Date().toISOString() })
 			.where(eq(workflowRuns.workflowRunId, workflowRunId));
+		syncWorkflowCheckRun(workflowRunId);
 	}
 	return run;
 };
 
 /** Called once at startup: in-memory queue state is gone, so requeue waiting runs and fail interrupted ones. */
 export const initWorkflowRuns = async () => {
-	await db
+	const interrupted = await db
 		.update(workflowRuns)
 		.set({
 			status: "failure",
 			errorMessage: "Dokploy restarted while this run was in progress.",
 			finishedAt: new Date().toISOString(),
 		})
-		.where(eq(workflowRuns.status, "in_progress"));
+		.where(eq(workflowRuns.status, "in_progress"))
+		.returning({ workflowRunId: workflowRuns.workflowRunId });
+	for (const run of interrupted) syncWorkflowCheckRun(run.workflowRunId);
 
 	const queued = await db.query.workflowRuns.findMany({
 		where: eq(workflowRuns.status, "queued"),
@@ -614,6 +628,18 @@ export const initWorkflowRuns = async () => {
 		orderBy: (runs, { asc }) => [asc(runs.createdAt)],
 	});
 	for (const run of queued) {
-		if (run.serverId) enqueueWorkflowRun(run.workflowRunId, run.serverId);
+		if (run.serverId) {
+			enqueueWorkflowRun(run.workflowRunId, run.serverId);
+			continue;
+		}
+		await db
+			.update(workflowRuns)
+			.set({
+				status: "failure",
+				errorMessage: "The workflow server for this run was removed.",
+				finishedAt: new Date().toISOString(),
+			})
+			.where(eq(workflowRuns.workflowRunId, run.workflowRunId));
+		syncWorkflowCheckRun(run.workflowRunId);
 	}
 };

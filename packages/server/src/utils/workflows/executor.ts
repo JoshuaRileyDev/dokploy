@@ -22,6 +22,8 @@ import {
 	buildActRunScript,
 } from "./act";
 import { ActLogProcessor, jobDisplayName, LineBuffer } from "./act-log";
+import { syncWorkflowCheckRun } from "./check-runs";
+import { sendWorkflowRunNotifications } from "./notifications";
 import { runRemoteScript, type SshTarget } from "./ssh";
 
 const MAX_RUN_DURATION_MS = 6 * 60 * 60 * 1000;
@@ -89,6 +91,7 @@ export const executeWorkflowRun = async (
 			errorMessage: null,
 		})
 		.where(eq(workflowRuns.workflowRunId, workflowRunId));
+	syncWorkflowCheckRun(workflowRunId);
 
 	let exitCode = 1;
 	let errorMessage: string | null = null;
@@ -317,4 +320,9 @@ export const executeWorkflowRun = async (
 		.update(workflowRuns)
 		.set({ status, errorMessage, finishedAt })
 		.where(eq(workflowRuns.workflowRunId, workflowRunId));
+
+	await syncWorkflowCheckRun(workflowRunId);
+	await sendWorkflowRunNotifications(workflowRunId).catch((error) =>
+		console.error("Failed to send workflow notifications", error),
+	);
 };

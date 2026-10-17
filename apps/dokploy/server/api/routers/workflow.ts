@@ -1,9 +1,12 @@
 import {
 	assertGitProviderAccess,
 	cancelWorkflowRun,
+	createWorkflowNotificationRule,
 	dispatchWorkflowRun,
 	findGithubById,
+	findNotificationChannels,
 	findWorkflowDefinitionById,
+	findWorkflowNotificationRules,
 	findWorkflowRepositoriesByOrganization,
 	findWorkflowRepositoryById,
 	findWorkflowRunById,
@@ -11,6 +14,7 @@ import {
 	getWorkflowRepositoryOctokit,
 	IS_CLOUD,
 	importWorkflowRepository,
+	removeWorkflowNotificationRule,
 	removeWorkflowRepository,
 	rerunWorkflowRun,
 	setWorkflowDefinitionEnabled,
@@ -22,11 +26,13 @@ import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {
+	apiCreateWorkflowNotification,
 	apiDispatchWorkflow,
 	apiFindOneWorkflowRepository,
 	apiFindOneWorkflowRun,
 	apiFindWorkflowRuns,
 	apiImportWorkflowRepository,
+	apiRemoveWorkflowNotification,
 	apiSetWorkflowDefinitionEnabled,
 	apiUpdateWorkflowRepository,
 } from "@/server/db/schema";
@@ -262,6 +268,41 @@ export const workflowRouter = createTRPCRouter({
 				resourceType: "workflow",
 				resourceId: run.workflowRunId,
 				resourceName: `${run.workflowName} #${run.runNumber}`,
+			});
+		}),
+	notificationRules: workflowProcedure("read").query(({ ctx }) =>
+		findWorkflowNotificationRules(ctx.session.activeOrganizationId),
+	),
+	notificationChannels: workflowProcedure("create").query(({ ctx }) =>
+		findNotificationChannels(ctx.session.activeOrganizationId),
+	),
+	createNotificationRule: workflowProcedure("create")
+		.input(apiCreateWorkflowNotification)
+		.mutation(async ({ input, ctx }) => {
+			const rule = await createWorkflowNotificationRule(
+				input,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "create",
+				resourceType: "workflow",
+				resourceId: rule?.workflowNotificationId,
+				resourceName: "Workflow notification",
+			});
+			return rule;
+		}),
+	removeNotificationRule: workflowProcedure("create")
+		.input(apiRemoveWorkflowNotification)
+		.mutation(async ({ input, ctx }) => {
+			await removeWorkflowNotificationRule(
+				input.workflowNotificationId,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "workflow",
+				resourceId: input.workflowNotificationId,
+				resourceName: "Workflow notification",
 			});
 		}),
 });

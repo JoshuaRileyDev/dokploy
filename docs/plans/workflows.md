@@ -103,7 +103,10 @@ Security:
 
 UI: Runs tab (filters: status, repo, branch, event), run detail page `/dashboard/workflows/runs/[runId]` with `needs` graph, step logs, re-run all / re-run failed, cancel, and "Run workflow" dispatch dialog.
 
-## Phase 3: Notifications and GitHub status
+## Phase 3: Notifications and GitHub status (done)
+
+Shipped as: migration `drizzle-fork/0003_workflow_notifications`, `utils/workflows/{notifications,check-runs}.ts`, router `workflow.{notificationRules,notificationChannels,createNotificationRule,removeNotificationRule}`, and a Notifications tab on the Workflows page. Instead of adding columns to upstream's `notification` table (which would touch every notification type's schema, service and form), rules live in `workflow_notification` and point at existing channels, with optional repository and branch filters. The Custom (webhook) channel receives a JSON payload (`type: "workflow"`, `status`, `repository`, `workflow`, `runNumber`, `branch`, `sha`, `runUrl`, ...). Check runs are named `Dokploy / <workflow>`; without the Checks permission Dokploy logs one warning per repository and carries on.
+
 
 - `notifications`: add `workflowRunFailed`, `workflowRunSucceeded` booleans; `sendWorkflowRunNotifications` following `build-error.ts`. The existing `custom` type covers arbitrary failure webhooks; all other channels work automatically.
 - Optional repo/branch filter on the notification.

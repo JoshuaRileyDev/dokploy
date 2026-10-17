@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
 	boolean,
 	index,
@@ -17,6 +17,7 @@ import type {
 } from "../../utils/workflows/parser";
 import { organization } from "./account";
 import { github } from "./github";
+import { notifications } from "./notification";
 import { server } from "./server";
 
 export const workflowSource = pgEnum("workflowSource", ["github", "dokploy"]);
@@ -194,6 +195,7 @@ export const workflowRuns = pgTable(
 			onDelete: "set null",
 		}),
 		logPath: text("logPath"),
+		checkRunId: text("checkRunId"),
 		createdAt: text("createdAt")
 			.notNull()
 			.$defaultFn(() => new Date().toISOString()),
@@ -258,6 +260,43 @@ export const workflowJobRelations = relations(workflowJobs, ({ one }) => ({
 	}),
 }));
 
+export const workflowNotifications = pgTable("workflow_notification", {
+	workflowNotificationId: text("workflowNotificationId")
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => nanoid()),
+	organizationId: text("organizationId")
+		.notNull()
+		.references(() => organization.id, { onDelete: "cascade" }),
+	notificationId: text("notificationId")
+		.notNull()
+		.references(() => notifications.notificationId, { onDelete: "cascade" }),
+	workflowRepositoryId: text("workflowRepositoryId").references(
+		() => workflowRepositories.workflowRepositoryId,
+		{ onDelete: "cascade" },
+	),
+	branches: text("branches").array().notNull().default(sql`ARRAY[]::text[]`),
+	onFailure: boolean("onFailure").notNull().default(true),
+	onSuccess: boolean("onSuccess").notNull().default(false),
+	createdAt: text("createdAt")
+		.notNull()
+		.$defaultFn(() => new Date().toISOString()),
+});
+
+export const workflowNotificationRelations = relations(
+	workflowNotifications,
+	({ one }) => ({
+		notification: one(notifications, {
+			fields: [workflowNotifications.notificationId],
+			references: [notifications.notificationId],
+		}),
+		repository: one(workflowRepositories, {
+			fields: [workflowNotifications.workflowRepositoryId],
+			references: [workflowRepositories.workflowRepositoryId],
+		}),
+	}),
+);
+
 export const apiImportWorkflowRepository = z.object({
 	githubId: z.string().min(1),
 	owner: z.string().min(1),
@@ -295,4 +334,16 @@ export const apiDispatchWorkflow = z.object({
 	workflowDefinitionId: z.string().min(1),
 	branch: z.string().min(1),
 	inputs: z.record(z.string(), z.string()).default({}),
+});
+
+export const apiCreateWorkflowNotification = z.object({
+	notificationId: z.string().min(1),
+	workflowRepositoryId: z.string().nullable().default(null),
+	branches: z.array(z.string().min(1)).default([]),
+	onFailure: z.boolean().default(true),
+	onSuccess: z.boolean().default(false),
+});
+
+export const apiRemoveWorkflowNotification = z.object({
+	workflowNotificationId: z.string().min(1),
 });

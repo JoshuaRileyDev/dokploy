@@ -1,9 +1,12 @@
 import { db } from "@dokploy/server/db";
 import {
+	type apiCreateWorkflowNotification,
 	type apiImportWorkflowRepository,
 	type apiUpdateWorkflowRepository,
+	notifications,
 	server,
 	workflowDefinitions,
+	workflowNotifications,
 	workflowRepositories,
 } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
@@ -287,4 +290,79 @@ export const findWorkflowRepositoriesByGithubRepo = async ({
 			eq(workflowRepositories.owner, owner),
 			eq(workflowRepositories.repository, repository),
 		),
+	});
+
+export const findWorkflowNotificationRules = async (organizationId: string) =>
+	db.query.workflowNotifications.findMany({
+		where: eq(workflowNotifications.organizationId, organizationId),
+		orderBy: desc(workflowNotifications.createdAt),
+		with: {
+			notification: {
+				columns: { notificationId: true, name: true, notificationType: true },
+			},
+			repository: { columns: { owner: true, repository: true } },
+		},
+	});
+
+export const createWorkflowNotificationRule = async (
+	input: z.infer<typeof apiCreateWorkflowNotification>,
+	organizationId: string,
+) => {
+	const notification = await db.query.notifications.findFirst({
+		where: and(
+			eq(notifications.notificationId, input.notificationId),
+			eq(notifications.organizationId, organizationId),
+		),
+	});
+	if (!notification) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Notification not found",
+		});
+	}
+	if (input.workflowRepositoryId) {
+		const repository = await findWorkflowRepositoryById(
+			input.workflowRepositoryId,
+		);
+		if (repository.organizationId !== organizationId) {
+			throw new TRPCError({
+				code: "NOT_FOUND",
+				message: "Repository not found",
+			});
+		}
+	}
+	if (!input.onFailure && !input.onSuccess) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Choose at least one of failures or successes",
+		});
+	}
+	const [rule] = await db
+		.insert(workflowNotifications)
+		.values({ ...input, organizationId })
+		.returning();
+	return rule;
+};
+
+export const removeWorkflowNotificationRule = async (
+	workflowNotificationId: string,
+	organizationId: string,
+) =>
+	db
+		.delete(workflowNotifications)
+		.where(
+			and(
+				eq(
+					workflowNotifications.workflowNotificationId,
+					workflowNotificationId,
+				),
+				eq(workflowNotifications.organizationId, organizationId),
+			),
+		);
+
+export const findNotificationChannels = async (organizationId: string) =>
+	db.query.notifications.findMany({
+		where: eq(notifications.organizationId, organizationId),
+		columns: { notificationId: true, name: true, notificationType: true },
+		orderBy: desc(notifications.createdAt),
 	});
