@@ -386,7 +386,6 @@ export const environmentRouter = createTRPCRouter({
 						name: environments.name,
 						description: environments.description,
 						createdAt: environments.createdAt,
-						env: environments.env,
 						projectId: environments.projectId,
 						isDefault: environments.isDefault,
 					})
