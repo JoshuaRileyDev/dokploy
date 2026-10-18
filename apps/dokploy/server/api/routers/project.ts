@@ -747,7 +747,6 @@ export const projectRouter = createTRPCRouter({
 						description: true,
 						createdAt: true,
 						organizationId: true,
-						env: true,
 					},
 				}),
 				db

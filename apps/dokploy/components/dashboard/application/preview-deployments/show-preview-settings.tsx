@@ -84,6 +84,12 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 		api.application.update.useMutation();
 
 	const { data, refetch } = api.application.one.useQuery({ applicationId });
+	const { data: permissions } = api.user.getPermissions.useQuery();
+	const { data: environment, refetch: refetchEnvironment } =
+		api.application.readEnvironment.useQuery(
+			{ applicationId },
+			{ enabled: isOpen && !!permissions?.envVars.read },
+		);
 
 	const form = useForm<Schema>({
 		defaultValues: {
@@ -109,11 +115,11 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 	}, [data?.isPreviewDeploymentsActive]);
 
 	useEffect(() => {
-		if (data) {
+		if (data && environment) {
 			form.reset({
-				env: data.previewEnv || "",
-				buildArgs: data.previewBuildArgs || "",
-				buildSecrets: data.previewBuildSecrets || "",
+				env: environment.previewEnv || "",
+				buildArgs: environment.previewBuildArgs || "",
+				buildSecrets: environment.previewBuildSecrets || "",
 				wildcardDomain: data.previewWildcard || "*.sslip.io",
 				port: data.previewPort || 3000,
 				previewLabels: data.previewLabels || [],
@@ -126,9 +132,10 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 					data.previewRequireCollaboratorPermissions ?? true,
 			});
 		}
-	}, [data]);
+	}, [data, environment]);
 
 	const onSubmit = async (formData: Schema) => {
+		if (!environment || !permissions?.envVars.write) return;
 		updateApplication({
 			previewEnv: formData.env,
 			previewBuildArgs: formData.buildArgs,
@@ -145,7 +152,8 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 			previewRequireCollaboratorPermissions:
 				formData.previewRequireCollaboratorPermissions,
 		})
-			.then(() => {
+			.then(async () => {
+				await Promise.all([refetch(), refetchEnvironment()]);
 				toast.success("Preview Deployments settings updated");
 			})
 			.catch((error) => {
@@ -538,6 +546,7 @@ export const ShowPreviewSettings = ({ applicationId }: Props) => {
 							isLoading={isPending}
 							form="hook-form-delete-application"
 							type="submit"
+							disabled={!environment || !permissions?.envVars.write}
 						>
 							Save
 						</Button>

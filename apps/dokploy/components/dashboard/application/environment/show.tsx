@@ -37,12 +37,12 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 	const { mutateAsync, isPending } =
 		api.application.saveEnvironment.useMutation();
 
-	const { data, refetch } = api.application.one.useQuery(
+	const { data, refetch } = api.application.readEnvironment.useQuery(
 		{
 			applicationId,
 		},
 		{
-			enabled: !!applicationId,
+			enabled: !!applicationId && !!permissions?.envVars.read,
 		},
 	);
 
@@ -88,6 +88,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 	}, [data, isDirty, form]);
 
 	const onSubmit = async (formData: EnvironmentSchema) => {
+		if (!data || !canWrite) return;
 		mutateAsync({
 			env: formData.env,
 			buildArgs: formData.buildArgs,
@@ -237,7 +238,7 @@ export const ShowEnvironment = ({ applicationId }: Props) => {
 								isLoading={isPending}
 								className="w-fit"
 								type="submit"
-								disabled={!hasChanges}
+								disabled={!data || !hasChanges}
 							>
 								Save
 							</Button>

@@ -51,6 +51,10 @@ import {
 	protectedProcedure,
 	withPermission,
 } from "@/server/api/trpc";
+import {
+	applicationResponse,
+	omitApplicationEnvironment,
+} from "@/server/api/utils/application-response";
 import { audit } from "@/server/api/utils/audit";
 import {
 	apiCreateApplication,
@@ -127,7 +131,7 @@ export const applicationRouter = createTRPCRouter({
 					resourceId: newApplication.applicationId,
 					resourceName: newApplication.appName,
 				});
-				return newApplication;
+				return omitApplicationEnvironment(newApplication);
 			} catch (error: unknown) {
 				console.log("error", error);
 				if (error instanceof TRPCError) {
@@ -299,9 +303,47 @@ export const applicationRouter = createTRPCRouter({
 			}
 
 			return {
-				...application,
+				...applicationResponse(application),
 				hasGitProviderAccess,
 				unauthorizedProvider,
+			};
+		}),
+
+	readEnvironment: protectedProcedure
+		.input(apiFindOneApplication)
+		.query(async ({ input, ctx }) => {
+			await checkServicePermissionAndAccess(ctx, input.applicationId, {
+				envVars: ["read"],
+			});
+			const application = await findApplicationById(input.applicationId);
+			if (
+				application.environment.project.organizationId !==
+				ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this application",
+				});
+			}
+			return {
+				env: application.env,
+				buildArgs: application.buildArgs,
+				buildSecrets: application.buildSecrets,
+				previewEnv: application.previewEnv,
+				previewBuildArgs: application.previewBuildArgs,
+				previewBuildSecrets: application.previewBuildSecrets,
+				createEnvFile: application.createEnvFile,
+				buildType: application.buildType,
+				environment: {
+					environmentId: application.environment.environmentId,
+					projectId: application.environment.projectId,
+					env: application.environment.env,
+					project: {
+						projectId: application.environment.project.projectId,
+						organizationId: application.environment.project.organizationId,
+						env: application.environment.project.env,
+					},
+				},
 			};
 		}),
 
@@ -396,7 +438,7 @@ export const applicationRouter = createTRPCRouter({
 				resourceId: application.applicationId,
 				resourceName: application.appName,
 			});
-			return application;
+			return applicationResponse(application);
 		}),
 
 	stop: protectedProcedure
@@ -1032,7 +1074,7 @@ export const applicationRouter = createTRPCRouter({
 				resourceId: updatedApplication.applicationId,
 				resourceName: updatedApplication.appName,
 			});
-			return updatedApplication;
+			return omitApplicationEnvironment(updatedApplication);
 		}),
 
 	cancelDeployment: protectedProcedure
