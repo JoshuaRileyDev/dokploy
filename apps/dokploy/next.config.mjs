@@ -6,6 +6,9 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
 	reactStrictMode: true,
+	// Portless proxies local development at dokploy.localhost and can expose it
+	// to authenticated Tailscale devices.
+	allowedDevOrigins: ["*.localhost", "*.ts.net"],
 	typescript: {
 		ignoreBuildErrors: true,
 	},

@@ -19,6 +19,8 @@ export interface IUpdateData {
 	updateAvailable: boolean;
 }
 
+export const DOKPLOY_IMAGE_REPOSITORY = "joshua2212/dokploy";
+
 export const DEFAULT_UPDATE_DATA: IUpdateData = {
 	latestVersion: null,
 	updateAvailable: false,
@@ -49,8 +51,7 @@ export const getUpdateData = async (
 	currentVersion: string,
 ): Promise<IUpdateData> => {
 	try {
-		const baseUrl =
-			"https://hub.docker.com/v2/repositories/dokploy/dokploy/tags";
+		const baseUrl = `https://hub.docker.com/v2/repositories/${DOKPLOY_IMAGE_REPOSITORY}/tags`;
 		let url: string | null = `${baseUrl}?page_size=100`;
 		let allResults: { digest: string; name: string }[] = [];
 
@@ -104,9 +105,9 @@ export const getUpdateData = async (
 			return DEFAULT_UPDATE_DATA;
 		}
 
-		// Find the versioned tag (v0.x.x) that has the same digest as "latest"
+		// Find a semantic-version tag that has the same digest as "latest"
 		const latestVersionTag = allResults.find(
-			(t) => t.digest === latestTag.digest && t.name.startsWith("v"),
+			(t) => t.digest === latestTag.digest && semver.clean(t.name) !== null,
 		);
 
 		if (!latestVersionTag) {
@@ -295,7 +296,7 @@ export const reloadDockerResource = async (
 				imageTag = currentImageTag;
 			}
 
-			command = `docker service update --force --image dokploy/dokploy:${imageTag} ${resourceName}`;
+			command = `docker service update --force --image ${DOKPLOY_IMAGE_REPOSITORY}:${imageTag} ${resourceName}`;
 		} else {
 			command = `docker service update --force ${resourceName}`;
 		}
