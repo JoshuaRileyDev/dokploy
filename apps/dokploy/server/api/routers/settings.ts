@@ -18,7 +18,6 @@ import {
 	getDokployImageTag,
 	getLogCleanupStatus,
 	getUpdateData,
-	DOKPLOY_IMAGE_REPOSITORY,
 	getWebServerSettings,
 	IS_CLOUD,
 	parseRawConfig,
@@ -590,7 +589,7 @@ export const settingsRouter = createTRPCRouter({
 				"update",
 				"--force",
 				"--image",
-				`${DOKPLOY_IMAGE_REPOSITORY}:${data.latestVersion}`,
+				`dokploy/dokploy:${data.latestVersion}`,
 				"dokploy",
 			]);
 			await audit(ctx, {

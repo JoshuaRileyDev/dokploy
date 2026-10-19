@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: joshua2212/dokploy
+  IMAGE_NAME: dokploy/dokploy
 
 permissions:
   contents: read
