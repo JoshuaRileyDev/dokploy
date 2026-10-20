@@ -5,6 +5,7 @@ import { applicationRouter } from "./routers/application";
 import { backupRouter } from "./routers/backup";
 import { bitbucketRouter } from "./routers/bitbucket";
 import { certificateRouter } from "./routers/certificate";
+import { cloudProviderRouter } from "./routers/cloud-provider";
 import { clusterRouter } from "./routers/cluster";
 import { composeRouter } from "./routers/compose";
 import { deploymentRouter } from "./routers/deployment";
@@ -76,6 +77,7 @@ export const appRouter = createTRPCRouter({
 	deployment: deploymentRouter,
 	destination: destinationRouter,
 	dnsProvider: dnsProviderRouter,
+	cloudProvider: cloudProviderRouter,
 	docker: dockerRouter,
 	dockerDiskUsage: dockerDiskUsageRouter,
 	dockerImage: dockerImageRouter,

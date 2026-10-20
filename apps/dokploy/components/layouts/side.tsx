@@ -13,6 +13,7 @@ import {
 	CircleHelp,
 	ClipboardList,
 	Clock,
+	Cloud,
 	CreditCard,
 	Folder,
 	Forward,
@@ -314,6 +315,13 @@ const MENU: Menu = {
 			url: "/dashboard/settings/servers",
 			icon: Server,
 			isEnabled: ({ permissions }) => !!permissions?.server.read,
+		},
+		{
+			isSingle: true,
+			title: "Cloud Providers",
+			url: "/dashboard/settings/cloud-providers",
+			icon: Cloud,
+			isEnabled: ({ permissions }) => !!permissions?.server.create,
 		},
 		{
 			isSingle: true,

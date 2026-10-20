@@ -36,6 +36,7 @@ import { TerminalModal } from "../web-server/terminal-modal";
 import { ShowServerActions } from "./actions/show-server-actions";
 import { DeleteServerModal } from "./delete-server-modal";
 import { HandleServers } from "./handle-servers";
+import { ProvisionServer } from "./provision-server";
 import { SetupServer } from "./setup-server";
 import { ShowMonitoringModal } from "./show-monitoring-modal";
 import { WelcomeSubscription } from "./welcome-stripe/welcome-subscription";
@@ -95,6 +96,7 @@ export const ShowServers = () => {
 												Add SSH Key
 											</Link>
 										</span>
+										{permissions?.server.create && <ProvisionServer />}
 									</div>
 								) : (
 									<>
@@ -105,7 +107,12 @@ export const ShowServers = () => {
 													Start adding servers to deploy your applications
 													remotely.
 												</span>
-												{permissions?.server.create && <HandleServers />}
+												{permissions?.server.create && (
+													<div className="flex flex-row gap-2">
+														<ProvisionServer />
+														<HandleServers />
+													</div>
+												)}
 											</div>
 										) : (
 											<div className="flex flex-col gap-4 min-h-[25vh]">
@@ -385,7 +392,8 @@ export const ShowServers = () => {
 												{permissions?.server.create && (
 													<div className="flex flex-row gap-2 flex-wrap w-full justify-end mt-4">
 														{data && data?.length > 0 && (
-															<div>
+															<div className="flex flex-row gap-2">
+																<ProvisionServer />
 																<HandleServers />
 															</div>
 														)}
