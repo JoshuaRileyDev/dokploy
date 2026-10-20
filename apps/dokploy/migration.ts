@@ -7,6 +7,13 @@ const sql = postgres(dbUrl, { max: 1 });
 const db = drizzle(sql);
 
 await migrate(db, { migrationsFolder: "drizzle" })
+	// Fork-only migrations are tracked separately so upstream's journal stays untouched.
+	.then(() =>
+		migrate(db, {
+			migrationsFolder: "drizzle-fork",
+			migrationsTable: "__drizzle_fork_migrations",
+		}),
+	)
 	.then(() => {
 		console.log("Migration complete");
 		sql.end();

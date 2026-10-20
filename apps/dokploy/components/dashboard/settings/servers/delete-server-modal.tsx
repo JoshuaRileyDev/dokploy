@@ -6,6 +6,7 @@ import { AlertBlock } from "@/components/shared/alert-block";
 import { DialogAction } from "@/components/shared/dialog-action";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -15,6 +16,7 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { api } from "@/utils/api";
 
 interface Props {
@@ -60,6 +62,18 @@ export const DeleteServerModal = ({
 	const { mutateAsync: deleteLibsql } = api.libsql.remove.useMutation();
 	const { mutateAsync: deleteServer, isPending: isDeletingServer } =
 		api.server.remove.useMutation();
+	const { data: provisioning, isLoading: isLoadingProvisioning } =
+		api.cloudProvider.provisioningForServer.useQuery(
+			{ serverId },
+			{ enabled: open },
+		);
+	const { mutateAsync: destroyCloudServer, isPending: isDestroying } =
+		api.cloudProvider.destroyServer.useMutation();
+	const [deleteOnProvider, setDeleteOnProvider] = useState(true);
+	const canDeleteOnProvider =
+		!!provisioning?.providerServerId &&
+		!provisioning.providerServerDeletedAt &&
+		!!provisioning.cloudProviderAccountId;
 
 	const canDelete = (services?.length ?? 0) === 0;
 
@@ -111,6 +125,24 @@ export const DeleteServerModal = ({
 		try {
 			const result = await deleteServer({ serverId });
 			toast.success(`Server ${serverName} deleted successfully`);
+			if (canDeleteOnProvider && deleteOnProvider && provisioning) {
+				await destroyCloudServer({
+					serverProvisioningId: provisioning.serverProvisioningId,
+				})
+					.then(() =>
+						toast.success(
+							`Deleted ${serverName} on ${provisioning.providerLabel}`,
+						),
+					)
+					.catch((error) =>
+						toast.error(
+							`Could not delete the server on ${provisioning.providerLabel}`,
+							{
+								description: `${error.message} Delete it from the ${provisioning.providerLabel} console to stop billing.`,
+							},
+						),
+					);
+			}
 			if (result?.vectorAgentRemovalWarning) {
 				toast.error(
 					`Couldn't reach this host to remove the Vector logs and metrics agent; if it was deployed it may still be running: ${result.vectorAgentRemovalWarning}`,
@@ -198,13 +230,44 @@ export const DeleteServerModal = ({
 					</div>
 				)}
 
+				{canDeleteOnProvider && (
+					<div className="flex items-start gap-3 rounded-lg border p-3">
+						<Checkbox
+							id={`delete-on-provider-${serverId}`}
+							checked={deleteOnProvider}
+							onCheckedChange={(checked) =>
+								setDeleteOnProvider(checked === true)
+							}
+							className="mt-0.5"
+						/>
+						<div className="flex flex-col gap-1">
+							<Label htmlFor={`delete-on-provider-${serverId}`}>
+								Also delete the server on {provisioning?.providerLabel}
+							</Label>
+							<span className="text-xs text-muted-foreground">
+								Removes the {provisioning?.config.serverType} server in{" "}
+								{provisioning?.config.location} from the{" "}
+								{provisioning?.account?.name} account so it stops billing. Its
+								disk is erased.
+							</span>
+						</div>
+					</div>
+				)}
+
 				<DialogFooter>
 					<Button variant="outline" onClick={() => setOpen(false)}>
 						Cancel
 					</Button>
 					<Button
 						variant="destructive"
-						disabled={!canDelete || isDeletingServer}
+						// Deleting before the lookup returns would skip the provider VM,
+						// and once the server row is gone the modal can't find it again.
+						disabled={
+							!canDelete ||
+							isLoadingProvisioning ||
+							isDeletingServer ||
+							isDestroying
+						}
 						onClick={handleDeleteServer}
 					>
 						Delete Server

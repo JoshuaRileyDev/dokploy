@@ -1,0 +1,14 @@
+{
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792524070411,
+      "tag": "0000_cloud_server_provisioning",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    }
+  ]
+}
