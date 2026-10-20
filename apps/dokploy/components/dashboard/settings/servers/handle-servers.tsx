@@ -161,9 +161,10 @@ export const HandleServers = ({ serverId, children }: Props) => {
 				toast.success(serverId ? "Server Updated" : "Server Created");
 				setIsOpen(false);
 			})
-			.catch(() => {
+			.catch((error) => {
 				toast.error(
-					serverId ? "Error updating a server" : "Error creating a server",
+					error?.message ||
+						(serverId ? "Error updating a server" : "Error creating a server"),
 				);
 			});
 	};

@@ -7,6 +7,7 @@ import {
 	findUserById,
 	getAccessibleServerIds,
 	getPublicIpWithFallback,
+	getServerRoleUsage,
 	getServicesByServerId,
 	haveActiveServices,
 	IS_CLOUD,
@@ -53,6 +54,7 @@ import {
 	apiUpdateServerMonitoring,
 	applications,
 	compose,
+	describeRoleRemovalBlockers,
 	legacyServerType,
 	mariadb,
 	mongo,
@@ -561,6 +563,23 @@ export const serverRouter = createTRPCRouter({
 				const roles = validateServerRoles(
 					resolveServerRoles({ serverRoles, serverType }),
 				);
+				if (roles) {
+					const removed = server.serverRoles.filter(
+						(role) => !roles.includes(role),
+					);
+					if (removed.length > 0) {
+						const blockers = describeRoleRemovalBlockers(
+							removed,
+							await getServerRoleUsage(input.serverId),
+						);
+						if (blockers.length > 0) {
+							throw new TRPCError({
+								code: "BAD_REQUEST",
+								message: blockers.join(" "),
+							});
+						}
+					}
+				}
 				const currentServer = await updateServerById(input.serverId, {
 					...rest,
 					...(roles && {

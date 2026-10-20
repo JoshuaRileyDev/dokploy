@@ -1,15 +1,18 @@
 import { db } from "@dokploy/server/db";
 import {
 	type apiCreateServer,
+	applications,
 	legacyServerType,
 	member,
 	organization,
 	resolveServerRoles,
+	type ServerRoleUsage,
 	server,
+	workflowRepositories,
 } from "@dokploy/server/db/schema";
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
 import { TRPCError } from "@trpc/server";
-import { and, arrayContains, desc, eq, isNotNull } from "drizzle-orm";
+import { and, arrayContains, count, desc, eq, isNotNull } from "drizzle-orm";
 import type { z } from "zod";
 
 export type Server = typeof server.$inferSelect;
@@ -166,6 +169,27 @@ export const haveActiveServices = async (serverId: string) => {
 	}
 
 	return true;
+};
+
+export const getServerRoleUsage = async (
+	serverId: string,
+): Promise<ServerRoleUsage> => {
+	const [deploy, build, workflow] = await Promise.all([
+		haveActiveServices(serverId),
+		db
+			.select({ total: count() })
+			.from(applications)
+			.where(eq(applications.buildServerId, serverId)),
+		db
+			.select({ total: count() })
+			.from(workflowRepositories)
+			.where(eq(workflowRepositories.defaultServerId, serverId)),
+	]);
+	return {
+		deploy,
+		build: build[0]?.total ?? 0,
+		workflow: workflow[0]?.total ?? 0,
+	};
 };
 
 export const SERVICE_TYPES_BY_SERVER = [

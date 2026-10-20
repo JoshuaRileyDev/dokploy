@@ -174,6 +174,35 @@ export const resolveServerRoles = ({
 	return undefined;
 };
 
+export type ServerRoleUsage = {
+	deploy: boolean;
+	build: number;
+	workflow: number;
+};
+
+const ROLE_USAGE_MESSAGES: Record<
+	ServerRole,
+	(usage: ServerRoleUsage) => string
+> = {
+	deploy: () => "it still hosts services",
+	build: (usage) =>
+		`${usage.build} application${usage.build === 1 ? " uses" : "s use"} it as their build server`,
+	workflow: (usage) =>
+		`${usage.workflow} workflow repositor${usage.workflow === 1 ? "y is" : "ies are"} pinned to it`,
+};
+
+/** Describes what stops `removed` roles from being taken off a server; empty when nothing does. */
+export const describeRoleRemovalBlockers = (
+	removed: ServerRole[],
+	usage: ServerRoleUsage,
+) =>
+	removed.flatMap((role) => {
+		const inUse = role === "deploy" ? usage.deploy : usage[role] > 0;
+		return inUse
+			? [`Can't remove the ${role} role: ${ROLE_USAGE_MESSAGES[role](usage)}.`]
+			: [];
+	});
+
 export const apiCreateServer = createSchema
 	.pick({
 		name: true,
