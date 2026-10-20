@@ -45,7 +45,7 @@ describe("cloud provider registry", () => {
 });
 
 describe("hetzner adapter", () => {
-	it("maps the catalog into the shared shape", async () => {
+	it("maps the catalog, hiding retired types and marking sold-out ones", async () => {
 		mockHetzner({
 			"GET /locations": () =>
 				json(
@@ -56,12 +56,6 @@ describe("hetzner adapter", () => {
 							country: "DE",
 							network_zone: "eu-central",
 						},
-					]),
-				),
-			"GET /datacenters": () =>
-				json(
-					page("datacenters", [
-						{ location: { name: "fsn1" }, server_types: { available: [1] } },
 					]),
 				),
 			"GET /server_types": () =>
@@ -76,11 +70,56 @@ describe("hetzner adapter", () => {
 							cpu_type: "shared",
 							architecture: "arm",
 							deprecated: false,
+							locations: [{ name: "fsn1", available: true, deprecation: null }],
 							prices: [
 								{
 									location: "fsn1",
 									price_hourly: { gross: "0.0062" },
 									price_monthly: { gross: "4.51" },
+								},
+							],
+						},
+						{
+							id: 3,
+							name: "cpx11",
+							cores: 2,
+							memory: 2,
+							disk: 40,
+							cpu_type: "shared",
+							architecture: "x86",
+							deprecated: false,
+							locations: [
+								{
+									name: "fsn1",
+									available: false,
+									deprecation: { unavailable_after: "2025-12-31T23:59:59Z" },
+								},
+							],
+							prices: [
+								{
+									location: "fsn1",
+									price_hourly: { gross: "0.008" },
+									price_monthly: { gross: "5.18" },
+								},
+							],
+						},
+						{
+							id: 4,
+							name: "cx23",
+							cores: 2,
+							memory: 4,
+							disk: 40,
+							cpu_type: "shared",
+							architecture: "x86",
+							deprecated: false,
+							locations: [
+								{ name: "fsn1", available: false, deprecation: null },
+							],
+							prices: [
+								{
+									location: "fsn1",
+									price_hourly: { gross: "0.006" },
+									price_monthly: { gross: "3.49" },
 								},
 							],
 						},
@@ -132,18 +171,20 @@ describe("hetzner adapter", () => {
 				availableServerTypes: ["cax11"],
 			},
 		]);
-		expect(catalog.serverTypes).toEqual([
-			{
-				id: "cax11",
-				label: "CAX11",
-				family: "Shared · Arm",
-				cores: 2,
-				memoryGb: 4,
-				diskGb: 40,
-				architecture: "arm",
-				prices: [{ location: "fsn1", hourly: 0.0062, monthly: 4.51 }],
-			},
+		expect(catalog.serverTypes.map((type) => type.id)).toEqual([
+			"cax11",
+			"cx23",
 		]);
+		expect(catalog.serverTypes[0]).toEqual({
+			id: "cax11",
+			label: "CAX11",
+			family: "Shared · Arm",
+			cores: 2,
+			memoryGb: 4,
+			diskGb: 40,
+			architecture: "arm",
+			prices: [{ location: "fsn1", hourly: 0.0062, monthly: 4.51 }],
+		});
 		expect(catalog.images.map((image) => image.id)).toEqual(["ubuntu-24.04"]);
 	});
 

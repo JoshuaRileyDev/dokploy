@@ -23,11 +23,6 @@ interface HetznerLocation {
 	network_zone: string;
 }
 
-interface HetznerDatacenter {
-	location: { name: string };
-	server_types: { available: number[] };
-}
-
 interface HetznerServerType {
 	id: number;
 	name: string;
@@ -37,6 +32,11 @@ interface HetznerServerType {
 	cpu_type: "shared" | "dedicated";
 	architecture: "x86" | "arm";
 	deprecated: boolean | null;
+	locations?: {
+		name: string;
+		available: boolean;
+		deprecation: { unavailable_after: string } | null;
+	}[];
 	prices: {
 		location: string;
 		price_hourly: { gross: string };
@@ -164,19 +164,31 @@ class HetznerClient implements CloudProviderClient {
 	}
 
 	async getCatalog(): Promise<CloudCatalog> {
-		const [locations, datacenters, types, images] = await Promise.all([
+		const [locations, types, images] = await Promise.all([
 			this.paginate<HetznerLocation>("/locations", "locations"),
-			this.paginate<HetznerDatacenter>("/datacenters", "datacenters"),
 			this.paginate<HetznerServerType>("/server_types", "server_types"),
 			this.paginate<HetznerImage>("/images", "images", {
 				type: "system",
 				status: "available",
 			}),
 		]);
-		const typeNames = new Map(types.map((type) => [type.id, type.name]));
 
-		const serverTypes: CloudServerType[] = types
-			.filter((type) => !type.deprecated)
+		// Hetzner removed /datacenters in June 2026; availability now lives on
+		// each server type. Types being retired from a location stay listed
+		// there (unavailable, with a deprecation), so they're dropped entirely
+		// rather than shown as sold out.
+		const offeredIn = (type: HetznerServerType, location: string) => {
+			if (!type.locations) return true;
+			const entry = type.locations.find((l) => l.name === location);
+			return !!entry && !entry.deprecation;
+		};
+		const availableIn = (type: HetznerServerType, location: string) =>
+			offeredIn(type, location) &&
+			(type.locations?.find((l) => l.name === location)?.available ?? true);
+
+		const activeTypes = types.filter((type) => !type.deprecated);
+
+		const serverTypes: CloudServerType[] = activeTypes
 			.sort((a, b) => a.cores - b.cores || a.memory - b.memory)
 			.map((type) => ({
 				id: type.name,
@@ -186,12 +198,15 @@ class HetznerClient implements CloudProviderClient {
 				memoryGb: type.memory,
 				diskGb: type.disk,
 				architecture: type.architecture,
-				prices: type.prices.map((price) => ({
-					location: price.location,
-					hourly: Number.parseFloat(price.price_hourly.gross),
-					monthly: Number.parseFloat(price.price_monthly.gross),
-				})),
-			}));
+				prices: type.prices
+					.filter((price) => offeredIn(type, price.location))
+					.map((price) => ({
+						location: price.location,
+						hourly: Number.parseFloat(price.price_hourly.gross),
+						monthly: Number.parseFloat(price.price_monthly.gross),
+					})),
+			}))
+			.filter((type) => type.prices.length > 0);
 
 		return {
 			currency: "EUR",
@@ -200,15 +215,9 @@ class HetznerClient implements CloudProviderClient {
 				city: location.city,
 				country: location.country,
 				region: location.network_zone,
-				availableServerTypes: [
-					...new Set(
-						datacenters
-							.filter((dc) => dc.location.name === location.name)
-							.flatMap((dc) => dc.server_types.available)
-							.map((id) => typeNames.get(id))
-							.filter((name): name is string => !!name),
-					),
-				],
+				availableServerTypes: activeTypes
+					.filter((type) => availableIn(type, location.name))
+					.map((type) => type.name),
 			})),
 			serverTypes,
 			images: images
