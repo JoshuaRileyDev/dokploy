@@ -94,7 +94,14 @@ export interface CloudProviderDefinition {
 export class CloudProviderError extends Error {
 	constructor(
 		message: string,
-		readonly kind: "unauthorized" | "forbidden" | "not_found" | "invalid",
+		readonly kind:
+			| "unauthorized"
+			| "forbidden"
+			| "not_found"
+			| "invalid"
+			/** Rate limited or a provider outage; worth retrying later. */
+			| "unavailable",
+		readonly status?: number,
 	) {
 		super(message);
 		this.name = "CloudProviderError";

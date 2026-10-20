@@ -62,7 +62,7 @@ export const DeleteServerModal = ({
 	const { mutateAsync: deleteLibsql } = api.libsql.remove.useMutation();
 	const { mutateAsync: deleteServer, isPending: isDeletingServer } =
 		api.server.remove.useMutation();
-	const { data: provisioning } =
+	const { data: provisioning, isLoading: isLoadingProvisioning } =
 		api.cloudProvider.provisioningForServer.useQuery(
 			{ serverId },
 			{ enabled: open },
@@ -260,7 +260,14 @@ export const DeleteServerModal = ({
 					</Button>
 					<Button
 						variant="destructive"
-						disabled={!canDelete || isDeletingServer || isDestroying}
+						// Deleting before the lookup returns would skip the provider VM,
+						// and once the server row is gone the modal can't find it again.
+						disabled={
+							!canDelete ||
+							isLoadingProvisioning ||
+							isDeletingServer ||
+							isDestroying
+						}
 						onClick={handleDeleteServer}
 					>
 						Delete Server

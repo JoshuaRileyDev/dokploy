@@ -82,8 +82,16 @@ const toTRPCError = (error: unknown, fallback: string) => {
 	if (error instanceof TRPCError) return error;
 	if (error instanceof CloudProviderError) {
 		return new TRPCError({
-			code: error.kind === "unauthorized" ? "UNAUTHORIZED" : "BAD_REQUEST",
-			message: error.message,
+			code:
+				error.kind === "unauthorized"
+					? "UNAUTHORIZED"
+					: error.kind === "unavailable"
+						? "SERVICE_UNAVAILABLE"
+						: "BAD_REQUEST",
+			message:
+				error.kind === "unavailable"
+					? `The provider is unavailable or rate limiting requests (${error.message}). Try again in a minute.`
+					: error.message,
 			cause: error,
 		});
 	}
@@ -279,13 +287,26 @@ export const findServerProvisioningInOrganization = async (
 	return provisioning;
 };
 
+/** Jobs that will register a server once they finish, for quota checks. */
+export const countInProgressProvisionings = async (organizationId: string) => {
+	const rows = await db.query.serverProvisioning.findMany({
+		where: and(
+			eq(serverProvisioning.organizationId, organizationId),
+			inArray(serverProvisioning.status, IN_PROGRESS_STATUSES),
+			isNull(serverProvisioning.serverId),
+		),
+		columns: { serverProvisioningId: true },
+	});
+	return rows.length;
+};
+
 export const findServerProvisionings = async (organizationId: string) => {
 	await db
 		.update(serverProvisioning)
 		.set({
 			status: "failed",
 			error:
-				"Provisioning was interrupted, most likely because Dokploy restarted. Check your provider's console for a leftover server.",
+				"Provisioning was interrupted, most likely because Dokploy restarted. If a server was created it is still running; delete it from here.",
 			completedAt: new Date().toISOString(),
 		})
 		.where(

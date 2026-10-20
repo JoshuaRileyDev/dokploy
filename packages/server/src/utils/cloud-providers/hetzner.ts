@@ -112,7 +112,10 @@ class HetznerClient implements CloudProviderClient {
 						? "forbidden"
 						: response.status === 404
 							? "not_found"
-							: "invalid",
+							: response.status === 429 || response.status >= 500
+								? "unavailable"
+								: "invalid",
+				response.status,
 			);
 		}
 		return body as T;
@@ -144,7 +147,8 @@ class HetznerClient implements CloudProviderClient {
 		await this.request("/locations?per_page=1");
 		// Read-only tokens can list resources but every create call fails, which
 		// would only surface halfway through provisioning. An empty body gets a
-		// 400 from a writable token and a 403 from a read-only one.
+		// 400 from a writable token and a 403 from a read-only one; anything else
+		// (rate limits, outages) proves nothing, so it fails the check.
 		try {
 			await this.request("/ssh_keys", {
 				method: "POST",
@@ -155,9 +159,13 @@ class HetznerClient implements CloudProviderClient {
 				throw new CloudProviderError(
 					"This API token is read-only. Create a token with Read & Write permission.",
 					"forbidden",
+					403,
 				);
 			}
-			if (!(error instanceof CloudProviderError && error.kind === "invalid")) {
+			const rejectedOnlyForBadInput =
+				error instanceof CloudProviderError &&
+				(error.status === 400 || error.status === 422);
+			if (!rejectedOnlyForBadInput) {
 				throw error;
 			}
 		}

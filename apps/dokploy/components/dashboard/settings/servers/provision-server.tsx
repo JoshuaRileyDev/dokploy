@@ -46,6 +46,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { api, type RouterOutputs } from "@/utils/api";
 import {
+	hasOrphanedServer,
 	ServerProvisioningList,
 	useServerProvisionings,
 } from "./server-provisionings";
@@ -95,7 +96,9 @@ export const ProvisionServer = () => {
 	const onOpenChange = (open: boolean) => {
 		setIsOpen(open);
 		if (open) {
-			setStep(runningCount > 0 ? { kind: "progress" } : { kind: "choose" });
+			const needsAttention =
+				runningCount > 0 || provisionings.some(hasOrphanedServer);
+			setStep(needsAttention ? { kind: "progress" } : { kind: "choose" });
 		}
 	};
 

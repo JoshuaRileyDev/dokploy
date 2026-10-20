@@ -206,6 +206,31 @@ describe("hetzner adapter", () => {
 		await expect(client().validateCredentials()).rejects.toThrow(/read-only/);
 	});
 
+	it("doesn't accept a token when the write check is rate limited", async () => {
+		mockHetzner({
+			"GET /locations": () => json(page("locations", [])),
+			"POST /ssh_keys": () =>
+				json(
+					{ error: { code: "rate_limit_exceeded", message: "slow down" } },
+					429,
+				),
+		});
+		await expect(client().validateCredentials()).rejects.toMatchObject({
+			kind: "unavailable",
+			status: 429,
+		});
+	});
+
+	it("doesn't accept a token when the write check hits an outage", async () => {
+		mockHetzner({
+			"GET /locations": () => json(page("locations", [])),
+			"POST /ssh_keys": () => json({}, 503),
+		});
+		await expect(client().validateCredentials()).rejects.toMatchObject({
+			kind: "unavailable",
+		});
+	});
+
 	it("reports a bad token as unauthorized", async () => {
 		mockHetzner({
 			"GET /locations": () =>

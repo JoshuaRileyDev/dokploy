@@ -1,8 +1,9 @@
 import { formatDistanceToNow } from "date-fns";
-import { Check, Loader2, X } from "lucide-react";
+import { Check, Loader2, Trash2, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { CloudProviderIcon } from "@/components/icons/cloud-provider-icons";
+import { DialogAction } from "@/components/shared/dialog-action";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api, type RouterOutputs } from "@/utils/api";
@@ -26,12 +27,28 @@ const stepIndex = (status: Provisioning["status"]) => {
 export const isRunning = (status: Provisioning["status"]) =>
 	status !== "completed" && status !== "failed";
 
+/**
+ * A failed job whose provider server was never registered in Dokploy and
+ * wasn't cleaned up (cleanup failed, or Dokploy restarted mid-run). It's
+ * still billing, and this row is the only place it can be removed from.
+ */
+export const hasOrphanedServer = (provisioning: Provisioning) =>
+	provisioning.status === "failed" &&
+	!provisioning.serverId &&
+	!!provisioning.providerServerId &&
+	!provisioning.providerServerDeletedAt;
+
 const ProvisioningRow = ({ provisioning }: { provisioning: Provisioning }) => {
 	const utils = api.useUtils();
 	const { mutate: dismiss, isPending: isDismissing } =
 		api.cloudProvider.dismissProvisioning.useMutation({
 			onSuccess: () => utils.cloudProvider.provisionings.invalidate(),
 		});
+	const { mutateAsync: destroyServer, isPending: isDestroying } =
+		api.cloudProvider.destroyServer.useMutation({
+			onSuccess: () => utils.cloudProvider.provisionings.invalidate(),
+		});
+	const orphaned = hasOrphanedServer(provisioning);
 
 	const failed = provisioning.status === "failed";
 	const completed = provisioning.status === "completed";
@@ -81,21 +98,54 @@ const ProvisioningRow = ({ provisioning }: { provisioning: Provisioning }) => {
 								: provisioning.message}
 					</span>
 				</div>
-				{!running && (
-					<Button
-						variant="ghost"
-						size="icon"
-						className="size-8 shrink-0 text-muted-foreground"
-						isLoading={isDismissing}
-						onClick={() =>
-							dismiss({
+				{orphaned ? (
+					<DialogAction
+						title={`Delete ${provisioning.config.name} on ${provisioning.providerLabel}?`}
+						description="This server was never added to Dokploy but still exists on the provider, so it's being billed. Deleting it erases its disk."
+						type="destructive"
+						onClick={async () => {
+							await destroyServer({
 								serverProvisioningId: provisioning.serverProvisioningId,
 							})
-						}
+								.then(() =>
+									toast.success(
+										`Deleted ${provisioning.config.name} on ${provisioning.providerLabel}`,
+									),
+								)
+								.catch((error) =>
+									toast.error("Could not delete the server", {
+										description: `${error.message} Delete it from the ${provisioning.providerLabel} console to stop billing.`,
+									}),
+								);
+						}}
 					>
-						<X className="size-4" />
-						<span className="sr-only">Dismiss</span>
-					</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+							isLoading={isDestroying}
+						>
+							<Trash2 className="size-3.5" />
+							Delete on {provisioning.providerLabel}
+						</Button>
+					</DialogAction>
+				) : (
+					!running && (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="size-8 shrink-0 text-muted-foreground"
+							isLoading={isDismissing}
+							onClick={() =>
+								dismiss({
+									serverProvisioningId: provisioning.serverProvisioningId,
+								})
+							}
+						>
+							<X className="size-4" />
+							<span className="sr-only">Dismiss</span>
+						</Button>
+					)
 				)}
 			</div>
 

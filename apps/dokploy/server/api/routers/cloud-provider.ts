@@ -1,4 +1,5 @@
 import {
+	countInProgressProvisionings,
 	createCloudProviderAccount,
 	destroyProvisionedServer,
 	dismissServerProvisioning,
@@ -137,7 +138,12 @@ export const cloudProviderRouter = createTRPCRouter({
 			if (IS_CLOUD) {
 				const owner = await findUserById(ctx.user.ownerId);
 				const servers = await findServersByUserId(owner.id);
-				if (servers.length >= owner.serversQuantity) {
+				// Jobs only register their server minutes later, so count them now
+				// or back-to-back requests could all pass the check.
+				const pending = await countInProgressProvisionings(
+					ctx.session.activeOrganizationId,
+				);
+				if (servers.length + pending >= owner.serversQuantity) {
 					throw new TRPCError({
 						code: "BAD_REQUEST",
 						message: "You cannot create more servers",
@@ -190,6 +196,17 @@ export const cloudProviderRouter = createTRPCRouter({
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message: "Provisioning is still running",
+				});
+			}
+			if (
+				!provisioning.serverId &&
+				provisioning.providerServerId &&
+				!provisioning.providerServerDeletedAt
+			) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						"This server still exists on the provider. Delete it before dismissing the job.",
 				});
 			}
 			await dismissServerProvisioning(input.serverProvisioningId);
