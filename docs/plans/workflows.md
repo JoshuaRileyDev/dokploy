@@ -27,7 +27,7 @@ Run GitHub Actions–syntax workflows inside Dokploy, triggered by git events, o
 ## Phase 0: Server roles (done)
 
 - `serverRoles serverRole[]` (`deploy | build | workflow`), not null, default `{deploy}`.
-- Migration: `drizzle-fork/0000_server_roles` adds the column and backfills it from `serverType`. `serverType` stays (upstream owns it) and is derived from roles on every write (`legacyServerType`). See [fork migrations](../fork-migrations.md).
+- Migration: `drizzle-fork/0001_workflows_and_server_roles` adds the column and backfills it from `serverType`. `serverType` stays (upstream owns it) and is derived from roles on every write (`legacyServerType`). See [fork migrations](../fork-migrations.md).
 - API: `server.create` / `server.update` take `serverRoles`; `serverType` is still accepted as a deprecated alias (`resolveServerRoles`). Adding the `workflow` role is rejected on cloud.
 - Server pickers: `server.withSSHKey` (deploy), `server.buildServers` (build), `server.workflowServers` (workflow, empty on cloud). A multi-role server appears in each matching list.
 - Setup: servers with the `deploy` role get the full Swarm/Traefik setup; any other combination gets the build setup (Docker, nixpacks, buildpacks, railpack). Installing `act` for the `workflow` role is deferred to Phase 2, where it's first used.
@@ -35,7 +35,7 @@ Run GitHub Actions–syntax workflows inside Dokploy, triggered by git events, o
 
 ## Phase 1: Repositories, parsing, read-only UI (done)
 
-Shipped as: migration `drizzle-fork/0001_workflow_repositories`, parser `packages/server/src/utils/workflows/parser.ts`, service `packages/server/src/services/workflow.ts`, router `workflow.*`, pages `/dashboard/workflows` (Runs / Repositories tabs, Import dialog) and `/dashboard/workflows/repositories/[workflowRepositoryId]`. `.github` workflows are always synced and listed, but only run when `runGithubWorkflows` is on.
+Shipped as: migration `drizzle-fork/0001_workflows_and_server_roles`, parser `packages/server/src/utils/workflows/parser.ts`, service `packages/server/src/services/workflow.ts`, router `workflow.*`, pages `/dashboard/workflows` (Runs / Repositories tabs, Import dialog) and `/dashboard/workflows/repositories/[workflowRepositoryId]`. `.github` workflows are always synced and listed, but only run when `runGithubWorkflows` is on.
 
 
 Schema (`packages/server/src/db/schema/workflow.ts`):
@@ -57,7 +57,7 @@ UI:
 
 ## Phase 2: Events and execution (done)
 
-Shipped as: migration `drizzle-fork/0002_workflow_runs`; `utils/workflows/{events,triggers,act,act-log,ssh,executor,queue}.ts`; `services/workflow-run.ts`; router `workflow.{runs,oneRun,dispatch,rerun,cancelRun,branches}`; pages `/dashboard/workflows/runs/[workflowRunId]` plus the Run dialog and runs list. Notes on what differs from the original sketch:
+Shipped as: migration `drizzle-fork/0001_workflows_and_server_roles`; `utils/workflows/{events,triggers,act,act-log,ssh,executor,queue}.ts`; `services/workflow-run.ts`; router `workflow.{runs,oneRun,dispatch,rerun,cancelRun,branches}`; pages `/dashboard/workflows/runs/[workflowRunId]` plus the Run dialog and runs list. Notes on what differs from the original sketch:
 
 - One run at a time per workflow server (in-memory FIFO, like deployments). Server choice: the repository's server, else the least busy workflow server. `runs-on` labels map to runner images, not to servers.
 - Pull requests run against the head commit, not GitHub's merge commit.
@@ -105,7 +105,7 @@ UI: Runs tab (filters: status, repo, branch, event), run detail page `/dashboard
 
 ## Phase 3: Notifications and GitHub status (done)
 
-Shipped as: migration `drizzle-fork/0003_workflow_notifications`, `utils/workflows/{notifications,check-runs}.ts`, router `workflow.{notificationRules,notificationChannels,createNotificationRule,removeNotificationRule}`, and a Notifications tab on the Workflows page. Instead of adding columns to upstream's `notification` table (which would touch every notification type's schema, service and form), rules live in `workflow_notification` and point at existing channels, with optional repository and branch filters. The Custom (webhook) channel receives a JSON payload (`type: "workflow"`, `status`, `repository`, `workflow`, `runNumber`, `branch`, `sha`, `runUrl`, ...). Check runs are named `Dokploy / <workflow>`; without the Checks permission Dokploy logs one warning per repository and carries on.
+Shipped as: migration `drizzle-fork/0001_workflows_and_server_roles`, `utils/workflows/{notifications,check-runs}.ts`, router `workflow.{notificationRules,notificationChannels,createNotificationRule,removeNotificationRule}`, and a Notifications tab on the Workflows page. Instead of adding columns to upstream's `notification` table (which would touch every notification type's schema, service and form), rules live in `workflow_notification` and point at existing channels, with optional repository and branch filters. The Custom (webhook) channel receives a JSON payload (`type: "workflow"`, `status`, `repository`, `workflow`, `runNumber`, `branch`, `sha`, `runUrl`, ...). Check runs are named `Dokploy / <workflow>`; without the Checks permission Dokploy logs one warning per repository and carries on.
 
 
 - `notifications`: add `workflowRunFailed`, `workflowRunSucceeded` booleans; `sendWorkflowRunNotifications` following `build-error.ts`. The existing `custom` type covers arbitrary failure webhooks; all other channels work automatically.
@@ -114,7 +114,7 @@ Shipped as: migration `drizzle-fork/0003_workflow_notifications`, `utils/workflo
 
 ## Phase 4: Secrets, variables, scheduling, concurrency (done)
 
-Shipped as: migration `drizzle-fork/0004_workflow_env_concurrency`, `utils/workflows/expressions.ts`, router `workflow.{env,setEnv,removeEnv}`, and a Secrets & Variables tab in each repository's Settings modal.
+Shipped as: migration `drizzle-fork/0001_workflows_and_server_roles`, `utils/workflows/expressions.ts`, router `workflow.{env,setEnv,removeEnv}`, and a Secrets & Variables tab in each repository's Settings modal.
 
 - Secrets and variables are per repository, stored in `workflow_env` (values encrypted with Dokploy's `encryptedText`). The table's nullable `workflowRepositoryId` is left over from an organization-wide scope that was dropped; the API always requires a repository. Secret values are never returned by the API and are masked in logs; untrusted runs get neither.
 - `schedule:` triggers use node-schedule in the Dokploy process (UTC, like GitHub), reconciled at startup and whenever repositories, workflows or settings change. Each tick re-reads the workflow from the default branch's latest commit and only runs if that cron is still there.
@@ -131,7 +131,7 @@ Shipped as: migration `drizzle-fork/0004_workflow_env_concurrency`, `utils/workf
 
 ## Self-hosted runners (done)
 
-Machines that can't be reached over SSH, or that need to run jobs on the host (a Mac for iOS builds), run the `@joshuarileydev/dokploy-runner` CLI (`apps/runner`, private npm package, published by hand with `pnpm --filter @joshuarileydev/dokploy-runner publish`). Shipped as: migration `drizzle-fork/0005_workflow_runners`; `services/workflow-runner.ts`; `utils/workflows/run-recorder.ts` (shared by the SSH executor and runners); router `workflow.{runners,createRunner,updateRunner,regenerateRunnerToken,removeRunner}`; HTTP API under `/api/workflow-runner/*`; Runners tab on the Workflows page.
+Machines that can't be reached over SSH, or that need to run jobs on the host (a Mac for iOS builds), run the `@joshuarileydev/dokploy-runner` CLI (`apps/runner`, private npm package, published by hand with `pnpm --filter @joshuarileydev/dokploy-runner publish`). Shipped as: migration `drizzle-fork/0001_workflows_and_server_roles`; `services/workflow-runner.ts`; `utils/workflows/run-recorder.ts` (shared by the SSH executor and runners); router `workflow.{runners,createRunner,updateRunner,regenerateRunnerToken,removeRunner}`; HTTP API under `/api/workflow-runner/*`; Runners tab on the Workflows page.
 
 - Registration: Dokploy creates the runner with a name, labels and optional allowed repositories, and shows a one-time `dkr_reg_` token (1 hour). `dokploy-runner register` exchanges it for a long-lived credential; only hashes are stored. Regenerating issues a new registration token; the old credential keeps working until a machine registers with the new token.
 - Routing: a run's `runsOn` is every job's `runs-on` (matrix references resolved). If any runner in the organization has an intersecting label, the run waits for a runner instead of going to the SSH queue. Untrusted (fork PR) runs that need a runner are skipped.

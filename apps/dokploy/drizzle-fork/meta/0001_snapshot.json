@@ -1,5 +1,5 @@
 {
-  "id": "92f3d15a-59e2-410b-86c4-ec7b62aa94cd",
+  "id": "a295ec11-8fa7-4454-a1a4-ea5b5bb59221",
   "prevId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168",
   "version": "7",
   "dialect": "postgresql",
@@ -2453,6 +2453,242 @@
           ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.cloud_provider_account": {
+      "name": "cloud_provider_account",
+      "schema": "",
+      "columns": {
+        "cloudProviderAccountId": {
+          "name": "cloudProviderAccountId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "providerType": {
+          "name": "providerType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credentials": {
+          "name": "credentials",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "cloud_provider_account_org_name_idx": {
+          "name": "cloud_provider_account_org_name_idx",
+          "columns": [
+            {
+              "expression": "organizationId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cloud_provider_account_organizationId_organization_id_fk": {
+          "name": "cloud_provider_account_organizationId_organization_id_fk",
+          "tableFrom": "cloud_provider_account",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organizationId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.server_provisioning": {
+      "name": "server_provisioning",
+      "schema": "",
+      "columns": {
+        "serverProvisioningId": {
+          "name": "serverProvisioningId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cloudProviderAccountId": {
+          "name": "cloudProviderAccountId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "serverId": {
+          "name": "serverId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "providerType": {
+          "name": "providerType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "serverProvisioningStatus",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "config": {
+          "name": "config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "providerServerId": {
+          "name": "providerServerId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "providerSshKeyId": {
+          "name": "providerSshKeyId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ipAddress": {
+          "name": "ipAddress",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "providerServerDeletedAt": {
+          "name": "providerServerDeletedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dismissedAt": {
+          "name": "dismissedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "completedAt": {
+          "name": "completedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "server_provisioning_serverId_server_serverId_fk": {
+          "name": "server_provisioning_serverId_server_serverId_fk",
+          "tableFrom": "server_provisioning",
+          "tableTo": "server",
+          "columnsFrom": [
+            "serverId"
+          ],
+          "columnsTo": [
+            "serverId"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "server_provisioning_organizationId_organization_id_fk": {
+          "name": "server_provisioning_organizationId_organization_id_fk",
+          "tableFrom": "server_provisioning",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organizationId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "server_provisioning_account_fk": {
+          "name": "server_provisioning_account_fk",
+          "tableFrom": "server_provisioning",
+          "tableTo": "cloud_provider_account",
+          "columnsFrom": [
+            "cloudProviderAccountId"
+          ],
+          "columnsTo": [
+            "cloudProviderAccountId"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -9140,6 +9376,307 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.workflow_env": {
+      "name": "workflow_env",
+      "schema": "",
+      "columns": {
+        "workflowEnvId": {
+          "name": "workflowEnvId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflowRepositoryId": {
+          "name": "workflowRepositoryId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "workflowEnvKind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "workflow_env_organizationId_organization_id_fk": {
+          "name": "workflow_env_organizationId_organization_id_fk",
+          "tableFrom": "workflow_env",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organizationId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "workflow_env_workflowRepositoryId_workflow_repository_workflowRepositoryId_fk": {
+          "name": "workflow_env_workflowRepositoryId_workflow_repository_workflowRepositoryId_fk",
+          "tableFrom": "workflow_env",
+          "tableTo": "workflow_repository",
+          "columnsFrom": [
+            "workflowRepositoryId"
+          ],
+          "columnsTo": [
+            "workflowRepositoryId"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "workflow_env_scope_name_unique": {
+          "name": "workflow_env_scope_name_unique",
+          "nullsNotDistinct": true,
+          "columns": [
+            "organizationId",
+            "workflowRepositoryId",
+            "kind",
+            "name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.workflow_job": {
+      "name": "workflow_job",
+      "schema": "",
+      "columns": {
+        "workflowJobId": {
+          "name": "workflowJobId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "workflowRunId": {
+          "name": "workflowRunId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actKey": {
+          "name": "actKey",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "jobId": {
+          "name": "jobId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "matrix": {
+          "name": "matrix",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "status": {
+          "name": "status",
+          "type": "workflowJobStatus",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'in_progress'"
+        },
+        "steps": {
+          "name": "steps",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "logPath": {
+          "name": "logPath",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "startedAt": {
+          "name": "startedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finishedAt": {
+          "name": "finishedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "workflow_job_workflowRunId_workflow_run_workflowRunId_fk": {
+          "name": "workflow_job_workflowRunId_workflow_run_workflowRunId_fk",
+          "tableFrom": "workflow_job",
+          "tableTo": "workflow_run",
+          "columnsFrom": [
+            "workflowRunId"
+          ],
+          "columnsTo": [
+            "workflowRunId"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.workflow_notification": {
+      "name": "workflow_notification",
+      "schema": "",
+      "columns": {
+        "workflowNotificationId": {
+          "name": "workflowNotificationId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "notificationId": {
+          "name": "notificationId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflowRepositoryId": {
+          "name": "workflowRepositoryId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branches": {
+          "name": "branches",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "ARRAY[]::text[]"
+        },
+        "onFailure": {
+          "name": "onFailure",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "onSuccess": {
+          "name": "onSuccess",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "workflow_notification_organizationId_organization_id_fk": {
+          "name": "workflow_notification_organizationId_organization_id_fk",
+          "tableFrom": "workflow_notification",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organizationId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "workflow_notification_notificationId_notification_notificationId_fk": {
+          "name": "workflow_notification_notificationId_notification_notificationId_fk",
+          "tableFrom": "workflow_notification",
+          "tableTo": "notification",
+          "columnsFrom": [
+            "notificationId"
+          ],
+          "columnsTo": [
+            "notificationId"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "workflow_notification_workflowRepositoryId_workflow_repository_workflowRepositoryId_fk": {
+          "name": "workflow_notification_workflowRepositoryId_workflow_repository_workflowRepositoryId_fk",
+          "tableFrom": "workflow_notification",
+          "tableTo": "workflow_repository",
+          "columnsFrom": [
+            "workflowRepositoryId"
+          ],
+          "columnsTo": [
+            "workflowRepositoryId"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.workflow_repository": {
       "name": "workflow_repository",
       "schema": "",
@@ -9301,6 +9838,444 @@
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
+    },
+    "public.workflow_runner": {
+      "name": "workflow_runner",
+      "schema": "",
+      "columns": {
+        "workflowRunnerId": {
+          "name": "workflowRunnerId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "labels": {
+          "name": "labels",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "allowedRepositoryIds": {
+          "name": "allowedRepositoryIds",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "ARRAY[]::text[]"
+        },
+        "tokenHash": {
+          "name": "tokenHash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "registrationTokenHash": {
+          "name": "registrationTokenHash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "registrationExpiresAt": {
+          "name": "registrationExpiresAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastSeenAt": {
+          "name": "lastSeenAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "os": {
+          "name": "os",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "arch": {
+          "name": "arch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "workflow_runner_organizationId_organization_id_fk": {
+          "name": "workflow_runner_organizationId_organization_id_fk",
+          "tableFrom": "workflow_runner",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organizationId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "workflow_runner_tokenHash_unique": {
+          "name": "workflow_runner_tokenHash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tokenHash"
+          ]
+        },
+        "workflow_runner_registrationTokenHash_unique": {
+          "name": "workflow_runner_registrationTokenHash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "registrationTokenHash"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.workflow_run": {
+      "name": "workflow_run",
+      "schema": "",
+      "columns": {
+        "workflowRunId": {
+          "name": "workflowRunId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "workflowRepositoryId": {
+          "name": "workflowRepositoryId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflowDefinitionId": {
+          "name": "workflowDefinitionId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "workflowPath": {
+          "name": "workflowPath",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflowName": {
+          "name": "workflowName",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "workflowSource",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "runNumber": {
+          "name": "runNumber",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "event": {
+          "name": "event",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "eventAction": {
+          "name": "eventAction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inputs": {
+          "name": "inputs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "jobNames": {
+          "name": "jobNames",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "ref": {
+          "name": "ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sha": {
+          "name": "sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "branch": {
+          "name": "branch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor": {
+          "name": "actor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pullRequestNumber": {
+          "name": "pullRequestNumber",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "trusted": {
+          "name": "trusted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "status": {
+          "name": "status",
+          "type": "workflowRunStatus",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "errorMessage": {
+          "name": "errorMessage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "serverId": {
+          "name": "serverId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "logPath": {
+          "name": "logPath",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "checkRunId": {
+          "name": "checkRunId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "concurrencyGroup": {
+          "name": "concurrencyGroup",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "runsOn": {
+          "name": "runsOn",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "ARRAY[]::text[]"
+        },
+        "requiresRunner": {
+          "name": "requiresRunner",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "workflowRunnerId": {
+          "name": "workflowRunnerId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelRequested": {
+          "name": "cancelRequested",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "concurrencyCancelInProgress": {
+          "name": "concurrencyCancelInProgress",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "startedAt": {
+          "name": "startedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finishedAt": {
+          "name": "finishedAt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "workflow_run_repo_created_idx": {
+          "name": "workflow_run_repo_created_idx",
+          "columns": [
+            {
+              "expression": "workflowRepositoryId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "workflow_run_status_idx": {
+          "name": "workflow_run_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "workflow_run_workflowRepositoryId_workflow_repository_workflowRepositoryId_fk": {
+          "name": "workflow_run_workflowRepositoryId_workflow_repository_workflowRepositoryId_fk",
+          "tableFrom": "workflow_run",
+          "tableTo": "workflow_repository",
+          "columnsFrom": [
+            "workflowRepositoryId"
+          ],
+          "columnsTo": [
+            "workflowRepositoryId"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "workflow_run_workflowDefinitionId_workflow_definition_workflowDefinitionId_fk": {
+          "name": "workflow_run_workflowDefinitionId_workflow_definition_workflowDefinitionId_fk",
+          "tableFrom": "workflow_run",
+          "tableTo": "workflow_definition",
+          "columnsFrom": [
+            "workflowDefinitionId"
+          ],
+          "columnsTo": [
+            "workflowDefinitionId"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "workflow_run_serverId_server_serverId_fk": {
+          "name": "workflow_run_serverId_server_serverId_fk",
+          "tableFrom": "workflow_run",
+          "tableTo": "server",
+          "columnsFrom": [
+            "serverId"
+          ],
+          "columnsTo": [
+            "serverId"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "workflow_run_workflowRunnerId_workflow_runner_workflowRunnerId_fk": {
+          "name": "workflow_run_workflowRunnerId_workflow_runner_workflowRunnerId_fk",
+          "tableFrom": "workflow_run",
+          "tableTo": "workflow_runner",
+          "columnsFrom": [
+            "workflowRunnerId"
+          ],
+          "columnsTo": [
+            "workflowRunnerId"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     }
   },
   "enums": {
@@ -9347,6 +10322,18 @@
         "mongo",
         "web-server",
         "libsql"
+      ]
+    },
+    "public.serverProvisioningStatus": {
+      "name": "serverProvisioningStatus",
+      "schema": "public",
+      "values": [
+        "pending",
+        "creating_server",
+        "waiting_for_ssh",
+        "installing",
+        "completed",
+        "failed"
       ]
     },
     "public.composeType": {
@@ -9596,6 +10583,38 @@
         "azure",
         "scaleway",
         "phase"
+      ]
+    },
+    "public.workflowEnvKind": {
+      "name": "workflowEnvKind",
+      "schema": "public",
+      "values": [
+        "secret",
+        "variable"
+      ]
+    },
+    "public.workflowJobStatus": {
+      "name": "workflowJobStatus",
+      "schema": "public",
+      "values": [
+        "queued",
+        "in_progress",
+        "success",
+        "failure",
+        "cancelled",
+        "skipped"
+      ]
+    },
+    "public.workflowRunStatus": {
+      "name": "workflowRunStatus",
+      "schema": "public",
+      "values": [
+        "queued",
+        "in_progress",
+        "success",
+        "failure",
+        "cancelled",
+        "skipped"
       ]
     },
     "public.workflowSource": {

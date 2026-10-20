@@ -13,40 +13,8 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1792256604225,
-      "tag": "0001_workflow_repositories",
-      "breakpoints": true,
-      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1792258176894,
-      "tag": "0002_workflow_runs",
-      "breakpoints": true,
-      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1792259141158,
-      "tag": "0003_workflow_notifications",
-      "breakpoints": true,
-      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1792259688983,
-      "tag": "0004_workflow_env_concurrency",
-      "breakpoints": true,
-      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1792264414489,
-      "tag": "0005_workflow_runners",
+      "when": 1792533413302,
+      "tag": "0001_workflows_and_server_roles",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
     }
