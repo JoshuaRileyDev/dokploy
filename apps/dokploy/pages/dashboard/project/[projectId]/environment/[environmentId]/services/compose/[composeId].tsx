@@ -13,6 +13,7 @@ import { type ReactElement, useEffect, useState } from "react";
 import { toast } from "sonner";
 import superjson from "superjson";
 import { ShowImport } from "@/components/dashboard/application/advanced/import/show-import";
+import { ShowBuildServer } from "@/components/dashboard/application/advanced/show-build-server";
 import { ShowVolumes } from "@/components/dashboard/application/advanced/volumes/show-volumes";
 import { ShowDeployments } from "@/components/dashboard/application/deployments/show-deployments";
 import { ShowDomains } from "@/components/dashboard/application/domains/show-domains";
@@ -21,7 +22,6 @@ import { ShowIconSettings } from "@/components/dashboard/application/icon/show-i
 import { ShowPatches } from "@/components/dashboard/application/patches/show-patches";
 import { ShowSchedules } from "@/components/dashboard/application/schedules/show-schedules";
 import { ShowVolumeBackups } from "@/components/dashboard/application/volume-backups/show-volume-backups";
-import { ShowBuildServer } from "@/components/dashboard/application/advanced/show-build-server";
 import { AddCommandCompose } from "@/components/dashboard/compose/advanced/add-command";
 import { IsolatedDeploymentTab } from "@/components/dashboard/compose/advanced/add-isolation";
 import { FreshVolumes } from "@/components/dashboard/compose/advanced/fresh-volumes";

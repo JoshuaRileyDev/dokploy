@@ -77,7 +77,10 @@ export const ShowBuildServer = (props: Props) => {
 	const serviceId = isCompose ? props.composeId : props.applicationId;
 
 	const applicationQuery = api.application.one.useQuery(
-		{ applicationId: props.serviceType === "application" ? props.applicationId : "" },
+		{
+			applicationId:
+				props.serviceType === "application" ? props.applicationId : "",
+		},
 		{ enabled: props.serviceType === "application" && !!props.applicationId },
 	);
 	const composeQuery = api.compose.one.useQuery(
@@ -173,11 +176,11 @@ export const ShowBuildServer = (props: Props) => {
 
 				{isCompose ? (
 					<AlertBlock type="info">
-						For compose services, only services with a{" "}
-						<code className="text-xs">build:</code> section are built on the
-						build server and pushed to the registry. Image-only services are
-						unchanged. Custom deploy commands should not include{" "}
-						<code className="text-xs">--build</code> when using a build server.
+						Services with a <code className="text-xs">build:</code> section are
+						built on the build server, pushed to the registry and pulled by the
+						deploy server. Image-only services are unchanged. A custom deploy
+						command must keep using the default compose file, since that is the
+						file rewritten to use the pushed images.
 					</AlertBlock>
 				) : null}
 

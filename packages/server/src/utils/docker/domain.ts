@@ -4,13 +4,11 @@ import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import { network, patch } from "@dokploy/server/db/schema";
 import type { Compose } from "@dokploy/server/services/compose";
-import type { Registry } from "@dokploy/server/services/registry";
 import type { Domain } from "@dokploy/server/services/domain";
 import { eq, inArray } from "drizzle-orm";
 import { quote } from "shell-quote";
 import { parse, stringify } from "yaml";
 import { execAsyncRemote } from "../process/execAsync";
-import { getRegistryTag } from "../cluster/upload";
 import { cloneBitbucketRepository } from "../providers/bitbucket";
 import { cloneGitRepository } from "../providers/git";
 import { cloneGiteaRepository } from "../providers/gitea";
@@ -113,24 +111,38 @@ export const readComposeFile = async (compose: Compose) => {
 	return null;
 };
 
-const sanitizeComposeServiceName = (serviceName: string): string =>
-	serviceName.toLowerCase().replace(/[^a-z0-9._-]/g, "-");
-
-export const applyBuildRegistryImages = (
+/**
+ * Rewrites the deploy-side compose file so services built on a build server
+ * run the pushed registry image. `build` is dropped so the deploy server never
+ * needs a build context or tries to build when the image is missing.
+ */
+export const applyPrebuiltImages = (
 	spec: ComposeSpecification,
-	registry: Registry,
-	appName: string,
+	images: Record<string, string>,
 ): ComposeSpecification => {
 	const result = structuredClone(spec);
-	if (!result.services) return result;
-
-	for (const [serviceName, service] of Object.entries(result.services)) {
-		if (service?.build) {
-			const localImage = `${sanitizeComposeServiceName(appName)}-${sanitizeComposeServiceName(serviceName)}:latest`;
-			service.image = getRegistryTag(registry, localImage);
+	for (const [serviceName, image] of Object.entries(images)) {
+		const service = result.services?.[serviceName];
+		if (!service) continue;
+		service.image = image;
+		delete service.build;
+		if (service.pull_policy === "build") {
+			delete service.pull_policy;
 		}
 	}
+	return result;
+};
 
+export const applyBuildPlatform = (
+	spec: ComposeSpecification,
+	platform: string,
+): ComposeSpecification => {
+	const result = structuredClone(spec);
+	for (const service of Object.values(result.services ?? {})) {
+		if (service?.build && !service.platform) {
+			service.platform = platform;
+		}
+	}
 	return result;
 };
 
@@ -138,15 +150,17 @@ export const hasBuildableServices = (
 	spec: ComposeSpecification | null,
 ): boolean => {
 	if (!spec?.services) return false;
-	return Object.values(spec.services).some((service) => Boolean(service?.build));
+	return Object.values(spec.services).some((service) =>
+		Boolean(service?.build),
+	);
 };
 
 export const writeDomainsToCompose = async (
 	compose: ComposeWithMetadata,
 	domains: Domain[],
 	options?: {
-		buildRegistry?: Registry;
 		loadServerId?: string | null;
+		transform?: (spec: ComposeSpecification) => ComposeSpecification;
 	},
 ) => {
 	try {
@@ -155,7 +169,7 @@ export const writeDomainsToCompose = async (
 				? { ...compose, serverId: options.loadServerId }
 				: compose;
 		let composeConverted = await addDomainToCompose(loadCompose, domains);
-		const path = getComposePath(compose);
+		const path = getComposePath(loadCompose);
 
 		if (!composeConverted) {
 			return `
@@ -164,12 +178,8 @@ exit 1;
 			`;
 		}
 
-		if (options?.buildRegistry) {
-			composeConverted = applyBuildRegistryImages(
-				composeConverted,
-				options.buildRegistry,
-				compose.appName,
-			);
+		if (options?.transform) {
+			composeConverted = options.transform(composeConverted);
 		}
 
 		const composeString = stringify(composeConverted, { lineWidth: 1000 });
