@@ -35,6 +35,7 @@ import { portRouter } from "./routers/port";
 import { postgresRouter } from "./routers/postgres";
 import { previewDeploymentRouter } from "./routers/preview-deployment";
 import { projectRouter } from "./routers/project";
+import { projectFolderRouter } from "./routers/project-folder";
 import { auditLogRouter } from "./routers/proprietary/audit-log";
 import { customRoleRouter } from "./routers/proprietary/custom-role";
 import { forwardAuthRouter } from "./routers/proprietary/forward-auth";
@@ -49,6 +50,7 @@ import { rollbackRouter } from "./routers/rollbacks";
 import { scheduleRouter } from "./routers/schedule";
 import { securityRouter } from "./routers/security";
 import { serverRouter } from "./routers/server";
+import { serverFolderRouter } from "./routers/server-folder";
 import { settingsRouter } from "./routers/settings";
 import { sshRouter } from "./routers/ssh-key";
 import { stripeRouter } from "./routers/stripe";
@@ -128,6 +130,8 @@ export const appRouter = createTRPCRouter({
 	overview: overviewRouter,
 	transfer: transferRouter,
 	workflow: workflowRouter,
+	projectFolder: projectFolderRouter,
+	serverFolder: serverFolderRouter,
 });
 
 // export type definition of API

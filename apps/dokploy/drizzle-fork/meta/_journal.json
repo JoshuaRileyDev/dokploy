@@ -25,6 +25,22 @@
       "tag": "0002_compose_build_server",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792580293526,
+      "tag": "0003_project_folders",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792590404809,
+      "tag": "0004_server_folders",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
     }
   ]
 }

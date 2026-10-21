@@ -58,9 +58,10 @@ type AddProject = z.infer<typeof AddProjectSchema>;
 
 interface Props {
 	projectId?: string;
+	folderId?: string | null;
 }
 
-export const HandleProject = ({ projectId }: Props) => {
+export const HandleProject = ({ projectId, folderId }: Props) => {
 	const utils = api.useUtils();
 	const [isOpen, setIsOpen] = useState(false);
 	const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
@@ -80,6 +81,7 @@ export const HandleProject = ({ projectId }: Props) => {
 
 	const { data: availableTags = [] } = api.tag.all.useQuery();
 	const bulkAssignMutation = api.tag.bulkAssign.useMutation();
+	const moveToFolderMutation = api.projectFolder.moveProjects.useMutation();
 
 	const router = useRouter();
 	const form = useForm<AddProject>({
@@ -125,6 +127,13 @@ export const HandleProject = ({ projectId }: Props) => {
 					} catch (error) {
 						toast.error("Failed to assign tags to project");
 					}
+				}
+
+				if (!projectId && folderId && projectIdToUse) {
+					await moveToFolderMutation
+						.mutateAsync({ projectIds: [projectIdToUse], folderId })
+						.catch(() => toast.error("Failed to add project to folder"));
+					await utils.projectFolder.all.invalidate();
 				}
 
 				await utils.project.all.invalidate();
