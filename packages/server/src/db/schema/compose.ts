@@ -124,10 +124,13 @@ export const compose = pgTable("compose", {
 	serverId: text("serverId").references(() => server.serverId, {
 		onDelete: "cascade",
 	}),
-	buildServerId: text("buildServerId").references(() => server.serverId, {
+	// Fork-only columns. Upstream PR #5159 adds compose.buildServerId and
+	// compose.buildRegistryId; distinct DB names keep its migration from failing
+	// on fork databases if it is ever merged.
+	buildServerId: text("forkBuildServerId").references(() => server.serverId, {
 		onDelete: "set null",
 	}),
-	buildRegistryId: text("buildRegistryId").references(
+	buildRegistryId: text("forkBuildRegistryId").references(
 		() => registry.registryId,
 		{
 			onDelete: "set null",

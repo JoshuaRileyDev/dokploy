@@ -1,0 +1,4 @@
+ALTER TABLE "compose" ADD COLUMN "forkBuildServerId" text;--> statement-breakpoint
+ALTER TABLE "compose" ADD COLUMN "forkBuildRegistryId" text;--> statement-breakpoint
+ALTER TABLE "compose" ADD CONSTRAINT "compose_forkBuildServerId_server_serverId_fk" FOREIGN KEY ("forkBuildServerId") REFERENCES "public"."server"("serverId") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "compose" ADD CONSTRAINT "compose_forkBuildRegistryId_registry_registryId_fk" FOREIGN KEY ("forkBuildRegistryId") REFERENCES "public"."registry"("registryId") ON DELETE set null ON UPDATE no action;
