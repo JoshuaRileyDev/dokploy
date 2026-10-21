@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { existsSync, promises as fsPromises } from "node:fs";
+import { dirname, join } from "node:path";
 import { paths } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import {
@@ -7,7 +8,16 @@ import {
 	cleanAppName,
 	compose,
 } from "@dokploy/server/db/schema";
-import { getBuildComposeCommand } from "@dokploy/server/utils/builders/compose";
+import {
+	getBuildComposeCommand,
+	getComposeConfigCommand,
+	getComposeRemoteBuildCommand,
+	getPushImagesCommand,
+	getRemoteImageRef,
+	type PrebuiltImages,
+	resolveBuiltImages,
+	sanitizeImageTag,
+} from "@dokploy/server/utils/builders/compose";
 import { randomizeSpecificationFile } from "@dokploy/server/utils/docker/compose";
 import {
 	cloneCompose,
@@ -31,6 +41,7 @@ import { cloneGiteaRepository } from "@dokploy/server/utils/providers/gitea";
 import { cloneGithubRepository } from "@dokploy/server/utils/providers/github";
 import { cloneGitlabRepository } from "@dokploy/server/utils/providers/gitlab";
 import { getCreateComposeFileCommand } from "@dokploy/server/utils/providers/raw";
+import { withResolvedVaultRefs } from "@dokploy/server/utils/vault";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { quote } from "shell-quote";
@@ -44,6 +55,7 @@ import {
 } from "./deployment";
 import { generateApplyPatchesCommand } from "./patch";
 import { validUniqueServerAppName } from "./project";
+import { findRegistryByIdWithCredentials } from "./registry";
 
 export type Compose = typeof compose.$inferSelect;
 
@@ -144,6 +156,8 @@ export const findComposeById = async (composeId: string) => {
 				},
 			},
 			server: true,
+			buildServer: true,
+			buildRegistry: { columns: { password: false } },
 			backups: {
 				with: {
 					destination: {
@@ -225,6 +239,346 @@ export const updateCompose = async (
 	return composeResult[0];
 };
 
+type ComposeEntity = Awaited<ReturnType<typeof findComposeById>> & {
+	type: "compose";
+};
+
+const runOnTarget = (serverId: string | null, command: string) =>
+	serverId ? execAsyncRemote(serverId, command) : execAsync(command);
+
+const ensureLogDirectory = async (serverId: string | null, logPath: string) => {
+	const logDir = dirname(logPath);
+	if (serverId) {
+		await execAsyncRemote(serverId, `mkdir -p ${quote([logDir])}`);
+		return;
+	}
+	await fsPromises.mkdir(logDir, { recursive: true });
+};
+
+const runWithLog = async (
+	serverId: string | null,
+	command: string,
+	logPath: string,
+) => {
+	await ensureLogDirectory(serverId, logPath);
+	await runOnTarget(serverId, `(${command}) >> ${quote([logPath])} 2>&1`);
+};
+
+const appendDeployLogsIfSplit = async (
+	deployTarget: string | null,
+	deployLogPath: string,
+	logTarget: string | null,
+	mainLogPath: string,
+) => {
+	if (logTarget === deployTarget) return;
+
+	const { stdout } = await runOnTarget(
+		deployTarget,
+		`cat ${quote([deployLogPath])} 2>/dev/null || true`,
+	);
+	if (stdout.trim()) {
+		const encoded = encodeBase64(`\n=== Deploy phase ===\n${stdout}`);
+		await runOnTarget(
+			logTarget,
+			`echo "${encoded}" | base64 -d >> ${quote([mainLogPath])}`,
+		);
+	}
+	await runOnTarget(deployTarget, `rm -f ${quote([deployLogPath])}`);
+};
+
+const cloneComposeSource = async (
+	compose: ComposeEntity,
+	serverId: string | null,
+) => {
+	const entity = { ...compose, serverId, type: "compose" as const };
+	let command = "set -e;";
+	if (compose.sourceType === "github") {
+		command += await cloneGithubRepository(entity);
+	} else if (compose.sourceType === "gitlab") {
+		command += await cloneGitlabRepository(entity);
+	} else if (compose.sourceType === "bitbucket") {
+		command += await cloneBitbucketRepository(entity);
+	} else if (compose.sourceType === "git") {
+		command += await cloneGitRepository(entity);
+	} else if (compose.sourceType === "gitea") {
+		command += await cloneGiteaRepository(entity);
+	} else if (compose.sourceType === "raw") {
+		command += getCreateComposeFileCommand(entity);
+	}
+	return command;
+};
+
+const codeExistsOnTarget = async (
+	compose: ComposeEntity,
+	serverId: string | null,
+) => {
+	const { COMPOSE_PATH } = paths(!!serverId);
+	const codePath = join(COMPOSE_PATH, compose.appName, "code");
+	if (!serverId) return existsSync(codePath);
+	const { stdout } = await execAsyncRemote(
+		serverId,
+		`test -d ${quote([codePath])} && echo exists || true`,
+	);
+	return stdout.trim() === "exists";
+};
+
+/**
+ * Clones (or for raw sources, writes) the compose source on a server and
+ * applies patches. Rebuilds reuse the existing checkout, but still clone when
+ * it is missing, e.g. right after a build server was assigned.
+ */
+const prepareSourceOnTarget = async (
+	compose: ComposeEntity,
+	serverId: string | null,
+	logPath: string,
+	options?: { reuseExisting?: boolean },
+) => {
+	const reuse =
+		options?.reuseExisting &&
+		compose.sourceType !== "raw" &&
+		(await codeExistsOnTarget(compose, serverId));
+	if (!reuse) {
+		const command = await cloneComposeSource(compose, serverId);
+		await runWithLog(serverId, command, logPath);
+	}
+
+	if (compose.sourceType === "raw") return;
+	const patchCommand = await generateApplyPatchesCommand({
+		id: compose.composeId,
+		type: "compose",
+		serverId,
+	});
+	if (patchCommand) {
+		await runWithLog(serverId, `set -e;${patchCommand}`, logPath);
+	}
+};
+
+const DOCKER_ARCHITECTURES: Record<string, string> = {
+	x86_64: "amd64",
+	amd64: "amd64",
+	aarch64: "arm64",
+	arm64: "arm64",
+	armv7l: "arm/v7",
+};
+
+const getDockerPlatform = async (serverId: string | null) => {
+	try {
+		const { stdout } = await runOnTarget(
+			serverId,
+			`docker info --format '{{.OSType}} {{.Architecture}}'`,
+		);
+		const [os, arch] = stdout.trim().split(" ");
+		if (!os || !arch) return null;
+		return `${os}/${DOCKER_ARCHITECTURES[arch] ?? arch}`;
+	} catch {
+		return null;
+	}
+};
+
+const getPrebuiltImageTag = async (
+	compose: ComposeEntity,
+	buildServerId: string,
+	deploymentId: string,
+) => {
+	if (compose.sourceType !== "raw") {
+		const { COMPOSE_PATH } = paths(true);
+		const codePath = join(COMPOSE_PATH, compose.appName, "code");
+		const { stdout } = await execAsyncRemote(
+			buildServerId,
+			`git -C ${quote([codePath])} rev-parse --short=12 HEAD 2>/dev/null || true`,
+		);
+		const sha = stdout.trim();
+		if (sha) return sanitizeImageTag(sha);
+	}
+	return sanitizeImageTag(deploymentId);
+};
+
+/**
+ * Builds every `build:` service on the build server, pushes the images to the
+ * build registry and returns the registry refs the deploy server should run.
+ */
+const buildOnBuildServer = async (
+	compose: ComposeEntity,
+	{
+		buildServerId,
+		deployServerId,
+		logPath,
+		deploymentId,
+		reuseExisting,
+	}: {
+		buildServerId: string;
+		deployServerId: string | null;
+		logPath: string;
+		deploymentId: string;
+		reuseExisting: boolean;
+	},
+): Promise<PrebuiltImages> => {
+	if (!compose.buildRegistryId) {
+		throw new Error(
+			"A build registry is required when a build server is set. Select one under Advanced → Build Server.",
+		);
+	}
+	const registry = await findRegistryByIdWithCredentials(
+		compose.buildRegistryId,
+	);
+
+	await prepareSourceOnTarget(compose, buildServerId, logPath, {
+		reuseExisting,
+	});
+
+	const [buildPlatform, deployPlatform] = await Promise.all([
+		getDockerPlatform(buildServerId),
+		getDockerPlatform(deployServerId),
+	]);
+	const platform =
+		buildPlatform && deployPlatform && buildPlatform !== deployPlatform
+			? deployPlatform
+			: undefined;
+	if (platform) {
+		await runWithLog(
+			buildServerId,
+			`echo ${quote([`⚠️ Build server is ${buildPlatform} but the deploy server is ${deployPlatform}. Building for ${deployPlatform}; this needs QEMU/binfmt on the build server (docker run --privileged --rm tonistiigi/binfmt --install all).`])}`,
+			logPath,
+		);
+	}
+
+	const buildCommand = await getComposeRemoteBuildCommand(
+		compose,
+		buildServerId,
+		registry,
+		{ platform },
+	);
+	if (!buildCommand) {
+		await runWithLog(
+			buildServerId,
+			`echo "ℹ️ No services with build: defined, skipping the remote build"`,
+			logPath,
+		);
+		return { registry, images: {} };
+	}
+	await runWithLog(buildServerId, buildCommand, logPath);
+
+	const resolved = await withResolvedVaultRefs(compose);
+	const { stdout } = await execAsyncRemote(
+		buildServerId,
+		getComposeConfigCommand(resolved),
+	);
+	let built: ReturnType<typeof resolveBuiltImages>;
+	try {
+		built = resolveBuiltImages(stdout);
+	} catch {
+		throw new Error(
+			"Could not read the compose configuration on the build server",
+		);
+	}
+
+	const tag = await getPrebuiltImageTag(compose, buildServerId, deploymentId);
+	const images = built.map(({ service, localImage }) => ({
+		service,
+		localImage,
+		remoteImage: getRemoteImageRef(registry, compose.appName, service, tag),
+	}));
+	await runWithLog(
+		buildServerId,
+		getPushImagesCommand(registry, images),
+		logPath,
+	);
+
+	return {
+		registry,
+		images: Object.fromEntries(
+			images.map(({ service, remoteImage }) => [service, remoteImage]),
+		),
+	};
+};
+
+/**
+ * Runs a compose deployment. With a build server, images are built and pushed
+ * there and the deploy server only pulls them. The main log lives on the build
+ * server; deploy-phase output is collected on the deploy server and appended.
+ */
+const runComposeDeployment = async (
+	compose: ComposeEntity,
+	deployment: { deploymentId: string; logPath: string },
+	{
+		freshVolumes,
+		reuseExisting,
+	}: { freshVolumes: boolean; reuseExisting: boolean },
+) => {
+	const deployTarget = compose.serverId ?? null;
+	// Must match the log host chosen in createDeploymentCompose.
+	const logTarget = compose.buildServerId ?? deployTarget;
+	const buildTarget =
+		compose.buildServerId && compose.buildServerId !== deployTarget
+			? compose.buildServerId
+			: null;
+	const deployLogPath =
+		logTarget !== deployTarget
+			? `${deployment.logPath}.deploy`
+			: deployment.logPath;
+
+	try {
+		let prebuilt: PrebuiltImages | undefined;
+		if (buildTarget) {
+			prebuilt = await buildOnBuildServer(compose, {
+				buildServerId: buildTarget,
+				deployServerId: deployTarget,
+				logPath: deployment.logPath,
+				deploymentId: deployment.deploymentId,
+				reuseExisting,
+			});
+			await runWithLog(
+				logTarget,
+				`echo "🚀 Deploying on the deploy server, its output is added below when it finishes..."`,
+				deployment.logPath,
+			);
+		}
+
+		await prepareSourceOnTarget(compose, deployTarget, deployLogPath, {
+			reuseExisting,
+		});
+
+		if (freshVolumes && compose.composeType === "docker-compose") {
+			const downCommand = `set -e; env -i PATH="$PATH" docker compose -p ${compose.appName} down --volumes 2>&1 || true;`;
+			await runWithLog(deployTarget, downCommand, deployLogPath);
+		}
+
+		const deployCommand = await getBuildComposeCommand(compose, {
+			targetServerId: deployTarget,
+			prebuilt,
+		});
+		await runWithLog(deployTarget, deployCommand, deployLogPath);
+	} catch (error) {
+		try {
+			await appendDeployLogsIfSplit(
+				deployTarget,
+				deployLogPath,
+				logTarget,
+				deployment.logPath,
+			);
+		} catch {
+			// Best effort: the deploy log may not exist if the build failed.
+		}
+
+		let command = "";
+		if (!(error instanceof ExecError)) {
+			const message = error instanceof Error ? error.message : String(error);
+			const encodedMessage = encodeBase64(message);
+			command += `echo "${encodedMessage}" | base64 -d >> ${quote([deployment.logPath])};`;
+		}
+		command += `echo "\nError occurred ❌, check the logs for details." >> ${quote([deployment.logPath])};`;
+		await runOnTarget(logTarget, command);
+		throw error;
+	}
+
+	await appendDeployLogsIfSplit(
+		deployTarget,
+		deployLogPath,
+		logTarget,
+		deployment.logPath,
+	);
+};
+
 export const deployCompose = async ({
 	composeId,
 	titleLog = "Manual deployment",
@@ -248,64 +602,10 @@ export const deployCompose = async ({
 	});
 
 	try {
-		const entity = {
-			...compose,
-			type: "compose" as const,
-		};
-		let command = "set -e;";
-		if (compose.sourceType === "github") {
-			command += await cloneGithubRepository(entity);
-		} else if (compose.sourceType === "gitlab") {
-			command += await cloneGitlabRepository(entity);
-		} else if (compose.sourceType === "bitbucket") {
-			command += await cloneBitbucketRepository(entity);
-		} else if (compose.sourceType === "git") {
-			command += await cloneGitRepository(entity);
-		} else if (compose.sourceType === "gitea") {
-			command += await cloneGiteaRepository(entity);
-		} else if (compose.sourceType === "raw") {
-			command += getCreateComposeFileCommand(entity);
-		}
-
-		let commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, commandWithLog);
-		} else {
-			await execAsync(commandWithLog);
-		}
-		if (compose.sourceType !== "raw") {
-			command = "set -e;";
-			command += await generateApplyPatchesCommand({
-				id: compose.composeId,
-				type: "compose",
-				serverId: compose.serverId,
-			});
-			commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-			if (compose.serverId) {
-				await execAsyncRemote(compose.serverId, commandWithLog);
-			} else {
-				await execAsync(commandWithLog);
-			}
-		}
-
-		if (freshVolumes && compose.composeType === "docker-compose") {
-			const downCommand = `set -e; env -i PATH="$PATH" docker compose -p ${compose.appName} down --volumes 2>&1 || true;`;
-			const downWithLog = `(${downCommand}) >> ${deployment.logPath} 2>&1`;
-			if (compose.serverId) {
-				await execAsyncRemote(compose.serverId, downWithLog);
-			} else {
-				await execAsync(downWithLog);
-			}
-		}
-
-		command = "set -e;";
-		command += await getBuildComposeCommand(entity);
-		commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, commandWithLog);
-		} else {
-			await execAsync(commandWithLog);
-		}
+		await runComposeDeployment({ ...compose, type: "compose" }, deployment, {
+			freshVolumes,
+			reuseExisting: false,
+		});
 
 		await updateDeploymentStatus(deployment.deploymentId, "done");
 		await updateCompose(composeId, {
@@ -322,21 +622,6 @@ export const deployCompose = async ({
 			environmentName: compose.environment.name,
 		});
 	} catch (error) {
-		let command = "";
-
-		// Only log details for non-ExecError errors
-		if (!(error instanceof ExecError)) {
-			const message = error instanceof Error ? error.message : String(error);
-			const encodedMessage = encodeBase64(message);
-			command += `echo "${encodedMessage}" | base64 -d >> "${deployment.logPath}";`;
-		}
-
-		command += `echo "\nError occurred ❌, check the logs for details." >> ${deployment.logPath};`;
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, command);
-		} else {
-			await execAsync(command);
-		}
 		await updateDeploymentStatus(deployment.deploymentId, "error");
 		await updateCompose(composeId, {
 			composeStatus: "error",
@@ -387,72 +672,16 @@ export const rebuildCompose = async ({
 	});
 
 	try {
-		let command = "set -e;";
-		if (compose.sourceType === "raw") {
-			command += getCreateComposeFileCommand(compose);
-		}
-
-		let commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, commandWithLog);
-		} else {
-			await execAsync(commandWithLog);
-		}
-
-		if (compose.sourceType !== "raw") {
-			command = "set -e;";
-			command += await generateApplyPatchesCommand({
-				id: compose.composeId,
-				type: "compose",
-				serverId: compose.serverId,
-			});
-			commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-			if (compose.serverId) {
-				await execAsyncRemote(compose.serverId, commandWithLog);
-			} else {
-				await execAsync(commandWithLog);
-			}
-		}
-
-		if (freshVolumes && compose.composeType === "docker-compose") {
-			const downCommand = `set -e; env -i PATH="$PATH" docker compose -p ${compose.appName} down --volumes 2>&1 || true;`;
-			const downWithLog = `(${downCommand}) >> ${deployment.logPath} 2>&1`;
-			if (compose.serverId) {
-				await execAsyncRemote(compose.serverId, downWithLog);
-			} else {
-				await execAsync(downWithLog);
-			}
-		}
-
-		command = "set -e;";
-		command += await getBuildComposeCommand(compose);
-		commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, commandWithLog);
-		} else {
-			await execAsync(commandWithLog);
-		}
+		await runComposeDeployment({ ...compose, type: "compose" }, deployment, {
+			freshVolumes,
+			reuseExisting: true,
+		});
 
 		await updateDeploymentStatus(deployment.deploymentId, "done");
 		await updateCompose(composeId, {
 			composeStatus: "done",
 		});
 	} catch (error) {
-		let command = "";
-
-		// Only log details for non-ExecError errors
-		if (!(error instanceof ExecError)) {
-			const message = error instanceof Error ? error.message : String(error);
-			const encodedMessage = encodeBase64(message);
-			command += `echo "${encodedMessage}" | base64 -d >> "${deployment.logPath}";`;
-		}
-
-		command += `echo "\nError occurred ❌, check the logs for details." >> ${deployment.logPath};`;
-		if (compose.serverId) {
-			await execAsyncRemote(compose.serverId, command);
-		} else {
-			await execAsync(command);
-		}
 		await updateDeploymentStatus(deployment.deploymentId, "error");
 		await updateCompose(composeId, {
 			composeStatus: "error",

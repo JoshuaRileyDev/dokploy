@@ -17,6 +17,14 @@
       "tag": "0001_workflows_and_server_roles",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792567830474,
+      "tag": "0002_compose_build_server",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
     }
   ]
 }

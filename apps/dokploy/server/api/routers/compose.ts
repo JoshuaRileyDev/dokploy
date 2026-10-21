@@ -16,6 +16,7 @@ import {
 	findDomainsByComposeId,
 	findEnvironmentById,
 	findProjectById,
+	findRegistryById,
 	findServerById,
 	getAccessibleServerIds,
 	getComposeContainer,
@@ -198,7 +199,61 @@ export const composeRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.composeId, {
 				service: ["create"],
 			});
-			const updated = await updateCompose(input.composeId, input);
+
+			const compose = await findComposeById(input.composeId);
+			if (
+				compose.environment.project.organizationId !==
+				ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to update this compose",
+				});
+			}
+
+			if (input.buildServerId) {
+				const accessibleIds = await getAccessibleServerIds(ctx.session);
+				if (!accessibleIds.has(input.buildServerId)) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access this build server",
+					});
+				}
+			}
+
+			if (input.buildRegistryId) {
+				const reg = await findRegistryById(input.buildRegistryId);
+				if (reg.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({
+						code: "UNAUTHORIZED",
+						message: "You are not authorized to access this build registry",
+					});
+				}
+			}
+
+			const nextBuildServerId =
+				input.buildServerId !== undefined
+					? input.buildServerId
+					: compose.buildServerId;
+			const nextBuildRegistryId =
+				input.buildRegistryId !== undefined
+					? input.buildRegistryId
+					: compose.buildRegistryId;
+			// A server with both deploy and build roles builds in place and needs no registry.
+			if (
+				nextBuildServerId &&
+				nextBuildServerId !== compose.serverId &&
+				!nextBuildRegistryId
+			) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						"A build registry is required to move images from the build server to the deploy server",
+				});
+			}
+
+			const { composeId, ...rest } = input;
+			const updated = await updateCompose(composeId, rest);
 			if (input.githubId) {
 				void autoImportWorkflowsForService("compose", input.composeId);
 			}
@@ -297,7 +352,10 @@ export const composeRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const compose = await findComposeById(input.composeId);
-			await clearOldDeployments(compose.appName, compose.serverId);
+			await clearOldDeployments(
+				compose.appName,
+				compose.buildServerId || compose.serverId,
+			);
 			await audit(ctx, {
 				action: "update",
 				resourceType: "compose",
@@ -313,7 +371,10 @@ export const composeRouter = createTRPCRouter({
 				deployment: ["cancel"],
 			});
 			const compose = await findComposeById(input.composeId);
-			await killDockerBuild("compose", compose.serverId);
+			await killDockerBuild(
+				"compose",
+				compose.buildServerId || compose.serverId,
+			);
 		}),
 
 	loadServices: protectedProcedure
@@ -557,10 +618,10 @@ export const composeRouter = createTRPCRouter({
 			const compose = await findComposeById(input.composeId);
 			const { COMPOSE_PATH } = paths(!!compose.serverId);
 			const projectPath = join(COMPOSE_PATH, compose.appName, "code");
-			const command = createCommand(
-				compose,
-				compose.mounts.length > 0 ? projectPath : undefined,
-			);
+			const command = createCommand(compose, {
+				prebuilt: !!compose.buildServerId,
+				projectPath: compose.mounts.length > 0 ? projectPath : undefined,
+			});
 			return `docker ${command}`;
 		}),
 	refreshToken: protectedProcedure

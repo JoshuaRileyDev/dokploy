@@ -13,6 +13,7 @@ import { type ReactElement, useEffect, useState } from "react";
 import { toast } from "sonner";
 import superjson from "superjson";
 import { ShowImport } from "@/components/dashboard/application/advanced/import/show-import";
+import { ShowBuildServer } from "@/components/dashboard/application/advanced/show-build-server";
 import { ShowVolumes } from "@/components/dashboard/application/advanced/volumes/show-volumes";
 import { ShowDeployments } from "@/components/dashboard/application/deployments/show-deployments";
 import { ShowDomains } from "@/components/dashboard/application/domains/show-domains";
@@ -461,6 +462,10 @@ const Service = (
 										<TabsContent value="advanced">
 											<div className="flex flex-col gap-4 pt-2.5">
 												<AddCommandCompose composeId={composeId} />
+												<ShowBuildServer
+													serviceType="compose"
+													composeId={composeId}
+												/>
 												<ShowVolumes id={composeId} type="compose" />
 												<ShowImport composeId={composeId} />
 												<AssignComposeNetworks composeId={composeId} />

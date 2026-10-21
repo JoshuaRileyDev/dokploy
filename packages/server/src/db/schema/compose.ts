@@ -20,6 +20,7 @@ import { github } from "./github";
 import { gitlab } from "./gitlab";
 import { mounts } from "./mount";
 import { patch } from "./patch";
+import { registry } from "./registry";
 import { schedules } from "./schedule";
 import { server } from "./server";
 import { applicationStatus, triggerType } from "./shared";
@@ -123,6 +124,18 @@ export const compose = pgTable("compose", {
 	serverId: text("serverId").references(() => server.serverId, {
 		onDelete: "cascade",
 	}),
+	// Fork-only columns. Upstream PR #5159 adds compose.buildServerId and
+	// compose.buildRegistryId; distinct DB names keep its migration from failing
+	// on fork databases if it is ever merged.
+	buildServerId: text("forkBuildServerId").references(() => server.serverId, {
+		onDelete: "set null",
+	}),
+	buildRegistryId: text("forkBuildRegistryId").references(
+		() => registry.registryId,
+		{
+			onDelete: "set null",
+		},
+	),
 	serviceNetworks: jsonb("serviceNetworks")
 		.$type<
 			Array<{
@@ -165,6 +178,17 @@ export const composeRelations = relations(compose, ({ one, many }) => ({
 	server: one(server, {
 		fields: [compose.serverId],
 		references: [server.serverId],
+		relationName: "composeServer",
+	}),
+	buildServer: one(server, {
+		fields: [compose.buildServerId],
+		references: [server.serverId],
+		relationName: "composeBuildServer",
+	}),
+	buildRegistry: one(registry, {
+		fields: [compose.buildRegistryId],
+		references: [registry.registryId],
+		relationName: "composeBuildRegistry",
 	}),
 	backups: many(backups),
 	schedules: many(schedules),

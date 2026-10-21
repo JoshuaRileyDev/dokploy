@@ -140,7 +140,10 @@ export function ShowDeploymentsTable({
 					d.compose?.server?.name ??
 					"";
 				const buildServerName =
-					d.buildServer?.name ?? d.application?.buildServer?.name ?? "";
+					d.buildServer?.name ??
+					d.application?.buildServer?.name ??
+					d.compose?.buildServer?.name ??
+					"";
 				if (!info) return false;
 				return (
 					info.name.toLowerCase().includes(q) ||
@@ -300,10 +303,14 @@ export function ShowDeploymentsTable({
 						d.compose?.server?.serverRoles ??
 						null;
 					const buildServerName =
-						d.buildServer?.name ?? d.application?.buildServer?.name ?? null;
+						d.buildServer?.name ??
+						d.application?.buildServer?.name ??
+						d.compose?.buildServer?.name ??
+						null;
 					const buildServerRoles =
 						d.buildServer?.serverRoles ??
 						d.application?.buildServer?.serverRoles ??
+						d.compose?.buildServer?.serverRoles ??
 						null;
 					const showBuild =
 						buildServerName != null && buildServerName !== serverName;

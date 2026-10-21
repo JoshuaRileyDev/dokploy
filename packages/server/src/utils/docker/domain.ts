@@ -111,19 +111,75 @@ export const readComposeFile = async (compose: Compose) => {
 	return null;
 };
 
+/**
+ * Rewrites the deploy-side compose file so services built on a build server
+ * run the pushed registry image. `build` is dropped so the deploy server never
+ * needs a build context or tries to build when the image is missing.
+ */
+export const applyPrebuiltImages = (
+	spec: ComposeSpecification,
+	images: Record<string, string>,
+): ComposeSpecification => {
+	const result = structuredClone(spec);
+	for (const [serviceName, image] of Object.entries(images)) {
+		const service = result.services?.[serviceName];
+		if (!service) continue;
+		service.image = image;
+		delete service.build;
+		if (service.pull_policy === "build") {
+			delete service.pull_policy;
+		}
+	}
+	return result;
+};
+
+export const applyBuildPlatform = (
+	spec: ComposeSpecification,
+	platform: string,
+): ComposeSpecification => {
+	const result = structuredClone(spec);
+	for (const service of Object.values(result.services ?? {})) {
+		if (service?.build && !service.platform) {
+			service.platform = platform;
+		}
+	}
+	return result;
+};
+
+export const hasBuildableServices = (
+	spec: ComposeSpecification | null,
+): boolean => {
+	if (!spec?.services) return false;
+	return Object.values(spec.services).some((service) =>
+		Boolean(service?.build),
+	);
+};
+
 export const writeDomainsToCompose = async (
 	compose: ComposeWithMetadata,
 	domains: Domain[],
+	options?: {
+		loadServerId?: string | null;
+		transform?: (spec: ComposeSpecification) => ComposeSpecification;
+	},
 ) => {
 	try {
-		const composeConverted = await addDomainToCompose(compose, domains);
-		const path = getComposePath(compose);
+		const loadCompose =
+			options?.loadServerId !== undefined
+				? { ...compose, serverId: options.loadServerId }
+				: compose;
+		let composeConverted = await addDomainToCompose(loadCompose, domains);
+		const path = getComposePath(loadCompose);
 
 		if (!composeConverted) {
 			return `
 echo "❌ Error: Compose file not found";
 exit 1;
 			`;
+		}
+
+		if (options?.transform) {
+			composeConverted = options.transform(composeConverted);
 		}
 
 		const composeString = stringify(composeConverted, { lineWidth: 1000 });
