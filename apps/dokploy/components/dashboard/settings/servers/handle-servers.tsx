@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -53,11 +54,38 @@ const Schema = z.object({
 	sshKeyId: z.string().min(1, {
 		message: "SSH Key is required",
 	}),
-	serverType: z.enum(["deploy", "build"]).default("deploy"),
+	serverRoles: z
+		.array(z.enum(["deploy", "build", "workflow"]))
+		.min(1, { message: "Select at least one role" }),
 	enableDockerCleanup: z.boolean().default(true),
 });
 
 type Schema = z.infer<typeof Schema>;
+
+const roleOptions: {
+	value: Schema["serverRoles"][number];
+	label: string;
+	description: string;
+}[] = [
+	{
+		value: "deploy",
+		label: "Deploy",
+		description:
+			"Runs your applications, databases, and services. Sets up Docker Swarm and Traefik.",
+	},
+	{
+		value: "build",
+		label: "Build",
+		description:
+			"Builds your applications, offloading the work from your deploy servers. Servers without the deploy role won't appear in deployment options.",
+	},
+	{
+		value: "workflow",
+		label: "Workflows",
+		description:
+			"Runs CI workflows from your repositories' .github/workflows and .dokploy/workflows folders.",
+	},
+];
 
 interface Props {
 	serverId?: string;
@@ -80,6 +108,7 @@ export const HandleServers = ({ serverId, children }: Props) => {
 	);
 
 	const { data: sshKeys } = api.sshKey.all.useQuery();
+	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { mutateAsync, error, isPending, isError } = serverId
 		? api.server.update.useMutation()
 		: api.server.create.useMutation();
@@ -91,7 +120,7 @@ export const HandleServers = ({ serverId, children }: Props) => {
 			port: 22,
 			username: "root",
 			sshKeyId: "",
-			serverType: "deploy",
+			serverRoles: ["deploy"],
 			enableDockerCleanup: true,
 		},
 		resolver: zodResolver(Schema),
@@ -105,7 +134,7 @@ export const HandleServers = ({ serverId, children }: Props) => {
 			port: data?.port || 22,
 			username: data?.username || "root",
 			sshKeyId: data?.sshKeyId || "",
-			serverType: data?.serverType || "deploy",
+			serverRoles: data?.serverRoles ?? ["deploy"],
 			enableDockerCleanup: data?.enableDockerCleanup ?? true,
 		});
 	}, [form, form.reset, form.formState.isSubmitSuccessful, data]);
@@ -122,7 +151,7 @@ export const HandleServers = ({ serverId, children }: Props) => {
 			port: data.port || 22,
 			username: data.username || "root",
 			sshKeyId: data.sshKeyId || "",
-			serverType: data.serverType || "deploy",
+			serverRoles: data.serverRoles,
 			enableDockerCleanup: data.enableDockerCleanup,
 			serverId: serverId || "",
 		})
@@ -132,9 +161,10 @@ export const HandleServers = ({ serverId, children }: Props) => {
 				toast.success(serverId ? "Server Updated" : "Server Created");
 				setIsOpen(false);
 			})
-			.catch(() => {
+			.catch((error) => {
 				toast.error(
-					serverId ? "Error updating a server" : "Error creating a server",
+					error?.message ||
+						(serverId ? "Error updating a server" : "Error creating a server"),
 				);
 			});
 	};
@@ -284,42 +314,53 @@ export const HandleServers = ({ serverId, children }: Props) => {
 						/>
 						<FormField
 							control={form.control}
-							name="serverType"
+							name="serverRoles"
 							render={({ field }) => {
-								const serverTypeValue = form.watch("serverType");
+								const roles = field.value ?? [];
 								return (
 									<FormItem>
-										<FormLabel>Server Type</FormLabel>
-										<Select
-											onValueChange={field.onChange}
-											defaultValue={field.value}
-										>
-											<SelectTrigger>
-												<SelectValue placeholder="Select a server type" />
-											</SelectTrigger>
-											<SelectContent>
-												<SelectGroup>
-													<SelectItem value="deploy">Deploy Server</SelectItem>
-													<SelectItem value="build">Build Server</SelectItem>
-													<SelectLabel>Server Type</SelectLabel>
-												</SelectGroup>
-											</SelectContent>
-										</Select>
+										<FormLabel>Server Roles</FormLabel>
+										<FormDescription>
+											A server can take on more than one role.
+										</FormDescription>
+										<div className="flex flex-col gap-2">
+											{roleOptions
+												.filter(
+													(option) => !(isCloud && option.value === "workflow"),
+												)
+												.map((option) => (
+													<label
+														key={option.value}
+														htmlFor={`server-role-${option.value}`}
+														className="flex cursor-pointer items-start gap-3 rounded-lg border p-3"
+													>
+														<Checkbox
+															id={`server-role-${option.value}`}
+															checked={roles.includes(option.value)}
+															onCheckedChange={(checked) =>
+																field.onChange(
+																	checked
+																		? [...roles, option.value]
+																		: roles.filter((r) => r !== option.value),
+																)
+															}
+														/>
+														<div className="space-y-1">
+															<p className="text-sm font-medium leading-none">
+																{option.label}
+															</p>
+															<p className="text-sm text-muted-foreground">
+																{option.description}
+															</p>
+														</div>
+													</label>
+												))}
+										</div>
 										<FormMessage />
-										{serverTypeValue === "deploy" && (
-											<AlertBlock type="info" className="mt-2">
-												Deploy servers are used to run your applications,
-												databases, and services. They handle the deployment and
-												execution of your projects.
-											</AlertBlock>
-										)}
-										{serverTypeValue === "build" && (
-											<AlertBlock type="info" className="mt-2">
-												Build servers are dedicated to building your
-												applications. They handle the compilation and build
-												process, offloading this work from your deployment
-												servers. Build servers won't appear in deployment
-												options.
+										{roles.includes("deploy") && roles.includes("workflow") && (
+											<AlertBlock type="warning" className="mt-2">
+												Workflow jobs will compete with your deployed services
+												for CPU and memory on this server.
 											</AlertBlock>
 										)}
 									</FormItem>

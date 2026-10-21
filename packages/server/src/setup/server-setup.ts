@@ -1,5 +1,6 @@
 import path from "node:path";
 import { IS_CLOUD, paths } from "@dokploy/server/constants";
+import type { ServerRole } from "@dokploy/server/db/schema";
 import { getDokployUrl } from "@dokploy/server/services/admin";
 import {
 	createServerDeployment,
@@ -17,6 +18,11 @@ import {
 	TRAEFIK_SSL_PORT,
 	TRAEFIK_VERSION,
 } from "@dokploy/server/setup/traefik-setup";
+import {
+	ACT_VERSION,
+	DEFAULT_PLATFORM_IMAGES,
+	WORKFLOW_RUNS_PATH,
+} from "@dokploy/server/utils/workflows/act";
 import slug from "slugify";
 import { Client } from "ssh2";
 import { recreateDirectory } from "../utils/filesystem/directory";
@@ -64,11 +70,8 @@ export const serverSetup = async (
 	});
 
 	try {
-		const isBuildServer = server.serverType === "build";
 		onData?.(
-			isBuildServer
-				? "\nInstalling Build Server Dependencies: ✅\n"
-				: "\nInstalling Server Dependencies: ✅\n",
+			`\nInstalling Server Dependencies (${server.serverRoles.join(", ")}): ✅\n`,
 		);
 		await installRequirements(serverId, onData);
 
@@ -122,7 +125,8 @@ else
 fi
 `;
 
-export const defaultCommand = (isBuildServer = false) => {
+export const defaultCommand = (roles: ServerRole[] = ["deploy"]) => {
+	const isDeployServer = roles.includes("deploy");
 	const bashCommand = `
 set -e;
 DOCKER_VERSION=28.5.0
@@ -206,7 +210,7 @@ echo -e "---------------------------------------------"
 echo "| CPU Architecture  | $SYS_ARCH"
 echo "| Operating System  | $OS_TYPE $OS_VERSION"
 echo "| Docker            | $DOCKER_VERSION_REPORT"
-${isBuildServer ? 'echo "| Server Type       | Build Server"' : ""}
+echo "| Server Roles      | ${roles.join(", ")}"
 echo -e "---------------------------------------------\n"
 echo -e "1. Installing required packages (curl, wget, git, jq, openssl). "
 
@@ -217,7 +221,7 @@ command_exists() {
 ${installUtilities()}
 
 ${
-	!isBuildServer
+	isDeployServer
 		? `
 echo -e "2. Validating ports. "
 ${validatePorts()}
@@ -282,6 +286,14 @@ echo -e "7. Configuring permissions"
 ${setupPermissions()}
 `
 }
+${
+	roles.includes("workflow")
+		? `
+echo -e "Installing the workflow runner (act)"
+${installAct()}
+`
+		: ""
+}
 				`;
 
 	return bashCommand;
@@ -298,12 +310,10 @@ const installRequirements = async (
 		throw new Error("No SSH Key found");
 	}
 
-	const isBuildServer = server.serverType === "build";
-
 	return new Promise<void>((resolve, reject) => {
 		client
 			.once("ready", () => {
-				const command = server.command || defaultCommand(isBuildServer);
+				const command = server.command || defaultCommand(server.serverRoles);
 				client.exec(command, (err, stream) => {
 					if (err) {
 						onData?.(err.message);
@@ -417,48 +427,48 @@ export const setupSwarm = () => `
 
 				# Try IPv4 with multiple services
 				# First attempt: ifconfig.io
-				ip=\$(curl -4s --connect-timeout 5 https://ifconfig.io 2>/dev/null)
+				ip=$(curl -4s --connect-timeout 5 https://ifconfig.io 2>/dev/null)
 
 				# Second attempt: icanhazip.com
-				if [ -z "\$ip" ]; then
-					ip=\$(curl -4s --connect-timeout 5 https://icanhazip.com 2>/dev/null)
+				if [ -z "$ip" ]; then
+					ip=$(curl -4s --connect-timeout 5 https://icanhazip.com 2>/dev/null)
 				fi
 
 				# Third attempt: ipecho.net
-				if [ -z "\$ip" ]; then
-					ip=\$(curl -4s --connect-timeout 5 https://ipecho.net/plain 2>/dev/null)
+				if [ -z "$ip" ]; then
+					ip=$(curl -4s --connect-timeout 5 https://ipecho.net/plain 2>/dev/null)
 				fi
 
 				# If no IPv4, try IPv6 with multiple services
-				if [ -z "\$ip" ]; then
+				if [ -z "$ip" ]; then
 					# Try IPv6 with ifconfig.io
-					ip=\$(curl -6s --connect-timeout 5 https://ifconfig.io 2>/dev/null)
+					ip=$(curl -6s --connect-timeout 5 https://ifconfig.io 2>/dev/null)
 
 					# Try IPv6 with icanhazip.com
-					if [ -z "\$ip" ]; then
-						ip=\$(curl -6s --connect-timeout 5 https://icanhazip.com 2>/dev/null)
+					if [ -z "$ip" ]; then
+						ip=$(curl -6s --connect-timeout 5 https://icanhazip.com 2>/dev/null)
 					fi
 
 					# Try IPv6 with ipecho.net
-					if [ -z "\$ip" ]; then
-						ip=\$(curl -6s --connect-timeout 5 https://ipecho.net/plain 2>/dev/null)
+					if [ -z "$ip" ]; then
+						ip=$(curl -6s --connect-timeout 5 https://ipecho.net/plain 2>/dev/null)
 					fi
 				fi
 
-				if [ -z "\$ip" ]; then
+				if [ -z "$ip" ]; then
 					echo "Error: Could not determine server IP address automatically (neither IPv4 nor IPv6)." >&2
 					echo "Please set the ADVERTISE_ADDR environment variable manually." >&2
 					echo "Example: export ADVERTISE_ADDR=<your-server-ip>" >&2
 					exit 1
 				fi
 
-				echo "\$ip"
+				echo "$ip"
 			}
-			advertise_addr=\$(get_ip)
-			echo "Advertise address: \$advertise_addr"
+			advertise_addr=$(get_ip)
+			echo "Advertise address: $advertise_addr"
 
 			# Initialize Docker Swarm
-			$SUDO_CMD docker swarm init --advertise-addr \$advertise_addr
+			$SUDO_CMD docker swarm init --advertise-addr $advertise_addr
 			echo "Swarm initialized ✅"
 		fi
 	`;
@@ -497,7 +507,7 @@ const installUtilities = () => `
 		$SUDO_CMD pacman -Sy --noconfirm --needed unzip curl wget git git-lfs jq openssl >/dev/null || true
 		;;
 	alpine)
-		$SUDO_CMD sed -i '/^#.*\/community/s/^#//' /etc/apk/repositories
+		$SUDO_CMD sed -i '/^#.*/community/s/^#//' /etc/apk/repositories
 		$SUDO_CMD apk update >/dev/null
 		$SUDO_CMD apk add curl wget git git-lfs jq openssl sudo unzip tar >/dev/null
 		;;
@@ -753,6 +763,23 @@ const installRailpack = () => `
 		$SUDO_CMD bash -c "$(curl -fsSL https://railpack.com/install.sh)"
 		echo "Railpack version $RAILPACK_VERSION installed ✅"
 	fi
+`;
+
+const installAct = () => `
+	ACT_VERSION=${ACT_VERSION}
+	if command_exists act && [ "$(act --version | awk '{print $3}')" = "$ACT_VERSION" ]; then
+		echo "act $ACT_VERSION already installed ✅"
+	else
+		curl -fsSL "https://raw.githubusercontent.com/nektos/act/v$ACT_VERSION/install.sh" | $SUDO_CMD bash -s -- -b /usr/local/bin "v$ACT_VERSION"
+		echo "act $ACT_VERSION installed ✅"
+	fi
+	$SUDO_CMD mkdir -p ${WORKFLOW_RUNS_PATH}
+	if [ -n "$SUDO_CMD" ]; then
+		$SUDO_CMD chown -R $CURRENT_USER:$CURRENT_USER /etc/dokploy/workflows
+	fi
+	echo "Pulling the default runner image (${DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]}), this can take a while"
+	docker pull ${DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]}
+	echo "Workflow runner ready ✅"
 `;
 
 const setupPermissions = () => `

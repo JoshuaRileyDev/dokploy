@@ -1,0 +1,33 @@
+name: CI
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=1.2.3" >> "$GITHUB_OUTPUT"
+      - name: Say hi
+        run: echo "hello from build"
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20]
+    steps:
+      - run: echo "testing node ${{ matrix.node }} version ${{ needs.build.outputs.version }}"
+  fail:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Boom
+        run: |
+          echo "about to fail"
+          exit 3
+      - name: Never
+        run: echo never

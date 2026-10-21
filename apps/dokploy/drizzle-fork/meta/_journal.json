@@ -9,6 +9,14 @@
       "tag": "0000_cloud_server_provisioning",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792533413302,
+      "tag": "0001_workflows_and_server_roles",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
     }
   ]
 }

@@ -532,6 +532,18 @@ importers:
         specifier: ^4.1.0
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.10.13)(vite@7.3.6(@types/node@24.10.13)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.8.3))
 
+  apps/runner:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.4.0
+        version: 24.10.13
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   apps/schedules:
     dependencies:
       '@dokploy/server':

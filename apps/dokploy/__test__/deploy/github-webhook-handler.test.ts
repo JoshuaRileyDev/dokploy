@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 	shouldDeploy: vi.fn(),
 	createPreviewDeployment: vi.fn(),
 	findPreviewDeploymentByApplicationId: vi.fn(),
+	queueWorkflowRuns: vi.fn(),
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -73,6 +74,7 @@ vi.mock("@dokploy/server", () => ({
 		mocks.findPreviewDeploymentByApplicationId,
 	findPreviewDeploymentsByPullRequestId: vi.fn(),
 	getBitbucketHeaders: vi.fn(() => ({})),
+	queueWorkflowRunsForGithubEvent: mocks.queueWorkflowRuns,
 	removePreviewDeployment: vi.fn(),
 }));
 
@@ -172,6 +174,7 @@ describe("GitHub app webhook auto-deploy", () => {
 		mocks.shouldDeploy.mockReturnValue(true);
 		mocks.composeFindMany.mockResolvedValue([]);
 		mocks.queueAdd.mockResolvedValue({ id: "job-id" });
+		mocks.queueWorkflowRuns.mockResolvedValue([]);
 
 		mocks.applicationsFindMany.mockImplementation(({ where }) => {
 			const matches =
@@ -311,6 +314,45 @@ describe("GitHub app webhook auto-deploy", () => {
 		expect(res.status).toHaveBeenCalledWith(200);
 		expect(res.json).toHaveBeenCalledWith({
 			message: "Deployed 1 apps based on tag v1.0.0",
+		});
+	});
+
+	it("queues workflow runs for the delivery alongside deploying", async () => {
+		const req = createPushRequest("main");
+
+		await handler(req, createResponse());
+
+		expect(mocks.queueWorkflowRuns).toHaveBeenCalledWith({
+			githubId: "github-provider-id",
+			eventName: "push",
+			payload: req.body,
+		});
+	});
+
+	it("accepts release events for workflows without deploying", async () => {
+		const res = createResponse();
+		const req = {
+			headers: {
+				"x-hub-signature-256": "sha256=test-signature",
+				"x-github-event": "release",
+			},
+			body: {
+				action: "published",
+				installation: { id: 12345 },
+				release: { tag_name: "v1.0.0" },
+				repository: { name: "dokploy", owner: { login: "agentHits" } },
+			},
+		} as unknown as NextApiRequest;
+
+		await handler(req, res);
+
+		expect(mocks.queueWorkflowRuns).toHaveBeenCalledWith(
+			expect.objectContaining({ eventName: "release" }),
+		);
+		expect(mocks.queueAdd).not.toHaveBeenCalled();
+		expect(res.status).toHaveBeenCalledWith(200);
+		expect(res.json).toHaveBeenCalledWith({
+			message: "Workflow event received",
 		});
 	});
 

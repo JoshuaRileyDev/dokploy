@@ -1016,7 +1016,7 @@ export const AddUserPermissions = ({ userId, role }: Props) => {
 																	({s.ipAddress})
 																</span>
 																<span className="text-xs text-muted-foreground capitalize">
-																	{s.serverType}
+																	{s.serverRoles.join(", ")}
 																</span>
 															</div>
 														</FormItem>

@@ -294,16 +294,16 @@ export function ShowDeploymentsTable({
 						d.application?.server?.name ??
 						d.compose?.server?.name ??
 						null;
-					const serverType =
-						d.server?.serverType ??
-						d.application?.server?.serverType ??
-						d.compose?.server?.serverType ??
+					const serverRoles =
+						d.server?.serverRoles ??
+						d.application?.server?.serverRoles ??
+						d.compose?.server?.serverRoles ??
 						null;
 					const buildServerName =
 						d.buildServer?.name ?? d.application?.buildServer?.name ?? null;
-					const buildServerType =
-						d.buildServer?.serverType ??
-						d.application?.buildServer?.serverType ??
+					const buildServerRoles =
+						d.buildServer?.serverRoles ??
+						d.application?.buildServer?.serverRoles ??
 						null;
 					const showBuild =
 						buildServerName != null && buildServerName !== serverName;
@@ -316,12 +316,12 @@ export function ShowDeploymentsTable({
 								<div className="flex items-center gap-1.5 flex-wrap">
 									<Server className="size-3.5 text-muted-foreground shrink-0" />
 									<span className="truncate">{serverName}</span>
-									{serverType && (
+									{serverRoles && (
 										<Badge
 											variant="outline"
 											className="text-[10px] font-normal"
 										>
-											{serverType}
+											{serverRoles.join(", ")}
 										</Badge>
 									)}
 								</div>
@@ -330,12 +330,12 @@ export function ShowDeploymentsTable({
 								<div className="flex items-center gap-1.5 text-muted-foreground flex-wrap">
 									<span className="text-[10px]">Build:</span>
 									<span className="truncate text-xs">{buildServerName}</span>
-									{buildServerType && (
+									{buildServerRoles && (
 										<Badge
 											variant="outline"
 											className="text-[10px] font-normal"
 										>
-											{buildServerType}
+											{buildServerRoles.join(", ")}
 										</Badge>
 									)}
 								</div>

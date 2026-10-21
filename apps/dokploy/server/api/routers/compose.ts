@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
 	addDomainToCompose,
+	autoImportWorkflowsForService,
 	clearOldDeployments,
 	cloneCompose,
 	createCommand,
@@ -198,6 +199,9 @@ export const composeRouter = createTRPCRouter({
 				service: ["create"],
 			});
 			const updated = await updateCompose(input.composeId, input);
+			if (input.githubId) {
+				void autoImportWorkflowsForService("compose", input.composeId);
+			}
 			await audit(ctx, {
 				action: "update",
 				resourceType: "compose",

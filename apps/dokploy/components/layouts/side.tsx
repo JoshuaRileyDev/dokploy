@@ -40,6 +40,7 @@ import {
 	User,
 	Users,
 	Vault,
+	Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -196,6 +197,14 @@ const MENU: Menu = {
 			// Only enabled in non-cloud environments and if user has monitoring.read
 			isEnabled: ({ isCloud, permissions }) =>
 				!isCloud && !!permissions?.monitoring.read,
+		},
+		{
+			isSingle: true,
+			title: "Workflows",
+			url: "/dashboard/workflows",
+			icon: Workflow,
+			isEnabled: ({ isCloud, permissions }) =>
+				!isCloud && !!permissions?.workflow.read,
 		},
 		{
 			isSingle: true,

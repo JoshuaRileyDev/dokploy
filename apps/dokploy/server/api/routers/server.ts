@@ -7,6 +7,7 @@ import {
 	findUserById,
 	getAccessibleServerIds,
 	getPublicIpWithFallback,
+	getServerRoleUsage,
 	getServicesByServerId,
 	haveActiveServices,
 	IS_CLOUD,
@@ -27,7 +28,15 @@ import {
 import { hasValidLicense } from "@dokploy/server/services/proprietary/license-key";
 import { TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
-import { and, desc, eq, getTableColumns, isNotNull, sql } from "drizzle-orm";
+import {
+	and,
+	arrayContains,
+	desc,
+	eq,
+	getTableColumns,
+	isNotNull,
+	sql,
+} from "drizzle-orm";
 import { z } from "zod";
 import { updateServersBasedOnQuantity } from "@/pages/api/stripe/webhook";
 import {
@@ -45,12 +54,16 @@ import {
 	apiUpdateServerMonitoring,
 	applications,
 	compose,
+	describeRoleRemovalBlockers,
+	legacyServerType,
 	mariadb,
 	mongo,
 	mysql,
 	organization,
 	postgres,
 	redis,
+	resolveServerRoles,
+	type ServerRole,
 	server,
 } from "@/server/db/schema";
 import { applyDockerCleanupSchedule } from "@/server/utils/docker-cleanup";
@@ -71,6 +84,40 @@ const toServerOptions = async (
 	}));
 };
 
+const validateServerRoles = (roles: ServerRole[] | undefined) => {
+	// Workflows run arbitrary repository code, so they are a self-hosted-only feature.
+	if (IS_CLOUD && roles?.includes("workflow")) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Workflow servers are not available on Dokploy Cloud",
+		});
+	}
+	return roles;
+};
+
+const findServersWithRole = async (
+	ctx: Parameters<typeof toServerOptions>[0] & {
+		session: { userId: string; activeOrganizationId: string };
+	},
+	role: ServerRole,
+) => {
+	const accessibleIds = await getAccessibleServerIds(ctx.session);
+
+	const result = await db.query.server.findMany({
+		orderBy: desc(server.createdAt),
+		where: and(
+			isNotNull(server.sshKeyId),
+			eq(server.organizationId, ctx.session.activeOrganizationId),
+			arrayContains(server.serverRoles, [role]),
+			IS_CLOUD ? eq(server.serverStatus, "active") : undefined,
+		),
+	});
+	return toServerOptions(
+		ctx,
+		result.filter((s) => accessibleIds.has(s.serverId)),
+	);
+};
+
 export const serverRouter = createTRPCRouter({
 	create: withPermission("server", "create")
 		.input(apiCreateServer)
@@ -84,6 +131,7 @@ export const serverRouter = createTRPCRouter({
 						message: "You cannot create more servers",
 					});
 				}
+				validateServerRoles(resolveServerRoles(input));
 				const project = await createServer(
 					input,
 					ctx.session.activeOrganizationId,
@@ -141,8 +189,7 @@ export const serverRouter = createTRPCRouter({
 		.input(apiFindOneServer)
 		.query(async ({ input }) => {
 			const server = await findServerById(input.serverId);
-			const isBuildServer = server.serverType === "build";
-			return defaultCommand(isBuildServer);
+			return defaultCommand(server.serverRoles);
 		}),
 	getServices: withPermission("server", "read")
 		.input(apiFindOneServer)
@@ -218,7 +265,7 @@ export const serverRouter = createTRPCRouter({
 					serverId: true,
 					name: true,
 					ipAddress: true,
-					serverType: true,
+					serverRoles: true,
 				},
 				orderBy: desc(server.createdAt),
 				where: eq(server.organizationId, ctx.session.activeOrganizationId),
@@ -236,52 +283,15 @@ export const serverRouter = createTRPCRouter({
 
 		return servers.length ?? 0;
 	}),
-	withSSHKey: protectedProcedure.query(async ({ ctx }) => {
-		const accessibleIds = await getAccessibleServerIds(ctx.session);
-
-		const result = await db.query.server.findMany({
-			orderBy: desc(server.createdAt),
-			where: IS_CLOUD
-				? and(
-						isNotNull(server.sshKeyId),
-						eq(server.organizationId, ctx.session.activeOrganizationId),
-						eq(server.serverStatus, "active"),
-						eq(server.serverType, "deploy"),
-					)
-				: and(
-						isNotNull(server.sshKeyId),
-						eq(server.organizationId, ctx.session.activeOrganizationId),
-						eq(server.serverType, "deploy"),
-					),
-		});
-		return toServerOptions(
-			ctx,
-			result.filter((s) => accessibleIds.has(s.serverId)),
-		);
-	}),
-	buildServers: protectedProcedure.query(async ({ ctx }) => {
-		const accessibleIds = await getAccessibleServerIds(ctx.session);
-
-		const result = await db.query.server.findMany({
-			orderBy: desc(server.createdAt),
-			where: IS_CLOUD
-				? and(
-						isNotNull(server.sshKeyId),
-						eq(server.organizationId, ctx.session.activeOrganizationId),
-						eq(server.serverStatus, "active"),
-						eq(server.serverType, "build"),
-					)
-				: and(
-						isNotNull(server.sshKeyId),
-						eq(server.organizationId, ctx.session.activeOrganizationId),
-						eq(server.serverType, "build"),
-					),
-		});
-		return toServerOptions(
-			ctx,
-			result.filter((s) => accessibleIds.has(s.serverId)),
-		);
-	}),
+	withSSHKey: protectedProcedure.query(({ ctx }) =>
+		findServersWithRole(ctx, "deploy"),
+	),
+	buildServers: protectedProcedure.query(({ ctx }) =>
+		findServersWithRole(ctx, "build"),
+	),
+	workflowServers: protectedProcedure.query(({ ctx }) =>
+		IS_CLOUD ? [] : findServersWithRole(ctx, "workflow"),
+	),
 	setup: withPermission("server", "create")
 		.input(apiFindOneServer)
 		.mutation(async ({ input, ctx }) => {
@@ -363,6 +373,10 @@ export const serverRouter = createTRPCRouter({
 						version: string;
 					};
 					railpack: {
+						enabled: boolean;
+						version: string;
+					};
+					act: {
 						enabled: boolean;
 						version: string;
 					};
@@ -545,8 +559,33 @@ export const serverRouter = createTRPCRouter({
 						message: "Server is inactive",
 					});
 				}
+				const { serverRoles, serverType, ...rest } = input;
+				const roles = validateServerRoles(
+					resolveServerRoles({ serverRoles, serverType }),
+				);
+				if (roles) {
+					const removed = server.serverRoles.filter(
+						(role) => !roles.includes(role),
+					);
+					if (removed.length > 0) {
+						const blockers = describeRoleRemovalBlockers(
+							removed,
+							await getServerRoleUsage(input.serverId),
+						);
+						if (blockers.length > 0) {
+							throw new TRPCError({
+								code: "BAD_REQUEST",
+								message: blockers.join(" "),
+							});
+						}
+					}
+				}
 				const currentServer = await updateServerById(input.serverId, {
-					...input,
+					...rest,
+					...(roles && {
+						serverRoles: roles,
+						serverType: legacyServerType(roles),
+					}),
 				});
 
 				await applyDockerCleanupSchedule(

@@ -51,7 +51,7 @@ export const SetupServer = ({ serverId, children }: Props) => {
 
 	const [activeLog, setActiveLog] = useState<string | null>(null);
 	const { data: isCloud } = api.settings.isCloud.useQuery();
-	const isBuildServer = server?.serverType === "build";
+	const isDeployServer = server?.serverRoles.includes("deploy") ?? true;
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 	const [filteredLogs, setFilteredLogs] = useState<LogLine[]>([]);
 	const [isDeploying, setIsDeploying] = useState(false);
@@ -123,7 +123,7 @@ export const SetupServer = ({ serverId, children }: Props) => {
 							<TabsList
 								className={cn(
 									"grid  w-[700px]",
-									isBuildServer
+									!isDeployServer
 										? "grid-cols-3"
 										: isCloud
 											? "grid-cols-6"
@@ -134,7 +134,7 @@ export const SetupServer = ({ serverId, children }: Props) => {
 								<TabsTrigger value="deployments">Deployments</TabsTrigger>
 								<TabsTrigger value="validate">Validate</TabsTrigger>
 
-								{!isBuildServer && (
+								{isDeployServer && (
 									<>
 										<TabsTrigger value="audit">Security</TabsTrigger>
 										{isCloud && (
@@ -326,7 +326,7 @@ export const SetupServer = ({ serverId, children }: Props) => {
 									<ValidateServer serverId={serverId} />
 								</div>
 							</TabsContent>
-							{!isBuildServer && (
+							{isDeployServer && (
 								<>
 									<TabsContent
 										value="audit"

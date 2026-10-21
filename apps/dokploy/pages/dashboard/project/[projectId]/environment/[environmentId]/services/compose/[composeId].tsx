@@ -35,6 +35,7 @@ import { ComposeFreeMonitoring } from "@/components/dashboard/monitoring/free/co
 import { ComposePaidMonitoring } from "@/components/dashboard/monitoring/paid/container/show-paid-compose-monitoring";
 import { AssignComposeNetworks } from "@/components/dashboard/networks/assign-compose-networks";
 import { TransferService } from "@/components/dashboard/shared/transfer-service";
+import { ShowServiceWorkflows } from "@/components/dashboard/workflows/show-service-workflows";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
 import { AdvanceBreadcrumb } from "@/components/shared/advance-breadcrumb";
 import { StatusTooltip } from "@/components/shared/status-tooltip";
@@ -67,7 +68,8 @@ type TabState =
 	| "domains"
 	| "containers"
 	| "monitoring"
-	| "volumeBackups";
+	| "volumeBackups"
+	| "workflows";
 
 const Service = (
 	props: InferGetServerSidePropsType<typeof getServerSideProps>,
@@ -253,6 +255,11 @@ const Service = (
 													Deployments
 												</TabsTrigger>
 											)}
+											{!isCloud &&
+												permissions?.workflow.read &&
+												data?.sourceType === "github" && (
+													<TabsTrigger value="workflows">Workflows</TabsTrigger>
+												)}
 											{permissions?.service.read && (
 												<TabsTrigger value="containers">Containers</TabsTrigger>
 											)}
@@ -424,6 +431,17 @@ const Service = (
 											</div>
 										</TabsContent>
 									)}
+
+									{!isCloud &&
+										permissions?.workflow.read &&
+										data?.sourceType === "github" && (
+											<TabsContent value="workflows" className="w-full pt-2.5">
+												<ShowServiceWorkflows
+													serviceType="compose"
+													serviceId={composeId}
+												/>
+											</TabsContent>
+										)}
 
 									{permissions?.domain.read && (
 										<TabsContent value="domains">

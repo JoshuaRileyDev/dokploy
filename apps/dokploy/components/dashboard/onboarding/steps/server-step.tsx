@@ -187,7 +187,7 @@ export const ServerStep = ({ onNext, plainTitle }: Props) => {
 				port: 22,
 				username: "root",
 				sshKeyId: cloudSSHKey.sshKeyId,
-				serverType: "deploy",
+				serverRoles: ["deploy"],
 				enableDockerCleanup: false,
 			});
 			setCreatedServerId(server.serverId);

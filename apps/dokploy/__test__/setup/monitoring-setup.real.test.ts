@@ -12,7 +12,7 @@ const TEST_IMAGE = "busybox:latest";
 vi.mock("@dokploy/server/services/server", () => ({
 	findServerById: vi.fn().mockResolvedValue({
 		serverId: "test-server",
-		serverType: "deploy",
+		serverRoles: ["deploy"],
 		sshKeyId: null, // -> getRemoteDocker returns the local docker instance
 		metricsConfig: {
 			server: {

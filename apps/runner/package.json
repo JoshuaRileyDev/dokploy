@@ -1,0 +1,30 @@
+{
+	"name": "@joshuarileydev/dokploy-runner",
+	"version": "0.1.0",
+	"description": "Self-hosted runner for Dokploy Workflows, for building on your own machines such as a Mac for iOS",
+	"type": "module",
+	"bin": {
+		"dokploy-runner": "dist/cli.js"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=20"
+	},
+	"publishConfig": {
+		"access": "restricted"
+	},
+	"scripts": {
+		"build": "rm -rf dist && tsc --project tsconfig.json && chmod +x dist/cli.js",
+		"dev": "tsx src/cli.ts",
+		"typecheck": "tsc --noEmit",
+		"prepublishOnly": "pnpm run build"
+	},
+	"devDependencies": {
+		"@types/node": "^24.4.0",
+		"tsx": "^4.22.4",
+		"typescript": "^7.0.2"
+	}
+}

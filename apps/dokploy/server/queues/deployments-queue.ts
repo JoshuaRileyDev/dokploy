@@ -1,4 +1,5 @@
 import {
+	autoImportWorkflowsForService,
 	deployApplication,
 	deployCompose,
 	deployPreviewApplication,
@@ -19,6 +20,10 @@ export const processDeploymentJob = async (job: InMemoryJob) => {
 	try {
 		if (job.data.applicationType === "application") {
 			await updateApplicationStatus(job.data.applicationId, "running");
+			await autoImportWorkflowsForService(
+				"application",
+				job.data.applicationId,
+			);
 
 			if (job.data.type === "redeploy") {
 				await rebuildApplication({
@@ -37,6 +42,7 @@ export const processDeploymentJob = async (job: InMemoryJob) => {
 			await updateCompose(job.data.composeId, {
 				composeStatus: "running",
 			});
+			await autoImportWorkflowsForService("compose", job.data.composeId);
 			if (job.data.type === "deploy") {
 				await deployCompose({
 					composeId: job.data.composeId,
