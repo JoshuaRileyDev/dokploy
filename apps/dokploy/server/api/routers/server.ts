@@ -5,9 +5,11 @@ import {
 	findServerById,
 	findServersByUserId,
 	findUserById,
+	forgetServerStorage,
 	getAccessibleServerIds,
 	getPublicIpWithFallback,
 	getServerRoleUsage,
+	getServerStorage,
 	getServicesByServerId,
 	haveActiveServices,
 	IS_CLOUD,
@@ -184,6 +186,23 @@ export const serverRouter = createTRPCRouter({
 			}
 
 			return redactServerSshKey(server);
+		}),
+	storage: withPermission("server", "read")
+		.input(
+			z.object({
+				serverId: z.string().min(1),
+				force: z.boolean().optional(),
+			}),
+		)
+		.query(async ({ input, ctx }) => {
+			const accessibleIds = await getAccessibleServerIds(ctx.session);
+			if (!accessibleIds.has(input.serverId)) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this server",
+				});
+			}
+			return getServerStorage(input.serverId, { force: input.force });
 		}),
 	getDefaultCommand: withPermission("server", "read")
 		.input(apiFindOneServer)
@@ -526,6 +545,7 @@ export const serverRouter = createTRPCRouter({
 				});
 				await removeDeploymentsByServerId(currentServer);
 				await deleteServer(input.serverId);
+				forgetServerStorage(input.serverId);
 
 				if (IS_CLOUD) {
 					const admin = await findUserById(ctx.user.ownerId);
@@ -587,6 +607,8 @@ export const serverRouter = createTRPCRouter({
 						serverType: legacyServerType(roles),
 					}),
 				});
+				// The host or SSH key may have changed, so the cached reading could be for another machine.
+				forgetServerStorage(input.serverId);
 
 				await applyDockerCleanupSchedule(
 					input.serverId,

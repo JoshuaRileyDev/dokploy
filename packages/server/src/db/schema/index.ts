@@ -38,6 +38,7 @@ export * from "./schedule";
 export * from "./scim";
 export * from "./security";
 export * from "./server";
+export * from "./server-folder";
 export * from "./session";
 export * from "./shared";
 export * from "./ssh-key";
