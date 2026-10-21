@@ -2,6 +2,7 @@ import {
 	AlertTriangle,
 	ArrowUpDown,
 	BookIcon,
+	Folder,
 	FolderInput,
 	Loader2,
 	MoreHorizontalIcon,
@@ -55,6 +56,15 @@ import { api } from "@/utils/api";
 import { useDebounce } from "@/utils/hooks/use-debounce";
 import { HandleProject } from "./handle-project";
 import { ProjectEnvironment } from "./project-environment";
+import {
+	FolderBreadcrumbs,
+	FolderCard,
+	getFolderPath,
+	HandleFolder,
+	MoveProjectDialog,
+	MoveProjectMenuItem,
+	setProjectDragData,
+} from "./project-folders";
 
 export const ShowProjects = () => {
 	const utils = api.useUtils();
@@ -65,6 +75,46 @@ export const ShowProjects = () => {
 	const { data: permissions } = api.user.getPermissions.useQuery();
 	const { mutateAsync } = api.project.remove.useMutation();
 	const { data: availableTags } = api.tag.all.useQuery();
+	const { data: folderData } = api.projectFolder.all.useQuery();
+	const folders = folderData?.folders ?? [];
+	const canManageFolders = !!permissions?.project.create;
+	const [movingProject, setMovingProject] = useState<{
+		projectId: string;
+		name: string;
+	} | null>(null);
+
+	const folderIds = useMemo(
+		() => new Set(folders.map((f) => f.folderId)),
+		[folders],
+	);
+	const queryFolderId =
+		typeof router.query.folder === "string" ? router.query.folder : null;
+	const currentFolderId =
+		queryFolderId && folderIds.has(queryFolderId) ? queryFolderId : null;
+
+	const projectFolderIds = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const item of folderData?.items ?? []) {
+			map.set(item.projectId, item.folderId);
+		}
+		return map;
+	}, [folderData]);
+	const folderOfProject = (projectId: string) =>
+		projectFolderIds.get(projectId) ?? null;
+
+	const navigateToFolder = (folderId: string | null) => {
+		const newQuery = { ...router.query };
+		if (folderId) {
+			newQuery.folder = folderId;
+		} else {
+			delete newQuery.folder;
+		}
+		delete newQuery.q;
+		setSearchQuery("");
+		router.push({ pathname: router.pathname, query: newQuery }, undefined, {
+			shallow: true,
+		});
+	};
 
 	const [searchQuery, setSearchQuery] = useState(
 		router.isReady && typeof router.query.q === "string" ? router.query.q : "",
@@ -127,6 +177,17 @@ export const ShowProjects = () => {
 		});
 	}, [debouncedSearchQuery]);
 
+	// Searching looks across every folder; otherwise only the current folder is shown.
+	const isSearching = debouncedSearchQuery.trim().length > 0;
+
+	const visibleFolders = useMemo(() => {
+		if (isSearching) {
+			const query = debouncedSearchQuery.toLowerCase();
+			return folders.filter((f) => f.name.toLowerCase().includes(query));
+		}
+		return folders.filter((f) => f.parentFolderId === currentFolderId);
+	}, [folders, isSearching, debouncedSearchQuery, currentFolderId]);
+
 	const filteredProjects = useMemo(() => {
 		if (!data) return [];
 
@@ -139,6 +200,16 @@ export const ShowProjects = () => {
 					?.toLowerCase()
 					.includes(debouncedSearchQuery.toLowerCase()),
 		);
+
+		if (!isSearching) {
+			filtered = filtered.filter((project) => {
+				const folderId = projectFolderIds.get(project.projectId);
+				return (
+					(folderId && folderIds.has(folderId) ? folderId : null) ===
+					currentFolderId
+				);
+			});
+		}
 
 		// Filter by selected tags (OR logic: show projects with ANY selected tag)
 		if (selectedTagIds.length > 0) {
@@ -196,12 +267,29 @@ export const ShowProjects = () => {
 			}
 			return direction === "asc" ? comparison : -comparison;
 		});
-	}, [data, debouncedSearchQuery, sortBy, selectedTagIds]);
+	}, [
+		data,
+		debouncedSearchQuery,
+		sortBy,
+		selectedTagIds,
+		isSearching,
+		projectFolderIds,
+		folderIds,
+		currentFolderId,
+	]);
 
 	return (
 		<>
 			<BreadcrumbSidebar
 				list={[{ name: "Projects", href: "/dashboard/projects" }]}
+			/>
+			<MoveProjectDialog
+				project={movingProject}
+				folders={folders}
+				currentFolderId={
+					movingProject ? folderOfProject(movingProject.projectId) : null
+				}
+				onClose={() => setMovingProject(null)}
 			/>
 			<div className="w-full">
 				<Card className="h-full bg-sidebar p-2.5 rounded-xl  ">
@@ -217,8 +305,9 @@ export const ShowProjects = () => {
 								</CardDescription>
 							</CardHeader>
 							{permissions?.project.create && (
-								<div className="">
-									<HandleProject />
+								<div className="flex items-center gap-2">
+									<HandleFolder parentFolderId={currentFolderId} />
+									<HandleProject folderId={currentFolderId} />
 								</div>
 							)}
 						</div>
@@ -282,14 +371,65 @@ export const ShowProjects = () => {
 											</div>
 										</div>
 									</div>
-									{filteredProjects?.length === 0 && (
-										<div className="mt-6 flex h-[50vh] w-full flex-col items-center justify-center space-y-4">
-											<FolderInput className="size-8 self-center text-muted-foreground" />
-											<span className="text-center font-medium text-muted-foreground">
-												No projects found
-											</span>
+									{(folders.length > 0 || currentFolderId) && !isSearching && (
+										<FolderBreadcrumbs
+											folders={folders}
+											currentFolderId={currentFolderId}
+											onNavigate={navigateToFolder}
+											canManage={canManageFolders}
+										/>
+									)}
+									{visibleFolders.length > 0 && (
+										<div className="w-full grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-5">
+											{visibleFolders.map((folder) => (
+												<FolderCard
+													key={folder.folderId}
+													folder={folder}
+													folders={folders}
+													projectCount={
+														data?.filter(
+															(p) =>
+																folderOfProject(p.projectId) ===
+																folder.folderId,
+														).length ?? 0
+													}
+													subfolderCount={
+														folders.filter(
+															(f) => f.parentFolderId === folder.folderId,
+														).length
+													}
+													onOpen={() => navigateToFolder(folder.folderId)}
+													canManage={canManageFolders}
+												/>
+											))}
 										</div>
 									)}
+									{filteredProjects?.length === 0 &&
+										visibleFolders.length === 0 && (
+											<div className="mt-6 flex h-[50vh] w-full flex-col items-center justify-center space-y-4">
+												{currentFolderId && !isSearching ? (
+													<>
+														<Folder className="size-8 self-center text-muted-foreground" />
+														<span className="text-center font-medium text-muted-foreground">
+															This folder is empty
+														</span>
+														{canManageFolders && (
+															<span className="text-center text-sm text-muted-foreground">
+																Drag projects here, or use "Move to folder" from
+																a project's menu
+															</span>
+														)}
+													</>
+												) : (
+													<>
+														<FolderInput className="size-8 self-center text-muted-foreground" />
+														<span className="text-center font-medium text-muted-foreground">
+															No projects found
+														</span>
+													</>
+												)}
+											</div>
+										)}
 									<div className="w-full grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-5">
 										{filteredProjects?.map((project) => {
 											const emptyServices = project?.environments
@@ -326,11 +466,21 @@ export const ShowProjects = () => {
 												project?.environments?.[0];
 
 											const hasNoEnvironments = !accessibleEnvironment;
+											const projectFolderPath = isSearching
+												? getFolderPath(
+														folders,
+														folderOfProject(project.projectId),
+													)
+												: [];
 
 											return (
 												<div
 													key={project.projectId}
 													className="w-full lg:max-w-md"
+													draggable={canManageFolders}
+													onDragStart={(e) =>
+														setProjectDragData(e, project.projectId)
+													}
 												>
 													<Link
 														href={
@@ -358,6 +508,15 @@ export const ShowProjects = () => {
 																		<span className="text-sm font-medium text-muted-foreground break-normal">
 																			{project.description}
 																		</span>
+
+																		{projectFolderPath.length > 0 && (
+																			<span className="flex items-center gap-1 text-xs text-muted-foreground">
+																				<Folder className="size-3" />
+																				{projectFolderPath
+																					.map((f) => f.name)
+																					.join(" / ")}
+																			</span>
+																		)}
 
 																		{project.projectTags &&
 																			project.projectTags.length > 0 && (
@@ -414,6 +573,20 @@ export const ShowProjects = () => {
 																						projectId={project.projectId}
 																					/>
 																				</div>
+																				{canManageFolders && (
+																					<div
+																						onClick={(e) => e.stopPropagation()}
+																					>
+																						<MoveProjectMenuItem
+																							onSelect={() =>
+																								setMovingProject({
+																									projectId: project.projectId,
+																									name: project.name,
+																								})
+																							}
+																						/>
+																					</div>
+																				)}
 
 																				<div
 																					onClick={(e) => e.stopPropagation()}
