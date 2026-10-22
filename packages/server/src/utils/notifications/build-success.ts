@@ -2,6 +2,10 @@ import { db } from "@dokploy/server/db";
 import { notifications } from "@dokploy/server/db/schema";
 import BuildSuccessEmail from "@dokploy/server/emails/emails/build-success";
 import type { Domain } from "@dokploy/server/services/domain";
+import {
+	matchesNotificationTarget,
+	type NotificationService,
+} from "@dokploy/server/services/notification-target";
 import { render } from "@react-email/components";
 import { format } from "date-fns";
 import { and, eq } from "drizzle-orm";
@@ -27,6 +31,7 @@ interface Props {
 	applicationType: string;
 	buildLink: string;
 	organizationId: string;
+	service?: NotificationService;
 	domains: Domain[];
 	environmentName: string;
 }
@@ -37,6 +42,7 @@ export const sendBuildSuccessNotifications = async ({
 	applicationType,
 	buildLink,
 	organizationId,
+	service,
 	domains,
 	environmentName,
 }: Props) => {
@@ -46,6 +52,7 @@ export const sendBuildSuccessNotifications = async ({
 		where: and(
 			eq(notifications.appDeploy, true),
 			eq(notifications.organizationId, organizationId),
+			matchesNotificationTarget(service),
 		),
 		with: {
 			email: true,

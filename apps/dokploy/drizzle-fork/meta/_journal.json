@@ -49,6 +49,14 @@
       "tag": "0005_workflow_job_controls",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792669897617,
+      "tag": "0006_notification_targets",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
     }
   ]
 }
