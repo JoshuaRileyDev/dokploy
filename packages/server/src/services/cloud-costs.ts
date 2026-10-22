@@ -160,6 +160,7 @@ export const getServerCosts = async (organizationId: string) => {
 					currency,
 					cloudProviderAccountId: entry.cloudProviderAccountId,
 					accountName: entry.name,
+					providerType: entry.providerType,
 					providerLabel: entry.providerLabel,
 					dokployServerId: match?.serverId ?? null,
 					dokployServerName: match?.name ?? null,
@@ -198,6 +199,7 @@ export const getServerCosts = async (organizationId: string) => {
 						{
 							cloudProviderAccountId: entry.cloudProviderAccountId,
 							name: entry.name,
+							providerType: entry.providerType,
 							providerLabel: entry.providerLabel,
 							error: entry.error,
 							vatRate: entry.report?.vatRate ?? null,

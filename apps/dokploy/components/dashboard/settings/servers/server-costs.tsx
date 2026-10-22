@@ -1,5 +1,6 @@
-import { AlertTriangle, RefreshCw, Wallet } from "lucide-react";
+import { AlertTriangle, RefreshCw, ServerIcon, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
+import { CloudProviderIcon } from "@/components/icons/cloud-provider-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +33,11 @@ import { api } from "@/utils/api";
 
 type Costs = RouterOutputs["cloudProvider"]["costs"];
 export type ServerCost = Costs["servers"][number];
+
+export interface ServerProvider {
+	providerType: string;
+	label: string;
+}
 type Money = ServerCost["monthly"]["total"];
 
 const formatMoney = (amount: number, currency: string) =>
@@ -59,8 +65,47 @@ export const useServerCosts = () => {
 			),
 		[query.data],
 	);
-	return { ...query, byServerId };
+	const providerByServerId = useMemo(() => {
+		const providers = new Map<string, ServerProvider>();
+		for (const { serverId } of query.data?.unpricedHetznerServers ?? []) {
+			providers.set(serverId, {
+				providerType: "hetzner",
+				label: "Hetzner (not in a connected account)",
+			});
+		}
+		for (const [serverId, cost] of byServerId) {
+			providers.set(serverId, {
+				providerType: cost.providerType,
+				label: cost.providerLabel,
+			});
+		}
+		return providers;
+	}, [query.data, byServerId]);
+	return { ...query, byServerId, providerByServerId };
 };
+
+export const ServerProviderIcon = ({
+	provider,
+	className,
+}: {
+	provider: ServerProvider | undefined;
+	className?: string;
+}) =>
+	provider ? (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span className="inline-flex shrink-0">
+					<CloudProviderIcon
+						providerType={provider.providerType}
+						className={className}
+					/>
+				</span>
+			</TooltipTrigger>
+			<TooltipContent>{provider.label}</TooltipContent>
+		</Tooltip>
+	) : (
+		<ServerIcon className={cn("text-muted-foreground", className)} />
+	);
 
 const Breakdown = ({ cost }: { cost: ServerCost }) => {
 	const lines: [string, Money][] = [
