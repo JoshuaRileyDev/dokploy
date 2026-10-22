@@ -1,5 +1,7 @@
 import {
 	type CloudCatalog,
+	type CloudCostReport,
+	type CloudMoney,
 	type CloudProviderClient,
 	type CloudProviderDefinition,
 	CloudProviderError,
@@ -61,6 +63,60 @@ interface HetznerServer {
 		ipv6: { ip: string } | null;
 	};
 }
+
+interface HetznerPrice {
+	net: string;
+	gross: string;
+}
+
+interface HetznerBilledServer extends HetznerServer {
+	name: string;
+	backup_window: string | null;
+	volumes: number[];
+	location: { name: string };
+	server_type: {
+		name: string;
+		prices: { location: string; price_monthly: HetznerPrice }[];
+	};
+}
+
+interface HetznerVolume {
+	id: number;
+	size: number;
+}
+
+interface HetznerPricing {
+	pricing: {
+		currency: string;
+		vat_rate: string;
+		primary_ips: {
+			type: "ipv4" | "ipv6";
+			prices: { location: string; price_monthly: HetznerPrice }[];
+		}[];
+		server_backup: { percentage: string };
+		volume: { price_per_gb_month: HetznerPrice };
+	};
+}
+
+const ZERO: CloudMoney = { net: 0, gross: 0 };
+
+const money = (price: HetznerPrice | undefined): CloudMoney =>
+	price
+		? {
+				net: Number.parseFloat(price.net),
+				gross: Number.parseFloat(price.gross),
+			}
+		: ZERO;
+
+const scale = (value: CloudMoney, factor: number): CloudMoney => ({
+	net: value.net * factor,
+	gross: value.gross * factor,
+});
+
+const sum = (...values: CloudMoney[]): CloudMoney => ({
+	net: values.reduce((total, value) => total + value.net, 0),
+	gross: values.reduce((total, value) => total + value.gross, 0),
+});
 
 const toCloudServer = (server: HetznerServer): CloudServer => ({
 	id: String(server.id),
@@ -311,6 +367,59 @@ class HetznerClient implements CloudProviderClient {
 			`/servers/${id}`,
 		);
 		return toCloudServer(response.server);
+	}
+
+	async listServerCosts(): Promise<CloudCostReport> {
+		const [servers, volumes, { pricing }] = await Promise.all([
+			this.paginate<HetznerBilledServer>("/servers", "servers"),
+			this.paginate<HetznerVolume>("/volumes", "volumes"),
+			this.request<HetznerPricing>("/pricing"),
+		]);
+		const volumeSize = new Map(volumes.map((v) => [v.id, v.size]));
+		const perGb = money(pricing.volume.price_per_gb_month);
+		const backupShare =
+			Number.parseFloat(pricing.server_backup.percentage) / 100;
+		const ipv4Prices =
+			pricing.primary_ips.find((ip) => ip.type === "ipv4")?.prices ?? [];
+
+		return {
+			currency: pricing.currency,
+			vatRate: Number.parseFloat(pricing.vat_rate),
+			servers: servers.map((server) => {
+				const location = server.location.name;
+				const base = money(
+					server.server_type.prices.find((p) => p.location === location)
+						?.price_monthly,
+				);
+				const backups = server.backup_window ? scale(base, backupShare) : ZERO;
+				const primaryIps = server.public_net.ipv4
+					? money(
+							ipv4Prices.find((p) => p.location === location)?.price_monthly,
+						)
+					: ZERO;
+				const storageGb = server.volumes.reduce(
+					(total, id) => total + (volumeSize.get(id) ?? 0),
+					0,
+				);
+				const volumeCost = scale(perGb, storageGb);
+				return {
+					id: String(server.id),
+					name: server.name,
+					serverType: server.server_type.name,
+					location,
+					status: server.status,
+					ipv4: server.public_net.ipv4?.ip ?? null,
+					ipv6: server.public_net.ipv6?.ip ?? null,
+					monthly: {
+						server: base,
+						backups,
+						primaryIps,
+						volumes: volumeCost,
+						total: sum(base, backups, primaryIps, volumeCost),
+					},
+				};
+			}),
+		};
 	}
 
 	async deleteServer(id: string) {

@@ -59,6 +59,37 @@ export interface CloudServer {
 	ipv6: string | null;
 }
 
+export interface CloudMoney {
+	net: number;
+	gross: number;
+}
+
+/** What one server costs per month at the provider's current prices. */
+export interface CloudServerCost {
+	id: string;
+	name: string;
+	serverType: string;
+	location: string;
+	status: string;
+	ipv4: string | null;
+	/** Usually a /64 network rather than a single address. */
+	ipv6: string | null;
+	monthly: {
+		server: CloudMoney;
+		backups: CloudMoney;
+		primaryIps: CloudMoney;
+		volumes: CloudMoney;
+		total: CloudMoney;
+	};
+}
+
+export interface CloudCostReport {
+	currency: string;
+	/** Percent, e.g. 19 for 19%. */
+	vatRate: number;
+	servers: CloudServerCost[];
+}
+
 export interface CreateCloudServerInput {
 	name: string;
 	location: string;
@@ -77,6 +108,8 @@ export interface CloudProviderClient {
 	getServer(id: string): Promise<CloudServer>;
 	/** Must succeed when the server is already gone. */
 	deleteServer(id: string): Promise<void>;
+	/** Optional: providers without pricing data are left out of cost totals. */
+	listServerCosts?(): Promise<CloudCostReport>;
 }
 
 export interface CloudProviderDefinition {

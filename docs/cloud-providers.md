@@ -7,6 +7,7 @@ Dokploy can create servers on a cloud provider, set them up over SSH and registe
 | Contract (`CloudProviderDefinition`, `CloudProviderClient`, catalog types) | `packages/server/src/utils/cloud-providers/types.ts` |
 | Registry | `packages/server/src/utils/cloud-providers/index.ts` |
 | Hetzner adapter | `packages/server/src/utils/cloud-providers/hetzner.ts` |
+| Monthly cost summary (matches provider servers to Dokploy servers by IP) | `packages/server/src/services/cloud-costs.ts` |
 | Accounts and provisioning flow | `packages/server/src/services/cloud-provider.ts` |
 | API (`cloudProvider.*`) | `apps/dokploy/server/api/routers/cloud-provider.ts` |
 | Icons | `apps/dokploy/components/icons/cloud-provider-icons.tsx` |
@@ -18,6 +19,7 @@ Dokploy can create servers on a cloud provider, set them up over SSH and registe
    - `credentialFields` drives the connect form. Mark secrets with `secret: true`; they're encrypted at rest, masked in responses and kept when left blank on edit.
    - `sshUsername` is the user Dokploy connects as on new servers (`root` on Hetzner, `ubuntu` on most AWS images).
    - `createClient(credentials)` returns a `CloudProviderClient`. Map the provider's API into the shared catalog types: give server types a `family` (shown as tabs), prices per location and the catalog `currency`, and only return images Dokploy's setup script supports (Ubuntu, Debian).
+   - Optionally implement `listServerCosts` to include the provider's servers in the monthly cost summary on the Servers page. Return every server in the account with its monthly price split into server, backups, primary IPs and volumes, using live prices from the provider's API.
    - Throw `CloudProviderError` with the right `kind` so the API returns a useful message. `deleteServer` and `deleteSshKey` must succeed if the resource is already gone.
 3. Register it in `cloudProviders` in `index.ts`. TypeScript fails until steps 1 and 3 match.
 4. Add an icon to `cloudProviderIcons`. Without one the UI shows a generic cloud icon.
