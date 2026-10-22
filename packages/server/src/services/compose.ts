@@ -28,9 +28,11 @@ import type { ComposeSpecification } from "@dokploy/server/utils/docker/types";
 import { sendBuildErrorNotifications } from "@dokploy/server/utils/notifications/build-error";
 import { sendBuildSuccessNotifications } from "@dokploy/server/utils/notifications/build-success";
 import {
+	appendFileRemote,
 	ExecError,
 	execAsync,
 	execAsyncRemote,
+	readFileRemote,
 } from "@dokploy/server/utils/process/execAsync";
 import { cloneBitbucketRepository } from "@dokploy/server/utils/providers/bitbucket";
 import {
@@ -46,7 +48,6 @@ import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { quote } from "shell-quote";
 import type { z } from "zod";
-import { encodeBase64 } from "../utils/docker/utils";
 import { getDokployUrl } from "./admin";
 import {
 	createDeploymentCompose,
@@ -264,7 +265,34 @@ const runWithLog = async (
 	await runOnTarget(serverId, `(${command}) >> ${quote([logPath])} 2>&1`);
 };
 
-const appendDeployLogsIfSplit = async (
+const readFileOnTarget = async (
+	serverId: string | null,
+	path: string,
+): Promise<Buffer | null> => {
+	if (serverId) return readFileRemote(serverId, path);
+	try {
+		return await fsPromises.readFile(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw error;
+	}
+};
+
+const appendFileOnTarget = (
+	serverId: string | null,
+	path: string,
+	content: string | Buffer,
+) =>
+	serverId
+		? appendFileRemote(serverId, path, content)
+		: fsPromises.appendFile(path, content);
+
+/**
+ * Copies the deploy-phase log from the deploy server into the main log.
+ * Best effort: the deploy itself is already finished, so a failure here only
+ * leaves a note in the main log and keeps the deploy-phase file for debugging.
+ */
+export const appendDeployLogsIfSplit = async (
 	deployTarget: string | null,
 	deployLogPath: string,
 	logTarget: string | null,
@@ -272,18 +300,24 @@ const appendDeployLogsIfSplit = async (
 ) => {
 	if (logTarget === deployTarget) return;
 
-	const { stdout } = await runOnTarget(
-		deployTarget,
-		`cat ${quote([deployLogPath])} 2>/dev/null || true`,
-	);
-	if (stdout.trim()) {
-		const encoded = encodeBase64(`\n=== Deploy phase ===\n${stdout}`);
-		await runOnTarget(
+	try {
+		const deployLog = await readFileOnTarget(deployTarget, deployLogPath);
+		if (deployLog?.toString().trim()) {
+			await appendFileOnTarget(
+				logTarget,
+				mainLogPath,
+				Buffer.concat([Buffer.from("\n=== Deploy phase ===\n"), deployLog]),
+			);
+		}
+		await runOnTarget(deployTarget, `rm -f ${quote([deployLogPath])}`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await appendFileOnTarget(
 			logTarget,
-			`echo "${encoded}" | base64 -d >> ${quote([mainLogPath])}`,
-		);
+			mainLogPath,
+			`\n⚠️ Could not copy the deploy-phase log (${message}). It is still on the deploy server at ${deployLogPath}.\n`,
+		).catch(() => {});
 	}
-	await runOnTarget(deployTarget, `rm -f ${quote([deployLogPath])}`);
 };
 
 const cloneComposeSource = async (
@@ -549,25 +583,19 @@ const runComposeDeployment = async (
 		});
 		await runWithLog(deployTarget, deployCommand, deployLogPath);
 	} catch (error) {
-		try {
-			await appendDeployLogsIfSplit(
-				deployTarget,
-				deployLogPath,
-				logTarget,
-				deployment.logPath,
-			);
-		} catch {
-			// Best effort: the deploy log may not exist if the build failed.
-		}
+		await appendDeployLogsIfSplit(
+			deployTarget,
+			deployLogPath,
+			logTarget,
+			deployment.logPath,
+		);
 
-		let command = "";
+		let message = "";
 		if (!(error instanceof ExecError)) {
-			const message = error instanceof Error ? error.message : String(error);
-			const encodedMessage = encodeBase64(message);
-			command += `echo "${encodedMessage}" | base64 -d >> ${quote([deployment.logPath])};`;
+			message += `${error instanceof Error ? error.message : String(error)}\n`;
 		}
-		command += `echo "\nError occurred ❌, check the logs for details." >> ${quote([deployment.logPath])};`;
-		await runOnTarget(logTarget, command);
+		message += "\nError occurred ❌, check the logs for details.\n";
+		await appendFileOnTarget(logTarget, deployment.logPath, message);
 		throw error;
 	}
 
