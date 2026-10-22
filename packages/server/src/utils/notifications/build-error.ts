@@ -1,6 +1,10 @@
 import { db } from "@dokploy/server/db";
 import { notifications } from "@dokploy/server/db/schema";
 import BuildFailedEmail from "@dokploy/server/emails/emails/build-failed";
+import {
+	matchesNotificationTarget,
+	type NotificationService,
+} from "@dokploy/server/services/notification-target";
 import { render } from "@react-email/components";
 import { format } from "date-fns";
 import { and, eq } from "drizzle-orm";
@@ -28,6 +32,7 @@ interface Props {
 	errorMessage: string;
 	buildLink: string;
 	organizationId: string;
+	service?: NotificationService;
 }
 
 export const sendBuildErrorNotifications = async ({
@@ -37,6 +42,7 @@ export const sendBuildErrorNotifications = async ({
 	errorMessage,
 	buildLink,
 	organizationId,
+	service,
 }: Props) => {
 	const date = new Date();
 	const unixDate = ~~(Number(date) / 1000);
@@ -44,6 +50,7 @@ export const sendBuildErrorNotifications = async ({
 		where: and(
 			eq(notifications.appBuildError, true),
 			eq(notifications.organizationId, organizationId),
+			matchesNotificationTarget(service),
 		),
 		with: {
 			email: true,

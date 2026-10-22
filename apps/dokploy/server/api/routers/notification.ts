@@ -98,12 +98,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateSlack)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createSlackNotification(input, ctx.session.activeOrganizationId);
+				const created = await createSlackNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				console.log(error);
 				throw new TRPCError({
@@ -160,7 +164,7 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateTelegram)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createTelegramNotification(
+				const created = await createTelegramNotification(
 					input,
 					ctx.session.activeOrganizationId,
 				);
@@ -169,6 +173,7 @@ export const notificationRouter = createTRPCRouter({
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -226,7 +231,7 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateDiscord)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createDiscordNotification(
+				const created = await createDiscordNotification(
 					input,
 					ctx.session.activeOrganizationId,
 				);
@@ -235,6 +240,7 @@ export const notificationRouter = createTRPCRouter({
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -301,12 +307,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateEmail)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createEmailNotification(input, ctx.session.activeOrganizationId);
+				const created = await createEmailNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -367,12 +377,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateResend)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createResendNotification(input, ctx.session.activeOrganizationId);
+				const created = await createResendNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -554,12 +568,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateGotify)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createGotifyNotification(input, ctx.session.activeOrganizationId);
+				const created = await createGotifyNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -619,12 +637,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateNtfy)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createNtfyNotification(input, ctx.session.activeOrganizationId);
+				const created = await createNtfyNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -689,7 +711,7 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateMattermost)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createMattermostNotification(
+				const created = await createMattermostNotification(
 					input,
 					ctx.session.activeOrganizationId,
 				);
@@ -698,6 +720,7 @@ export const notificationRouter = createTRPCRouter({
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -757,12 +780,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateCustom)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createCustomNotification(input, ctx.session.activeOrganizationId);
+				const created = await createCustomNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -819,12 +846,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateLark)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createLarkNotification(input, ctx.session.activeOrganizationId);
+				const created = await createLarkNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -885,12 +916,16 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreateTeams)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createTeamsNotification(input, ctx.session.activeOrganizationId);
+				const created = await createTeamsNotification(
+					input,
+					ctx.session.activeOrganizationId,
+				);
 				await audit(ctx, {
 					action: "create",
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
@@ -949,7 +984,7 @@ export const notificationRouter = createTRPCRouter({
 		.input(apiCreatePushover)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				await createPushoverNotification(
+				const created = await createPushoverNotification(
 					input,
 					ctx.session.activeOrganizationId,
 				);
@@ -958,6 +993,7 @@ export const notificationRouter = createTRPCRouter({
 					resourceType: "notification",
 					resourceName: input.name,
 				});
+				return created;
 			} catch (error) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",

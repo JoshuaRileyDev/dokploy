@@ -618,6 +618,7 @@ export const deployCompose = async ({
 			applicationType: "compose",
 			buildLink,
 			organizationId: compose.environment.project.organizationId,
+			service: { composeId: compose.composeId },
 			domains: compose.domains,
 			environmentName: compose.environment.name,
 		});
@@ -634,6 +635,7 @@ export const deployCompose = async ({
 			errorMessage: error?.message || "Error building",
 			buildLink,
 			organizationId: compose.environment.project.organizationId,
+			service: { composeId: compose.composeId },
 		});
 		throw error;
 	} finally {
