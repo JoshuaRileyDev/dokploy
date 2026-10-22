@@ -37,6 +37,7 @@ interface Props {
 		name: string;
 		triggers: WorkflowTrigger[];
 	};
+	job?: { id: string; name: string; needs: string[] };
 }
 
 const defaultValue = (input: WorkflowDispatchInput) =>
@@ -50,13 +51,15 @@ export const RunWorkflowDialog = ({
 	workflowRepositoryId,
 	defaultBranch,
 	definition,
+	job,
 }: Props) => {
 	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [branch, setBranch] = useState(defaultBranch);
-	const inputs =
-		definition.triggers.find((t) => t.event === "workflow_dispatch")?.inputs ??
-		{};
+	const dispatchTrigger = definition.triggers.find(
+		(t) => t.event === "workflow_dispatch",
+	);
+	const inputs = dispatchTrigger?.inputs ?? {};
 	const [values, setValues] = useState<Record<string, string>>({});
 	const { data: branches } = api.workflow.branches.useQuery(
 		{ workflowRepositoryId },
@@ -83,7 +86,8 @@ export const RunWorkflowDialog = ({
 			.mutateAsync({
 				workflowDefinitionId: definition.workflowDefinitionId,
 				branch,
-				inputs: values,
+				inputs: dispatchTrigger ? values : {},
+				jobId: job?.id,
 			})
 			.then((run) => {
 				setOpen(false);
@@ -94,17 +98,32 @@ export const RunWorkflowDialog = ({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
-				<Button variant="outline" size="sm">
-					<Play className="size-3.5" />
-					Run
-				</Button>
+				{job ? (
+					<Button variant="ghost" size="icon" title={`Run ${job.name}`}>
+						<Play className="size-3.5" />
+					</Button>
+				) : (
+					<Button variant="outline" size="sm">
+						<Play className="size-3.5" />
+						Run
+					</Button>
+				)}
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Run {definition.name}</DialogTitle>
+					<DialogTitle>
+						Run {job ? `${job.name} from ${definition.name}` : definition.name}
+					</DialogTitle>
 					<DialogDescription>
-						Starts the workflow_dispatch trigger using the workflow file on the
-						selected branch.
+						{dispatchTrigger
+							? "Starts the workflow_dispatch trigger"
+							: "Runs as a push to the selected branch, since this workflow has no workflow_dispatch trigger,"}{" "}
+						using the workflow file on the selected branch.
+						{job
+							? job.needs.length > 0
+								? " Only this job runs, along with the jobs it needs. Disabled jobs are ignored."
+								: " Only this job runs. Disabled jobs are ignored."
+							: " Disabled jobs are skipped."}
 					</DialogDescription>
 				</DialogHeader>
 				{dispatch.isError && (
@@ -178,7 +197,7 @@ export const RunWorkflowDialog = ({
 				</div>
 				<DialogFooter>
 					<Button onClick={submit} isLoading={dispatch.isPending}>
-						Run workflow
+						{job ? "Run job" : "Run workflow"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

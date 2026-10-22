@@ -116,6 +116,19 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								>
 									{run.sha.slice(0, 7)}
 								</a>
+								{run.targetJob && (
+									<Badge variant="secondary" className="font-normal">
+										Job: {run.jobNames[run.targetJob] ?? run.targetJob}
+									</Badge>
+								)}
+								{run.skippedJobs.length > 0 && (
+									<span>
+										Disabled jobs skipped:{" "}
+										{run.skippedJobs
+											.map((jobId) => run.jobNames[jobId] ?? jobId)
+											.join(", ")}
+									</span>
+								)}
 								{run.actor && <span>by {run.actor}</span>}
 								{run.server && <span>on {run.server.name}</span>}
 								{run.runner && <span>on runner {run.runner.name}</span>}

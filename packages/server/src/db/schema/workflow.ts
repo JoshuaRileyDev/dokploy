@@ -111,6 +111,10 @@ export const workflowDefinitions = pgTable(
 			.notNull()
 			.default([]),
 		jobs: jsonb("jobs").$type<WorkflowJobSummary[]>().notNull().default([]),
+		disabledJobs: text("disabledJobs")
+			.array()
+			.notNull()
+			.default(sql`ARRAY[]::text[]`),
 		sha: text("sha"),
 		parseError: text("parseError"),
 		updatedAt: text("updatedAt")
@@ -233,6 +237,12 @@ export const workflowRuns = pgTable(
 			() => workflowRunners.workflowRunnerId,
 			{ onDelete: "set null" },
 		),
+		// Set for manual single-job runs; act also runs the jobs it needs.
+		targetJob: text("targetJob"),
+		skippedJobs: text("skippedJobs")
+			.array()
+			.notNull()
+			.default(sql`ARRAY[]::text[]`),
 		cancelRequested: boolean("cancelRequested").notNull().default(false),
 		concurrencyCancelInProgress: boolean("concurrencyCancelInProgress")
 			.notNull()
@@ -404,6 +414,12 @@ export const apiSetWorkflowDefinitionEnabled = z.object({
 	enabled: z.boolean(),
 });
 
+export const apiSetWorkflowJobEnabled = z.object({
+	workflowDefinitionId: z.string().min(1),
+	jobId: z.string().min(1),
+	enabled: z.boolean(),
+});
+
 export const apiFindWorkflowRuns = z.object({
 	workflowRepositoryId: z.string().optional(),
 	status: z.enum(workflowRunStatus.enumValues).optional(),
@@ -418,6 +434,7 @@ export const apiDispatchWorkflow = z.object({
 	workflowDefinitionId: z.string().min(1),
 	branch: z.string().min(1),
 	inputs: z.record(z.string(), z.string()).default({}),
+	jobId: z.string().min(1).optional(),
 });
 
 export const apiCreateWorkflowNotification = z.object({

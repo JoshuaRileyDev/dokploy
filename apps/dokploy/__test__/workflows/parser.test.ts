@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+	disableWorkflowJobs,
+	jobWithNeeds,
 	parseWorkflow,
 	WorkflowParseError,
 	workflowRunsOn,
@@ -230,5 +232,63 @@ jobs:
 			"wf",
 		);
 		expect(workflow.jobs[0]?.runsOn).toEqual(["${{ inputs.os }}"]);
+	});
+});
+
+describe("job selection", () => {
+	const content = `name: CI
+on: push
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm lint
+  test:
+    runs-on: [self-hosted, gpu]
+    needs: lint
+    steps:
+      - run: pnpm test
+  deploy:
+    runs-on: deployer
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - run: ./deploy.sh
+`;
+	const workflow = parseWorkflow(content, "ci");
+
+	it("includes a job's transitive needs", () => {
+		expect([...jobWithNeeds(workflow, "deploy")].sort()).toEqual([
+			"deploy",
+			"lint",
+			"test",
+		]);
+		expect([...jobWithNeeds(workflow, "lint")]).toEqual(["lint"]);
+	});
+
+	it("only routes on the labels of jobs that will run", () => {
+		expect(workflowRunsOn(workflow, { targetJob: "test" })).toEqual([
+			"ubuntu-latest",
+			"self-hosted",
+			"gpu",
+		]);
+		expect(workflowRunsOn(workflow, { skippedJobs: ["test"] })).toEqual([
+			"ubuntu-latest",
+			"deployer",
+		]);
+	});
+
+	it("disables jobs with if: false and keeps the rest of the file", () => {
+		const patched = disableWorkflowJobs(content, ["test", "deploy", "missing"]);
+		const reparsed = parseWorkflow(patched, "ci");
+		expect(reparsed.jobs.map((job) => job.id)).toEqual([
+			"lint",
+			"test",
+			"deploy",
+		]);
+		expect(patched).toContain("      - run: pnpm lint");
+		expect(patched).not.toContain("refs/heads/main");
+		expect(patched.match(/if: false/g)).toHaveLength(2);
+		expect(patched).not.toContain("missing");
 	});
 });

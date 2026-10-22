@@ -19,7 +19,9 @@ import {
 import type { ActRunScriptInput } from "./act";
 import { ActLogProcessor, jobDisplayName, LineBuffer } from "./act-log";
 import { syncWorkflowCheckRun } from "./check-runs";
+import { readWorkflowFile } from "./github";
 import { sendWorkflowRunNotifications } from "./notifications";
+import { disableWorkflowJobs } from "./parser";
 
 export const workflowLogsDirectory = (workflowRunId: string) =>
 	path.join(paths().LOGS_PATH, "workflows", workflowRunId);
@@ -45,7 +47,8 @@ export const prepareRunInputs = async (run: LoadedRun) => {
 	const github = run.repository.github;
 	if (!github) throw new Error("The repository's GitHub provider was removed");
 
-	const token = await getGithubToken(authGithub(github));
+	const octokit = authGithub(github);
+	const token = await getGithubToken(octokit);
 	const base = new URL(normalizeGithubUrl(github.githubUrl));
 	const configured = run.trusted
 		? await resolveWorkflowEnv(run.workflowRepositoryId)
@@ -54,6 +57,20 @@ export const prepareRunInputs = async (run: LoadedRun) => {
 		? { ...configured.secrets, GITHUB_TOKEN: token }
 		: {};
 	const { owner, repository } = run.repository;
+	const skippedJobs = run.targetJob ? [] : run.skippedJobs;
+	const workflowOverride =
+		skippedJobs.length > 0
+			? disableWorkflowJobs(
+					await readWorkflowFile(
+						octokit,
+						owner,
+						repository,
+						run.workflowPath,
+						run.sha,
+					),
+					skippedJobs,
+				)
+			: undefined;
 
 	const scriptInput: Omit<ActRunScriptInput, "baseDir" | "platformImages"> = {
 		runId: run.workflowRunId,
@@ -63,6 +80,8 @@ export const prepareRunInputs = async (run: LoadedRun) => {
 		sha: run.sha,
 		event: run.event,
 		workflowPath: run.workflowPath,
+		targetJob: run.targetJob ?? undefined,
+		workflowOverride,
 		defaultBranch: run.repository.defaultBranch,
 		actor: run.actor ?? "dokploy",
 		eventPayload: run.payload,
