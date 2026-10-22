@@ -58,7 +58,7 @@ const listDirectory = async (
 	}
 };
 
-const readFile = async (
+export const readWorkflowFile = async (
 	octokit: Octokit,
 	owner: string,
 	repo: string,
@@ -104,7 +104,13 @@ export const fetchWorkflowFiles = async ({
 					path: entry.path,
 					source,
 					sha: entry.sha,
-					content: await readFile(octokit, owner, repo, entry.path, ref),
+					content: await readWorkflowFile(
+						octokit,
+						owner,
+						repo,
+						entry.path,
+						ref,
+					),
 				})),
 			);
 		}),

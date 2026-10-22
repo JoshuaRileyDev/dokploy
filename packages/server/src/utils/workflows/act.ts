@@ -22,6 +22,10 @@ export type ActRunScriptInput = {
 	sha: string;
 	event: string;
 	workflowPath: string;
+	/** Runs only this job and the jobs it needs. */
+	targetJob?: string;
+	/** Replaces the checked-out workflow file, e.g. to skip disabled jobs. */
+	workflowOverride?: string;
 	defaultBranch: string;
 	actor: string;
 	eventPayload: Record<string, unknown>;
@@ -74,6 +78,9 @@ export const buildActArgs = (input: ActRunScriptInput, dir: string) => {
 		"--json",
 		"--rm",
 	];
+	if (input.targetJob) {
+		args.push("-j", input.targetJob);
+	}
 	if (input.githubInstance) {
 		args.push("--github-instance", input.githubInstance);
 	}
@@ -100,6 +107,15 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 		`git fetch -q --depth 1 origin ${quote([input.sha])}`,
 		"git checkout -q FETCH_HEAD",
 		`git remote set-url origin ${quote([input.remoteUrl])}`,
+		...(input.workflowOverride === undefined
+			? []
+			: [
+					writeFile(
+						`${repoDir}/${input.workflowPath}`,
+						input.workflowOverride,
+						"644",
+					),
+				]),
 		writeFile(`${dir}/event.json`, JSON.stringify(input.eventPayload)),
 		writeFile(`${dir}/secrets.env`, toDotenv(input.secrets)),
 		writeFile(`${dir}/vars.env`, toDotenv(input.variables)),

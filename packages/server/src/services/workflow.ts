@@ -12,7 +12,7 @@ import {
 	workflowRepositories,
 } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import { and, arrayContains, desc, eq, notInArray } from "drizzle-orm";
+import { and, arrayContains, desc, eq, notInArray, sql } from "drizzle-orm";
 import type { z } from "zod";
 import { authGithub } from "../utils/providers/github";
 import {
@@ -275,6 +275,20 @@ export const setWorkflowDefinitionEnabled = async (
 	db
 		.update(workflowDefinitions)
 		.set({ enabled })
+		.where(eq(workflowDefinitions.workflowDefinitionId, workflowDefinitionId));
+
+export const setWorkflowJobEnabled = async (
+	workflowDefinitionId: string,
+	jobId: string,
+	enabled: boolean,
+) =>
+	db
+		.update(workflowDefinitions)
+		.set({
+			disabledJobs: enabled
+				? sql`array_remove(${workflowDefinitions.disabledJobs}, ${jobId})`
+				: sql`array_append(array_remove(${workflowDefinitions.disabledJobs}, ${jobId}), ${jobId})`,
+		})
 		.where(eq(workflowDefinitions.workflowDefinitionId, workflowDefinitionId));
 
 export const findWorkflowRepositoriesByGithubRepo = async ({

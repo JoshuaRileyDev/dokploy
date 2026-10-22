@@ -35,6 +35,29 @@ const decodeWrittenFiles = (script: string) =>
 		]),
 	);
 
+describe("job controls", () => {
+	it("runs a single job with -j", () => {
+		const args = buildActArgs({ ...input, targetJob: "build" }, "/d");
+		expect(args.slice(args.indexOf("-j"), args.indexOf("-j") + 2)).toEqual([
+			"-j",
+			"build",
+		]);
+		expect(buildActArgs(input, "/d")).not.toContain("-j");
+	});
+
+	it("overwrites the checked-out workflow file after checkout", () => {
+		const script = buildActRunScript({
+			...input,
+			workflowOverride: "jobs: {}\n",
+		});
+		const files = decodeWrittenFiles(script);
+		expect(files["ci.yml"]).toBe("jobs: {}\n");
+		expect(script.indexOf("ci.yml")).toBeGreaterThan(
+			script.indexOf("git checkout -q FETCH_HEAD"),
+		);
+	});
+});
+
 describe("buildActRunScript", () => {
 	const script = buildActRunScript(input);
 
