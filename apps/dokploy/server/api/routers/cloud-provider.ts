@@ -13,6 +13,7 @@ import {
 	findUserById,
 	getCloudCatalog,
 	getCloudProviderDefinition,
+	getServerCosts,
 	IS_CLOUD,
 	listCloudProviderDefinitions,
 	redactCloudProviderAccount,
@@ -167,6 +168,10 @@ export const cloudProviderRouter = createTRPCRouter({
 			);
 			return provisioning;
 		}),
+
+	costs: withPermission("server", "read").query(({ ctx }) =>
+		getServerCosts(ctx.session.activeOrganizationId),
+	),
 
 	provisionings: withPermission("server", "read").query(({ ctx }) =>
 		findServerProvisionings(ctx.session.activeOrganizationId),

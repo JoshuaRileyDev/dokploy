@@ -13,6 +13,7 @@ export * from "./services/application";
 export * from "./services/backup";
 export * from "./services/bitbucket";
 export * from "./services/certificate";
+export * from "./services/cloud-costs";
 export * from "./services/cloud-provider";
 export * from "./services/cluster";
 export * from "./services/compose";

@@ -1,3 +1,4 @@
+import { costMatchesAddresses } from "@dokploy/server/services/cloud-costs";
 import {
 	type CloudProviderError,
 	cloudProviders,
@@ -263,5 +264,103 @@ describe("hetzner adapter", () => {
 			ipv4: "1.2.3.4",
 			ipv6: null,
 		});
+	});
+});
+
+describe("hetzner server costs", () => {
+	const price = (net: string, gross: string) => ({ net, gross });
+
+	it("adds backups, primary IPv4 and attached volumes to the server price", async () => {
+		mockHetzner({
+			"GET /servers": () =>
+				json(
+					page("servers", [
+						{
+							id: 1,
+							name: "web",
+							status: "running",
+							backup_window: "22-02",
+							volumes: [10],
+							location: { name: "fsn1" },
+							public_net: {
+								ipv4: { id: 5, ip: "1.2.3.4" },
+								ipv6: { ip: "2a01:4f8:c17:1::/64" },
+							},
+							server_type: {
+								name: "cx23",
+								prices: [
+									{ location: "nbg1", price_monthly: price("9", "10.71") },
+									{ location: "fsn1", price_monthly: price("5", "5.95") },
+								],
+							},
+						},
+						{
+							id: 2,
+							name: "ipv6-only",
+							status: "off",
+							backup_window: null,
+							volumes: [],
+							location: { name: "fsn1" },
+							public_net: { ipv4: null, ipv6: null },
+							server_type: {
+								name: "cx23",
+								prices: [
+									{ location: "fsn1", price_monthly: price("5", "5.95") },
+								],
+							},
+						},
+					]),
+				),
+			"GET /volumes": () =>
+				json(
+					page("volumes", [
+						{ id: 10, size: 20 },
+						{ id: 11, size: 100 },
+					]),
+				),
+			"GET /pricing": () =>
+				json({
+					pricing: {
+						currency: "EUR",
+						vat_rate: "19.00",
+						primary_ips: [
+							{
+								type: "ipv4",
+								prices: [
+									{ location: "fsn1", price_monthly: price("0.5", "0.595") },
+								],
+							},
+						],
+						server_backup: { percentage: "20.00" },
+						volume: { price_per_gb_month: price("0.04", "0.0476") },
+					},
+				}),
+		});
+
+		const report = await client().listServerCosts?.();
+		expect(report?.currency).toBe("EUR");
+		expect(report?.vatRate).toBe(19);
+
+		const [web, ipv6Only] = report?.servers ?? [];
+		expect(web?.monthly.server).toEqual({ net: 5, gross: 5.95 });
+		expect(web?.monthly.backups.net).toBeCloseTo(1);
+		expect(web?.monthly.primaryIps).toEqual({ net: 0.5, gross: 0.595 });
+		expect(web?.monthly.volumes.net).toBeCloseTo(0.8);
+		expect(web?.monthly.total.net).toBeCloseTo(7.3);
+		expect(web?.ipv4).toBe("1.2.3.4");
+
+		expect(ipv6Only?.status).toBe("off");
+		expect(ipv6Only?.monthly.total).toEqual({ net: 5, gross: 5.95 });
+	});
+});
+
+describe("matching costs to Dokploy servers", () => {
+	const cost = { ipv4: "1.2.3.4", ipv6: "2a01:4f8:c17:1::/64" };
+
+	it("matches the IPv4 address or any address in the IPv6 network", () => {
+		expect(costMatchesAddresses(cost, ["1.2.3.4"])).toBe(true);
+		expect(costMatchesAddresses(cost, ["2a01:4f8:c17:1::1"])).toBe(true);
+		expect(costMatchesAddresses(cost, ["2a01:4f8:c17:2::1"])).toBe(false);
+		expect(costMatchesAddresses(cost, ["1.2.3.5"])).toBe(false);
 	});
 });

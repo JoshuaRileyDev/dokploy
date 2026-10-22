@@ -73,6 +73,14 @@ import { DeleteServerModal } from "./delete-server-modal";
 import { HandleServers } from "./handle-servers";
 import { ProvisionServer } from "./provision-server";
 import {
+	type ServerCost,
+	ServerCostBadge,
+	ServerCostSummary,
+	type ServerProvider,
+	ServerProviderIcon,
+	useServerCosts,
+} from "./server-costs";
+import {
 	ALL_FOLDERS,
 	FolderNameDialog,
 	MoveToFolderMenu,
@@ -122,6 +130,8 @@ interface ServerItemProps {
 	folders: ServerFolder[];
 	folder: ServerFolder | undefined;
 	showFolder: boolean;
+	cost: ServerCost | undefined;
+	provider: ServerProvider | undefined;
 	onNewFolder: (serverId: string) => void;
 }
 
@@ -145,7 +155,7 @@ const ServerActions = ({
 	folders,
 	folder,
 	onNewFolder,
-}: Omit<ServerItemProps, "showFolder">) => {
+}: Omit<ServerItemProps, "showFolder" | "cost" | "provider">) => {
 	const isDeployServer = server.serverRoles.includes("deploy");
 	const canManage = !!permissions?.server.create;
 
@@ -314,14 +324,17 @@ const ServerStorageSlot = ({
 };
 
 const ServerTile = (props: ServerItemProps) => {
-	const { server, folder, showFolder, permissions } = props;
+	const { server, folder, showFolder, permissions, cost, provider } = props;
 	const isActive = server.serverStatus === "active";
 	return (
 		<div className="flex flex-col gap-2.5 rounded-lg border bg-background p-3 transition-shadow hover:shadow-sm">
 			<div className="flex items-start justify-between gap-2">
 				<div className="min-w-0">
 					<div className="flex items-center gap-2">
-						<ServerIcon className="size-4 shrink-0 text-muted-foreground" />
+						<ServerProviderIcon
+							provider={provider}
+							className="size-4 shrink-0"
+						/>
 						<span className="truncate font-medium" title={server.name}>
 							{server.name}
 						</span>
@@ -338,6 +351,7 @@ const ServerTile = (props: ServerItemProps) => {
 			<div className="flex flex-wrap items-center gap-1 pl-6">
 				<StatusBadge server={server} />
 				<RoleBadges roles={server.serverRoles} />
+				<ServerCostBadge cost={cost} />
 				{showFolder && folder && (
 					<span className="ml-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
 						<Folder className="size-3 shrink-0" />
@@ -357,12 +371,12 @@ const ServerTile = (props: ServerItemProps) => {
 };
 
 const ServerRow = (props: ServerItemProps) => {
-	const { server, folder, showFolder, permissions } = props;
+	const { server, folder, showFolder, permissions, cost, provider } = props;
 	return (
 		<TableRow>
 			<TableCell className="max-w-32 py-2 sm:max-w-56">
 				<div className="flex min-w-0 items-center gap-2">
-					<ServerIcon className="size-4 shrink-0 text-muted-foreground" />
+					<ServerProviderIcon provider={provider} className="size-4 shrink-0" />
 					<div className="min-w-0">
 						<p className="truncate font-medium" title={server.name}>
 							{server.name}
@@ -383,6 +397,7 @@ const ServerRow = (props: ServerItemProps) => {
 				<div className="flex flex-wrap gap-1">
 					<StatusBadge server={server} />
 					<RoleBadges roles={server.serverRoles} />
+					<ServerCostBadge cost={cost} />
 				</div>
 			</TableCell>
 			<TableCell className="py-2 sm:w-56">
@@ -477,6 +492,7 @@ export const ShowServers = () => {
 	const { data: permissions } = api.user.getPermissions.useQuery();
 	const { folders, folderByServer } = useServerFolders();
 	const moveServers = useMoveServersToFolder();
+	const { byServerId: costByServer, providerByServerId } = useServerCosts();
 
 	const [view, setView] = useSortPreference("servers-view", "grid", VIEWS);
 	const [pageSizePref, setPageSize] = useSortPreference(
@@ -577,6 +593,8 @@ export const ShowServers = () => {
 			folders,
 			folder: folderId ? folderById.get(folderId) : undefined,
 			showFolder: selectedFolder === ALL_FOLDERS,
+			cost: costByServer.get(server.serverId),
+			provider: providerByServerId.get(server.serverId),
 			onNewFolder: setNewFolderFor,
 		};
 	};
@@ -719,6 +737,8 @@ export const ShowServers = () => {
 										})}
 									</fieldset>
 								</div>
+
+								<ServerCostSummary />
 
 								<ServerFolderBar
 									folders={folders}

@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import util from "node:util";
 import { findServerById } from "@dokploy/server/services/server";
-import { Client } from "ssh2";
+import { Client, type SFTPWrapper } from "ssh2";
 import { ExecError } from "./ExecError";
 
 export class WriteFileRemoteError extends Error {
@@ -320,6 +320,93 @@ export const writeFileRemote = async (
 			});
 	});
 };
+
+const withSftp = async <T>(
+	serverId: string,
+	run: (sftp: SFTPWrapper) => Promise<T>,
+): Promise<T> => {
+	const server = await findServerById(serverId);
+	if (!server.sshKeyId) throw new Error("No SSH key available for this server");
+
+	return new Promise((resolve, reject) => {
+		const conn = new Client();
+		conn
+			.once("ready", () => {
+				conn.sftp((err, sftp) => {
+					if (err) {
+						conn.end();
+						reject(new Error(`SFTP session failed: ${err.message}`));
+						return;
+					}
+					run(sftp)
+						.then(resolve, reject)
+						.finally(() => conn.end());
+				});
+			})
+			.on("error", (err) => {
+				conn.end();
+				reject(new Error(`SSH connection error: ${err.message}`));
+			})
+			.connect({
+				host: server.ipAddress,
+				port: server.port,
+				username: server.username,
+				privateKey: server.sshKey?.privateKey,
+				timeout: 99999,
+			});
+	});
+};
+
+// SFTP status code for a missing file.
+const SFTP_NO_SUCH_FILE = 2;
+
+/**
+ * Reads a remote file over SFTP, returning null when it does not exist.
+ * Unlike `cat` over exec, the content arrives as raw bytes.
+ */
+export const readFileRemote = (serverId: string, remotePath: string) =>
+	withSftp(
+		serverId,
+		(sftp) =>
+			new Promise<Buffer | null>((resolve, reject) => {
+				sftp.readFile(remotePath, (err, content) => {
+					if (!err) return resolve(content);
+					if ((err as Error & { code?: number }).code === SFTP_NO_SUCH_FILE) {
+						return resolve(null);
+					}
+					reject(
+						new Error(
+							`Failed to read remote file ${remotePath}: ${err.message}`,
+						),
+					);
+				});
+			}),
+	);
+
+/**
+ * Appends to a remote file over SFTP. Use this instead of
+ * `echo "<base64>" | base64 -d >> file` for content of unbounded size: a
+ * shell command is a single exec argument, capped at 128 KiB on Linux.
+ */
+export const appendFileRemote = (
+	serverId: string,
+	remotePath: string,
+	content: string | Buffer,
+) =>
+	withSftp(
+		serverId,
+		(sftp) =>
+			new Promise<void>((resolve, reject) => {
+				sftp.appendFile(remotePath, content, (err) => {
+					if (!err) return resolve();
+					reject(
+						new Error(
+							`Failed to append to remote file ${remotePath}: ${err.message}`,
+						),
+					);
+				});
+			}),
+	);
 
 export const sleep = (ms: number) => {
 	return new Promise((resolve) => setTimeout(resolve, ms));
