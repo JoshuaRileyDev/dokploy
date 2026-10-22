@@ -30,6 +30,7 @@ import {
 	rerunWorkflowRun,
 	setWorkflowDefinitionEnabled,
 	setWorkflowEnv,
+	setWorkflowJobEnabled,
 	syncWorkflowRepository,
 	syncWorkflowSchedules,
 	updateWorkflowRepository,
@@ -60,6 +61,7 @@ import {
 	apiRemoveWorkflowNotification,
 	apiSetWorkflowDefinitionEnabled,
 	apiSetWorkflowEnv,
+	apiSetWorkflowJobEnabled,
 	apiUpdateWorkflowRepository,
 	apiUpdateWorkflowRunner,
 	apiWorkflowService,
@@ -206,6 +208,33 @@ export const workflowRouter = createTRPCRouter({
 			);
 			await syncWorkflowSchedules();
 		}),
+	setJobEnabled: workflowProcedure("create")
+		.input(apiSetWorkflowJobEnabled)
+		.mutation(async ({ input, ctx }) => {
+			const definition = await findWorkflowDefinitionById(
+				input.workflowDefinitionId,
+			);
+			if (
+				definition.repository.organizationId !==
+				ctx.session.activeOrganizationId
+			) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "Workflow not found",
+				});
+			}
+			await setWorkflowJobEnabled(
+				input.workflowDefinitionId,
+				input.jobId,
+				input.enabled,
+			);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "workflow",
+				resourceId: definition.workflowDefinitionId,
+				resourceName: `${definition.path} job ${input.jobId} ${input.enabled ? "enabled" : "disabled"}`,
+			});
+		}),
 	branches: workflowProcedure("read")
 		.input(apiFindOneWorkflowRepository)
 		.query(async ({ input, ctx }) => {
@@ -268,7 +297,7 @@ export const workflowRouter = createTRPCRouter({
 				action: "run",
 				resourceType: "workflow",
 				resourceId: run.workflowRunId,
-				resourceName: `${definition.repository.owner}/${definition.repository.repository} ${definition.path}`,
+				resourceName: `${definition.repository.owner}/${definition.repository.repository} ${definition.path}${input.jobId ? ` job ${input.jobId}` : ""}`,
 			});
 			return run;
 		}),

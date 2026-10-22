@@ -241,6 +241,7 @@ export const deployApplication = async ({
 			applicationType: "application",
 			buildLink,
 			organizationId: application.environment.project.organizationId,
+			service: { applicationId: application.applicationId },
 			domains: application.domains,
 			environmentName: application.environment.name,
 		});
@@ -271,6 +272,7 @@ export const deployApplication = async ({
 			errorMessage: error?.message || "Error building",
 			buildLink,
 			organizationId: application.environment.project.organizationId,
+			service: { applicationId: application.applicationId },
 		});
 
 		throw error;
@@ -332,6 +334,7 @@ export const rebuildApplication = async ({
 			applicationType: "application",
 			buildLink,
 			organizationId: application.environment.project.organizationId,
+			service: { applicationId: application.applicationId },
 			domains: application.domains,
 			environmentName: application.environment.name,
 		});

@@ -1,4 +1,4 @@
-import { parse } from "yaml";
+import { parse, parseDocument } from "yaml";
 
 export type WorkflowDispatchInput = {
 	description?: string;
@@ -175,9 +175,51 @@ const expandMatrixRunsOn = (labels: string[], strategy: unknown) => {
 };
 
 /** Every runs-on label across a workflow's jobs. */
-export const workflowRunsOn = (workflow: ParsedWorkflow) => [
-	...new Set(workflow.jobs.flatMap((job) => job.runsOn)),
-];
+/** A job plus every job it transitively needs, which is what `act -j` runs. */
+export const jobWithNeeds = (workflow: ParsedWorkflow, jobId: string) => {
+	const byId = new Map(workflow.jobs.map((job) => [job.id, job]));
+	const ids = new Set<string>();
+	const visit = (id: string) => {
+		if (ids.has(id) || !byId.has(id)) return;
+		ids.add(id);
+		for (const need of byId.get(id)!.needs) visit(need);
+	};
+	visit(jobId);
+	return ids;
+};
+
+export const workflowRunsOn = (
+	workflow: ParsedWorkflow,
+	{
+		targetJob,
+		skippedJobs = [],
+	}: { targetJob?: string | null; skippedJobs?: string[] } = {},
+) => {
+	const included = targetJob ? jobWithNeeds(workflow, targetJob) : null;
+	return [
+		...new Set(
+			workflow.jobs
+				.filter((job) =>
+					included ? included.has(job.id) : !skippedJobs.includes(job.id),
+				)
+				.flatMap((job) => job.runsOn),
+		),
+	];
+};
+
+/**
+ * Rewrites a workflow so the given jobs get `if: false`. act has no flag to skip a job, and
+ * this keeps GitHub's semantics: jobs that need a skipped job are skipped too.
+ */
+export const disableWorkflowJobs = (content: string, jobIds: string[]) => {
+	const document = parseDocument(content);
+	for (const jobId of jobIds) {
+		if (document.hasIn(["jobs", jobId])) {
+			document.setIn(["jobs", jobId, "if"], false);
+		}
+	}
+	return document.toString();
+};
 
 const parseJobs = (jobs: unknown): WorkflowJobSummary[] => {
 	if (!isRecord(jobs) || Object.keys(jobs).length === 0) {

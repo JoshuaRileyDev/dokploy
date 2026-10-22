@@ -316,6 +316,12 @@ export const createWorkflowRun = async (
 const jobNamesOf = (workflow: ParsedWorkflow) =>
 	Object.fromEntries(workflow.jobs.map((job) => [job.id, job.name]));
 
+const skippedJobsOf = (workflow: ParsedWorkflow, disabledJobs: string[]) =>
+	workflow.jobs.map((job) => job.id).filter((id) => disabledJobs.includes(id));
+
+const allJobsDisabled = (workflow: ParsedWorkflow, disabledJobs: string[]) =>
+	skippedJobsOf(workflow, disabledJobs).length === workflow.jobs.length;
+
 const enabledSources = (
 	repository: WorkflowRepository,
 ): WorkflowSourceType[] => [
@@ -442,7 +448,12 @@ const queueRunsForRepository = async (
 					workflowDefinitions.workflowRepositoryId,
 					repository.workflowRepositoryId,
 				),
-				columns: { workflowDefinitionId: true, path: true, enabled: true },
+				columns: {
+					workflowDefinitionId: true,
+					path: true,
+					enabled: true,
+					disabledJobs: true,
+				},
 			})
 		).map((definition) => [definition.path, definition]),
 	);
@@ -462,6 +473,11 @@ const queueRunsForRepository = async (
 	for (const file of files.map(loadWorkflow)) {
 		const definition = definitions.get(file.path);
 		if (!file.parsed || definition?.enabled === false) continue;
+		const skippedJobs = skippedJobsOf(
+			file.parsed,
+			definition?.disabledJobs ?? [],
+		);
+		if (skippedJobs.length === file.parsed.jobs.length) continue;
 		if (!(await findMatchingTrigger(file.parsed.triggers, workflowEvent)))
 			continue;
 
@@ -482,7 +498,8 @@ const queueRunsForRepository = async (
 					eventAction: event.action ?? null,
 					payload,
 					jobNames: jobNamesOf(file.parsed),
-					runsOn: workflowRunsOn(file.parsed),
+					runsOn: workflowRunsOn(file.parsed, { skippedJobs }),
+					skippedJobs,
 					ref: event.ref,
 					sha,
 					branch: event.branch,
@@ -546,15 +563,22 @@ export const queueWorkflowRunsForGithubEvent = async ({
 	return runs;
 };
 
+/**
+ * Starts a manual run. Workflows without a workflow_dispatch trigger run as a push to the
+ * branch, so they can still be started by hand. With jobId, only that job and the jobs it
+ * needs run, and the workflow's disabled jobs are ignored.
+ */
 export const dispatchWorkflowRun = async ({
 	workflowDefinitionId,
 	branch,
 	inputs,
+	jobId,
 	actor,
 }: {
 	workflowDefinitionId: string;
 	branch: string;
 	inputs: Record<string, string>;
+	jobId?: string;
 	actor: string;
 }) => {
 	const definition = await db.query.workflowDefinitions.findFirst({
@@ -604,18 +628,29 @@ export const dispatchWorkflowRun = async ({
 				: `${definition.path} doesn't exist on ${branch}`,
 		});
 	}
-	const dispatchTrigger = file.parsed.triggers.find(
-		(trigger) => trigger.event === "workflow_dispatch",
-	);
-	if (!dispatchTrigger) {
+	const workflow = file.parsed;
+	const job = jobId ? workflow.jobs.find((j) => j.id === jobId) : undefined;
+	if (jobId && !job) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",
-			message: `The workflow on ${branch} has no workflow_dispatch trigger`,
+			message: `The workflow on ${branch} has no job "${jobId}"`,
 		});
 	}
+	const skippedJobs = job
+		? []
+		: skippedJobsOf(workflow, definition.disabledJobs);
+	if (!job && allJobsDisabled(workflow, definition.disabledJobs)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Every job in this workflow is disabled",
+		});
+	}
+	const dispatchTrigger = workflow.triggers.find(
+		(trigger) => trigger.event === "workflow_dispatch",
+	);
 
 	const resolvedInputs: Record<string, string> = {};
-	for (const [name, spec] of Object.entries(dispatchTrigger.inputs ?? {})) {
+	for (const [name, spec] of Object.entries(dispatchTrigger?.inputs ?? {})) {
 		const value =
 			inputs[name] ?? (spec.default !== undefined ? String(spec.default) : "");
 		if (spec.required && value === "") {
@@ -634,37 +669,57 @@ export const dispatchWorkflowRun = async ({
 	}
 
 	const ref = `refs/heads/${branch}`;
-	const payload = {
-		ref,
-		inputs: resolvedInputs,
-		repository: {
-			name: repository.repository,
-			full_name: `${repository.owner}/${repository.repository}`,
-			owner: { login: repository.owner },
-			default_branch: repository.defaultBranch,
-		},
-		sender: { login: actor },
+	const event = dispatchTrigger ? "workflow_dispatch" : "push";
+	const repositoryPayload = {
+		name: repository.repository,
+		full_name: `${repository.owner}/${repository.repository}`,
+		owner: { login: repository.owner },
+		default_branch: repository.defaultBranch,
 	};
+	const payload = dispatchTrigger
+		? {
+				ref,
+				inputs: resolvedInputs,
+				repository: repositoryPayload,
+				sender: { login: actor },
+			}
+		: {
+				ref,
+				before: "0".repeat(40),
+				after: commit.sha,
+				head_commit: {
+					id: commit.sha,
+					message: commit.commit.message,
+					timestamp: commit.commit.committer?.date,
+				},
+				repository: repositoryPayload,
+				pusher: { name: actor },
+				sender: { login: actor },
+			};
 	return createWorkflowRun(
 		{
 			workflowRepositoryId: repository.workflowRepositoryId,
 			workflowDefinitionId: definition.workflowDefinitionId,
 			workflowPath: definition.path,
-			workflowName: file.parsed.name,
+			workflowName: workflow.name,
 			source: definition.source,
-			event: "workflow_dispatch",
+			event,
 			payload,
-			inputs: resolvedInputs,
-			jobNames: jobNamesOf(file.parsed),
-			runsOn: workflowRunsOn(file.parsed),
+			inputs: dispatchTrigger ? resolvedInputs : null,
+			jobNames: jobNamesOf(workflow),
+			runsOn: workflowRunsOn(workflow, { targetJob: jobId, skippedJobs }),
+			targetJob: jobId ?? null,
+			skippedJobs,
 			ref,
 			sha: commit.sha,
 			branch,
-			title: `Manually run by ${actor}`,
+			title: job
+				? `Job ${job.name} manually run by ${actor}`
+				: `Manually run by ${actor}`,
 			actor,
 			trusted: true,
-			...resolveConcurrency(file.parsed, {
-				event: "workflow_dispatch",
+			...resolveConcurrency(workflow, {
+				event,
 				ref,
 				sha: commit.sha,
 				actor,
@@ -713,6 +768,8 @@ export const rerunWorkflowRun = async (workflowRunId: string) => {
 			inputs: previous.inputs,
 			jobNames: previous.jobNames,
 			runsOn: previous.runsOn,
+			targetJob: previous.targetJob,
+			skippedJobs: previous.skippedJobs,
 			ref: previous.ref,
 			sha: previous.sha,
 			branch: previous.branch,
@@ -855,6 +912,8 @@ export const queueScheduledWorkflowRun = async (
 		(trigger) => trigger.event === "schedule" && trigger.cron?.includes(cron),
 	);
 	if (!file?.parsed || !stillScheduled) return null;
+	if (allJobsDisabled(file.parsed, definition.disabledJobs)) return null;
+	const skippedJobs = skippedJobsOf(file.parsed, definition.disabledJobs);
 
 	const ref = `refs/heads/${repository.defaultBranch}`;
 	const payload = {
@@ -876,7 +935,8 @@ export const queueScheduledWorkflowRun = async (
 			event: "schedule",
 			payload,
 			jobNames: jobNamesOf(file.parsed),
-			runsOn: workflowRunsOn(file.parsed),
+			runsOn: workflowRunsOn(file.parsed, { skippedJobs }),
+			skippedJobs,
 			ref,
 			sha: commit.sha,
 			branch: repository.defaultBranch,

@@ -48,7 +48,7 @@ export const createSlackNotification = async (
 	input: z.infer<typeof apiCreateSlack>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newSlack = await tx
 			.insert(slack)
 			.values({
@@ -142,7 +142,7 @@ export const createTelegramNotification = async (
 	input: z.infer<typeof apiCreateTelegram>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newTelegram = await tx
 			.insert(telegram)
 			.values({
@@ -238,7 +238,7 @@ export const createDiscordNotification = async (
 	input: z.infer<typeof apiCreateDiscord>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newDiscord = await tx
 			.insert(discord)
 			.values({
@@ -332,7 +332,7 @@ export const createEmailNotification = async (
 	input: z.infer<typeof apiCreateEmail>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newEmail = await tx
 			.insert(email)
 			.values({
@@ -434,7 +434,7 @@ export const createResendNotification = async (
 	input: z.infer<typeof apiCreateResend>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newResend = await tx
 			.insert(resend)
 			.values({
@@ -530,7 +530,7 @@ export const createGotifyNotification = async (
 	input: z.infer<typeof apiCreateGotify>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newGotify = await tx
 			.insert(gotify)
 			.values({
@@ -626,7 +626,7 @@ export const createNtfyNotification = async (
 	input: z.infer<typeof apiCreateNtfy>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newNtfy = await tx
 			.insert(ntfy)
 			.values({
@@ -722,7 +722,7 @@ export const createCustomNotification = async (
 	input: z.infer<typeof apiCreateCustom>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newCustom = await tx
 			.insert(custom)
 			.values({
@@ -850,7 +850,7 @@ export const createLarkNotification = async (
 	input: z.infer<typeof apiCreateLark>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newLark = await tx
 			.insert(lark)
 			.values({
@@ -942,7 +942,7 @@ export const createTeamsNotification = async (
 	input: z.infer<typeof apiCreateTeams>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newTeams = await tx
 			.insert(teams)
 			.values({
@@ -1049,7 +1049,7 @@ export const createMattermostNotification = async (
 	input: z.infer<typeof apiCreateMattermost>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newMattermost = await tx
 			.insert(mattermost)
 			.values({
@@ -1145,7 +1145,7 @@ export const createPushoverNotification = async (
 	input: z.infer<typeof apiCreatePushover>,
 	organizationId: string,
 ) => {
-	await db.transaction(async (tx) => {
+	return await db.transaction(async (tx) => {
 		const newPushover = await tx
 			.insert(pushover)
 			.values({

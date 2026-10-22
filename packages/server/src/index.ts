@@ -40,6 +40,7 @@ export * from "./services/mount";
 export * from "./services/mysql";
 export * from "./services/network";
 export * from "./services/notification";
+export * from "./services/notification-target";
 export * from "./services/organization";
 export * from "./services/overview";
 export * from "./services/patch";

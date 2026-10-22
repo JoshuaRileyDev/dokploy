@@ -45,7 +45,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
+import {
+	type AppScopeValue,
+	type AppTarget,
+	NotificationAppPicker,
+	NotificationAppScope,
+} from "./notification-app-scope";
 
 const notificationBaseSchema = z.object({
 	name: z.string().min(1, {
@@ -253,6 +260,27 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 			enabled: !!notificationId,
 		},
 	);
+	const { data: savedAppScope } = api.notificationTarget.get.useQuery(
+		{ notificationId: notificationId || "" },
+		{ enabled: !!notificationId && visible },
+	);
+	const { mutateAsync: setNotificationTargets } =
+		api.notificationTarget.set.useMutation();
+	const [appScope, setAppScope] = useState<AppScopeValue>({
+		appScope: "all",
+		targets: [],
+	});
+	const [appScopeError, setAppScopeError] = useState<string>();
+	// The app picker is a second page of this dialog; the draft lets Cancel
+	// discard picker changes without touching the saved selection.
+	const [pickerDraft, setPickerDraft] = useState<AppTarget[] | null>(null);
+
+	useEffect(() => {
+		if (!visible) return;
+		setAppScopeError(undefined);
+		setPickerDraft(null);
+		setAppScope(savedAppScope ?? { appScope: "all", targets: [] });
+	}, [visible, savedAppScope]);
 	const { mutateAsync: testSlackConnection, isPending: isLoadingSlack } =
 		api.notification.testSlackConnection.useMutation();
 	const { mutateAsync: testTelegramConnection, isPending: isLoadingTelegram } =
@@ -327,6 +355,8 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 		resolver: zodResolver(notificationSchema),
 	});
 	const type = form.watch("type");
+	const appEventsEnabled =
+		form.watch("appDeploy") || form.watch("appBuildError");
 
 	const { fields, append, remove } = useFieldArray({
 		control: form.control,
@@ -581,6 +611,15 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 			dockerCleanup,
 			serverThreshold,
 		} = data;
+		if (
+			(appDeploy || appBuildError) &&
+			appScope.appScope === "selected" &&
+			appScope.targets.length === 0
+		) {
+			setAppScopeError("Select at least one application");
+			return;
+		}
+		setAppScopeError(undefined);
 		let promise: Promise<unknown> | null = null;
 		if (data.type === "slack") {
 			promise = slackMutation.mutateAsync({
@@ -806,7 +845,22 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 
 		if (promise) {
 			await promise
-				.then(async () => {
+				.then(async (result) => {
+					const savedId =
+						notificationId ||
+						(result as { notificationId?: string } | undefined)?.notificationId;
+					if (savedId) {
+						await setNotificationTargets({
+							notificationId: savedId,
+							appScope: appScope.targets.length > 0 ? appScope.appScope : "all",
+							targets: appScope.targets,
+						}).catch(() => {
+							toast.error("Error saving the selected applications");
+						});
+						await utils.notificationTarget.get.invalidate({
+							notificationId: savedId,
+						});
+					}
 					toast.success(
 						notificationId ? "Notification Updated" : "Notification Created",
 					);
@@ -848,21 +902,58 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 				)}
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-3xl">
-				<DialogHeader>
-					<DialogTitle>
-						{notificationId ? "Update" : "Add"} Notification
-					</DialogTitle>
-					<DialogDescription>
-						{notificationId
-							? "Update your notification providers for multiple channels."
-							: "Create new notification providers for multiple channels."}
-					</DialogDescription>
-				</DialogHeader>
+				{pickerDraft ? (
+					<DialogHeader>
+						<DialogTitle>Choose applications</DialogTitle>
+						<DialogDescription>
+							Browse your folders and projects, and pick the apps and compose
+							services this notification covers.
+						</DialogDescription>
+					</DialogHeader>
+				) : (
+					<DialogHeader>
+						<DialogTitle>
+							{notificationId ? "Update" : "Add"} Notification
+						</DialogTitle>
+						<DialogDescription>
+							{notificationId
+								? "Update your notification providers for multiple channels."
+								: "Create new notification providers for multiple channels."}
+						</DialogDescription>
+					</DialogHeader>
+				)}
+				{pickerDraft && (
+					<>
+						<NotificationAppPicker
+							targets={pickerDraft}
+							onChange={setPickerDraft}
+						/>
+						<DialogFooter className="flex flex-row gap-2 justify-between! w-full">
+							<Button
+								type="button"
+								variant="secondary"
+								onClick={() => setPickerDraft(null)}
+							>
+								Cancel
+							</Button>
+							<Button
+								type="button"
+								onClick={() => {
+									setAppScopeError(undefined);
+									setAppScope({ appScope: "selected", targets: pickerDraft });
+									setPickerDraft(null);
+								}}
+							>
+								Done
+							</Button>
+						</DialogFooter>
+					</>
+				)}
 				<Form {...form}>
 					<form
 						id="hook-form"
 						onSubmit={form.handleSubmit(onSubmit)}
-						className="grid w-full gap-8 "
+						className={cn("grid w-full gap-8", pickerDraft && "hidden")}
 					>
 						<FormField
 							control={form.control}
@@ -1995,10 +2086,26 @@ export const HandleNotifications = ({ notificationId }: Props) => {
 									/>
 								)}
 							</div>
+							{appEventsEnabled && (
+								<NotificationAppScope
+									value={appScope}
+									onChange={(value) => {
+										setAppScopeError(undefined);
+										setAppScope(value);
+									}}
+									onBrowse={() => setPickerDraft(appScope.targets)}
+									error={appScopeError}
+								/>
+							)}
 						</div>
 					</form>
 
-					<DialogFooter className="flex flex-row gap-2 justify-between! w-full">
+					<DialogFooter
+						className={cn(
+							"flex flex-row gap-2 justify-between! w-full",
+							pickerDraft && "hidden",
+						)}
+					>
 						<Button
 							isLoading={
 								isLoadingSlack ||
