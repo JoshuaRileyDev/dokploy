@@ -20,6 +20,10 @@ export type ActRunScriptInput = {
 	remoteUrl: string;
 	githubInstance?: string;
 	sha: string;
+	/** The ref the run was triggered for, e.g. refs/heads/main or refs/tags/v1. */
+	ref: string;
+	/** Checked out as a local branch when set; otherwise HEAD is detached at the commit. */
+	branch?: string;
 	event: string;
 	workflowPath: string;
 	/** Runs only this job and the jobs it needs. */
@@ -105,7 +109,14 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 		`git remote add origin ${quote([input.cloneUrl])}`,
 		`echo "Fetching ${input.sha.slice(0, 7)}"`,
 		`git fetch -q --depth 1 origin ${quote([input.sha])}`,
-		"git checkout -q FETCH_HEAD",
+		// act copies the checkout into the job container without empty directories, and git
+		// doesn't recognise a .git with no refs/ as a repository, so there has to be a ref file.
+		...(input.branch
+			? [`git checkout -q -B ${quote([input.branch])} FETCH_HEAD`]
+			: [
+					`git update-ref ${quote([input.ref])} FETCH_HEAD`,
+					"git checkout -q FETCH_HEAD",
+				]),
 		`git remote set-url origin ${quote([input.remoteUrl])}`,
 		...(input.workflowOverride === undefined
 			? []

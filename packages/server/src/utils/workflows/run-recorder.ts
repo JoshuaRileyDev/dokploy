@@ -78,6 +78,8 @@ export const prepareRunInputs = async (run: LoadedRun) => {
 		remoteUrl: `${base.origin}/${owner}/${repository}.git`,
 		githubInstance: base.host === "github.com" ? undefined : base.host,
 		sha: run.sha,
+		ref: run.ref,
+		branch: run.branch ?? undefined,
 		event: run.event,
 		workflowPath: run.workflowPath,
 		targetJob: run.targetJob ?? undefined,
