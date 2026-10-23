@@ -12,6 +12,7 @@ const input: ActRunScriptInput = {
 	cloneUrl: "https://x-access-token:ghs_secret@github.com/acme/widgets.git",
 	remoteUrl: "https://github.com/acme/widgets.git",
 	sha: "b".repeat(40),
+	ref: "refs/tags/v1.0.0",
 	event: "push",
 	workflowPath: ".dokploy/workflows/ci.yml",
 	defaultBranch: "main",
@@ -76,6 +77,20 @@ describe("buildActRunScript", () => {
 			/git remote set-url origin https\\?:\/\/github\.com\/acme\/widgets\.git\n/,
 		);
 		expect(script).not.toMatch(/set-url origin .*ghs_secret/);
+	});
+
+	// act's copy into the job container drops empty directories, and git needs .git/refs.
+	it("leaves a ref file so the checkout is still a repository in the job container", () => {
+		expect(script).toContain(
+			"git update-ref refs/tags/v1.0.0 FETCH_HEAD\ngit checkout -q FETCH_HEAD",
+		);
+		const onBranch = buildActRunScript({
+			...input,
+			ref: "refs/heads/feature/x",
+			branch: "feature/x",
+		});
+		expect(onBranch).toContain("git checkout -q -B feature/x FETCH_HEAD");
+		expect(onBranch).not.toContain("update-ref");
 	});
 
 	it("records the act pid for cancellation and removes secrets afterwards", () => {
