@@ -4,6 +4,10 @@ import { useEffect } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import {
+	ServerDefaultMemoryHint,
+	ShowOomKills,
+} from "@/components/dashboard/shared/memory-limits";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { Button } from "@/components/ui/button";
 import {
@@ -200,6 +204,7 @@ export const ShowResources = ({ id, type }: Props) => {
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4">
+				<ShowOomKills id={id} type={type} />
 				<AlertBlock type="info">
 					Please remember to click Redeploy after modify the resources to apply
 					the changes.
@@ -246,6 +251,9 @@ export const ShowResources = ({ id, type }: Props) => {
 													converter={memoryConverter}
 												/>
 											</FormControl>
+											{!field.value && (
+												<ServerDefaultMemoryHint id={id} type={type} />
+											)}
 											<FormMessage />
 										</FormItem>
 									);

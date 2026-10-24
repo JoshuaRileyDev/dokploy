@@ -35,6 +35,7 @@ import { ShowBackups } from "@/components/dashboard/database/backups/show-backup
 import { ComposeFreeMonitoring } from "@/components/dashboard/monitoring/free/container/show-free-compose-monitoring";
 import { ComposePaidMonitoring } from "@/components/dashboard/monitoring/paid/container/show-paid-compose-monitoring";
 import { AssignComposeNetworks } from "@/components/dashboard/networks/assign-compose-networks";
+import { ComposeMemoryLimits } from "@/components/dashboard/shared/memory-limits";
 import { TransferService } from "@/components/dashboard/shared/transfer-service";
 import { ShowServiceWorkflows } from "@/components/dashboard/workflows/show-service-workflows";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
@@ -472,6 +473,7 @@ const Service = (
 												<AssignComposeNetworks composeId={composeId} />
 												<IsolatedDeploymentTab composeId={composeId} />
 												<FreshVolumes composeId={composeId} />
+												<ComposeMemoryLimits composeId={composeId} />
 											</div>
 										</TabsContent>
 									)}

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
 	addDomainToCompose,
+	applyMemoryPolicyToCompose,
 	autoImportWorkflowsForService,
 	clearOldDeployments,
 	cloneCompose,
@@ -21,6 +22,7 @@ import {
 	getAccessibleServerIds,
 	getComposeContainer,
 	getContainerLogs,
+	getMemoryPolicy,
 	getWebServerSettings,
 	IS_CLOUD,
 	loadServices,
@@ -472,9 +474,13 @@ export const composeRouter = createTRPCRouter({
 			const compose = await findComposeById(input.composeId);
 			const domains = await findDomainsByComposeId(input.composeId);
 			const composeFile = await addDomainToCompose(compose, domains);
-			return stringify(composeFile, {
-				lineWidth: 1000,
-			});
+			const memoryPolicy = await getMemoryPolicy(compose.serverId);
+			return stringify(
+				composeFile && applyMemoryPolicyToCompose(composeFile, memoryPolicy),
+				{
+					lineWidth: 1000,
+				},
+			);
 		}),
 
 	deploy: protectedProcedure
