@@ -352,6 +352,7 @@ const Service = (
 															<div>
 																<ContainerFreeMonitoring
 																	appName={data?.appName || ""}
+																	serviceId={data?.applicationId}
 																/>
 															</div>
 															{/* )} */}

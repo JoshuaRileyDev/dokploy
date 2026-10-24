@@ -26,6 +26,7 @@ import {
 } from "@dokploy/server/utils/docker/domain";
 import type { ComposeSpecification } from "@dokploy/server/utils/docker/types";
 import { sendBuildErrorNotifications } from "@dokploy/server/utils/notifications/build-error";
+import { getBuildErrorMessage } from "@dokploy/server/utils/notifications/build-error-message";
 import { sendBuildSuccessNotifications } from "@dokploy/server/utils/notifications/build-success";
 import {
 	appendFileRemote,
@@ -651,6 +652,11 @@ export const deployCompose = async ({
 			environmentName: compose.environment.name,
 		});
 	} catch (error) {
+		const errorMessage = await getBuildErrorMessage(
+			error,
+			deployment.logPath,
+			compose.buildServerId ?? compose.serverId,
+		);
 		await updateDeploymentStatus(deployment.deploymentId, "error");
 		await updateCompose(composeId, {
 			composeStatus: "error",
@@ -659,8 +665,7 @@ export const deployCompose = async ({
 			projectName: compose.environment.project.name,
 			applicationName: compose.name,
 			applicationType: "compose",
-			// @ts-expect-error
-			errorMessage: error?.message || "Error building",
+			errorMessage,
 			buildLink,
 			organizationId: compose.environment.project.organizationId,
 			service: { composeId: compose.composeId },
