@@ -4,6 +4,7 @@ import type { GetServerSidePropsContext } from "next";
 import type { ReactElement } from "react";
 import superjson from "superjson";
 import { BuildsConcurrency } from "@/components/dashboard/settings/servers/actions/builds-concurrency";
+import { MemoryPolicySettings } from "@/components/dashboard/settings/servers/actions/memory-policy";
 import { DashboardLayout } from "@/components/layouts/dashboard-layout";
 import { AlertBlock } from "@/components/shared/alert-block";
 import {
@@ -66,6 +67,49 @@ const Page = () => {
 									</p>
 								)}
 							</div>
+						</CardContent>
+					</div>
+				</Card>
+				<Card className="h-full bg-sidebar p-2.5 rounded-xl mx-auto w-full">
+					<div className="rounded-xl bg-background shadow-md">
+						<CardHeader>
+							<CardTitle className="text-xl">Memory Limits</CardTitle>
+							<CardDescription>
+								Give every service a memory cap so one that runs away is
+								restarted on its own instead of exhausting the server and taking
+								other services down with it.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="flex flex-col gap-6">
+							<AlertBlock type="info">
+								Defaults apply the next time a service is deployed. Services
+								with their own limit (Advanced → Resources, or{" "}
+								<code>deploy.resources.limits.memory</code> in a compose file)
+								keep it.
+							</AlertBlock>
+							<div className="flex flex-col gap-2">
+								<p className="text-sm font-medium text-muted-foreground">
+									Dokploy Server
+								</p>
+								<MemoryPolicySettings />
+							</div>
+							{servers && servers.length > 0 && (
+								<div className="flex flex-col gap-2">
+									<p className="text-sm font-medium text-muted-foreground">
+										Remote Servers
+									</p>
+									<div className="flex flex-col gap-3">
+										{servers.map((server) => (
+											<MemoryPolicySettings
+												key={server.serverId}
+												serverId={server.serverId}
+												label={server.name}
+												ipAddress={server.ipAddress}
+											/>
+										))}
+									</div>
+								</div>
+							)}
 						</CardContent>
 					</div>
 				</Card>

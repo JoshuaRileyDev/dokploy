@@ -1,3 +1,4 @@
+import { resolveServiceMemoryLimit } from "@dokploy/server/services/memory-policy";
 import type { InferResultType } from "@dokploy/server/types/with";
 import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
@@ -25,7 +26,6 @@ export const buildMysql = async (rawMysql: MysqlNested) => {
 		env,
 		externalPort,
 		dockerImage,
-		memoryLimit,
 		memoryReservation,
 		databaseName,
 		databaseUser,
@@ -62,7 +62,7 @@ export const buildMysql = async (rawMysql: MysqlNested) => {
 		Ulimits,
 	} = generateConfigContainer(mysql);
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: await resolveServiceMemoryLimit(mysql),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,

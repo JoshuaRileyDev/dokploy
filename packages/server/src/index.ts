@@ -36,6 +36,7 @@ export * from "./services/logs-and-metrics/service";
 export * from "./services/logs-and-metrics/types";
 export * from "./services/logs-and-metrics/vector-agent";
 export * from "./services/mariadb";
+export * from "./services/memory-policy";
 export * from "./services/mongo";
 export * from "./services/mount";
 export * from "./services/mysql";

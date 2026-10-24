@@ -23,6 +23,7 @@ import { network } from "./network";
 import { postgres } from "./postgres";
 import { redis } from "./redis";
 import { schedules } from "./schedule";
+import { type MemoryPolicy, MemoryPolicySchema } from "./shared";
 import { sshKeys } from "./ssh-key";
 import { generateAppName } from "./utils";
 export const serverStatus = pgEnum("serverStatus", ["active", "inactive"]);
@@ -50,6 +51,7 @@ export const server = pgTable("server", {
 		.notNull()
 		.default(sql`ARRAY[]::text[]`),
 	buildsConcurrency: integer("buildsConcurrency").notNull().default(1),
+	forkMemoryPolicy: jsonb("forkMemoryPolicy").$type<MemoryPolicy>(),
 	createdAt: text("createdAt").notNull(),
 	organizationId: text("organizationId")
 		.notNull()
@@ -255,6 +257,10 @@ export const apiUpdateServer = createSchema
 export const apiUpdateServerBuildsConcurrency = z.object({
 	serverId: z.string().min(1),
 	buildsConcurrency: z.number().int().min(1).max(100),
+});
+
+export const apiUpdateServerMemoryPolicy = MemoryPolicySchema.extend({
+	serverId: z.string().min(1),
 });
 
 export const apiUpdateServerMonitoring = createSchema

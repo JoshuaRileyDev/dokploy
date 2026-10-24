@@ -8,6 +8,7 @@ type MockCreateServiceOptions = {
 			StopGracePeriod?: number;
 			Ulimits?: Array<{ Name: string; Soft: number; Hard: number }>;
 		};
+		Resources?: { Limits?: { MemoryBytes?: number } };
 	};
 	[key: string]: unknown;
 };
@@ -33,6 +34,14 @@ const { inspectMock, getServiceMock, createServiceMock, getRemoteDockerMock } =
 
 vi.mock("@dokploy/server/utils/servers/remote-docker", () => ({
 	getRemoteDocker: getRemoteDockerMock,
+}));
+
+const { findServerByIdMock } = vi.hoisted(() => ({
+	findServerByIdMock: vi.fn(),
+}));
+
+vi.mock("@dokploy/server/services/server", () => ({
+	findServerById: findServerByIdMock,
 }));
 
 const createApplication = (
@@ -74,6 +83,7 @@ describe("mechanizeDockerContainer", () => {
 			getService: getServiceMock,
 			createService: createServiceMock,
 		});
+		findServerByIdMock.mockResolvedValue({ forkMemoryPolicy: null });
 	});
 
 	it("passes stopGracePeriodSwarm as a number and keeps zero values", async () => {
@@ -198,5 +208,33 @@ describe("mechanizeDockerContainer", () => {
 			expect(updateMock).toHaveBeenCalledTimes(1);
 			expect(updateMock.mock.calls[0]?.[0].Labels).toEqual({});
 		});
+	});
+
+	it("applies the server's default memory limit when the app has none", async () => {
+		findServerByIdMock.mockResolvedValue({
+			forkMemoryPolicy: { defaultMemoryLimit: 536870912, reservedMemory: null },
+		});
+
+		await mechanizeDockerContainer(createApplication());
+
+		const [settings] = createServiceMock.mock.calls[0] ?? [];
+		expect(settings?.TaskTemplate?.Resources?.Limits?.MemoryBytes).toBe(
+			536870912,
+		);
+	});
+
+	it("keeps the app's own memory limit over the server default", async () => {
+		findServerByIdMock.mockResolvedValue({
+			forkMemoryPolicy: { defaultMemoryLimit: 536870912, reservedMemory: null },
+		});
+
+		await mechanizeDockerContainer(
+			createApplication({ memoryLimit: "1073741824" }),
+		);
+
+		const [settings] = createServiceMock.mock.calls[0] ?? [];
+		expect(settings?.TaskTemplate?.Resources?.Limits?.MemoryBytes).toBe(
+			1073741824,
+		);
 	});
 });

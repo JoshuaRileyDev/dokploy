@@ -1,3 +1,4 @@
+import { resolveServiceMemoryLimit } from "@dokploy/server/services/memory-policy";
 import type { InferResultType } from "@dokploy/server/types/with";
 import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
@@ -24,7 +25,6 @@ export const buildPostgres = async (rawPostgres: PostgresNested) => {
 		env,
 		externalPort,
 		dockerImage,
-		memoryLimit,
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,
@@ -55,7 +55,7 @@ export const buildPostgres = async (rawPostgres: PostgresNested) => {
 		Ulimits,
 	} = generateConfigContainer(postgres);
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: await resolveServiceMemoryLimit(postgres),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,

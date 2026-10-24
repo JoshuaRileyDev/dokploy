@@ -209,3 +209,18 @@ export const UlimitSwarmSchema = z
 	.strict();
 
 export const UlimitsSwarmSchema = z.array(UlimitSwarmSchema);
+
+/** Byte values; null means no default limit / automatic headroom. */
+export interface MemoryPolicy {
+	defaultMemoryLimit: number | null;
+	reservedMemory: number | null;
+}
+
+export const MemoryPolicySchema = z.object({
+	defaultMemoryLimit: z
+		.number()
+		.int()
+		.min(6 * 1024 * 1024)
+		.nullable(),
+	reservedMemory: z.number().int().min(0).nullable(),
+});

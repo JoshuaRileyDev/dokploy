@@ -1,3 +1,4 @@
+import { resolveServiceMemoryLimit } from "@dokploy/server/services/memory-policy";
 import type { InferResultType } from "@dokploy/server/types/with";
 import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
@@ -24,7 +25,6 @@ export const buildMariadb = async (rawMariadb: MariadbNested) => {
 		env,
 		externalPort,
 		dockerImage,
-		memoryLimit,
 		memoryReservation,
 		databaseName,
 		databaseUser,
@@ -56,7 +56,7 @@ export const buildMariadb = async (rawMariadb: MariadbNested) => {
 		Ulimits,
 	} = generateConfigContainer(mariadb);
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: await resolveServiceMemoryLimit(mariadb),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,

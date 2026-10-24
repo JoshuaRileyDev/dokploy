@@ -1,3 +1,4 @@
+import { resolveServiceMemoryLimit } from "@dokploy/server/services/memory-policy";
 import { resolveServiceNetworks } from "@dokploy/server/services/network";
 import { findRegistryByIdWithCredentials } from "@dokploy/server/services/registry";
 import type { InferResultType } from "@dokploy/server/types/with";
@@ -88,7 +89,6 @@ export const mechanizeDockerContainer = async (
 		env,
 		mounts,
 		cpuLimit,
-		memoryLimit,
 		memoryReservation,
 		cpuReservation,
 		command,
@@ -97,7 +97,7 @@ export const mechanizeDockerContainer = async (
 	} = application;
 
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: await resolveServiceMemoryLimit(application),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,
