@@ -70,34 +70,66 @@ export const loadDockerCompose = async (
 		const yamlStr = readFileSync(path, "utf8");
 		const parsedConfig = parse(yamlStr, {
 			maxAliasCount: 10000,
+			merge: true,
 		}) as ComposeSpecification;
 		return parsedConfig;
 	}
 	return null;
 };
 
+export const readDockerComposeRemote = async (
+	compose: Compose,
+): Promise<ComposeSpecification> => {
+	const path = getComposePath(compose);
+	if (!compose.serverId) {
+		throw new Error(`Cannot read ${path} remotely: no server is set`);
+	}
+	let stdout: string;
+	try {
+		// Stderr is ignored: ssh banners and warnings land there on exit code 0,
+		// and execAsyncRemote already rejects on a non-zero exit.
+		({ stdout } = await execAsyncRemote(
+			compose.serverId,
+			`cat ${quote([path])}`,
+		));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Could not read the compose file ${path} on server ${compose.serverId}: ${message}`,
+		);
+	}
+	if (!stdout.trim()) {
+		throw new Error(
+			`The compose file ${path} on server ${compose.serverId} is empty`,
+		);
+	}
+	let parsedConfig: ComposeSpecification | null;
+	try {
+		parsedConfig = parse(stdout, {
+			maxAliasCount: 10000,
+			merge: true,
+		}) as ComposeSpecification | null;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Could not parse the compose file ${path} on server ${compose.serverId}: ${message}`,
+		);
+	}
+	if (!parsedConfig || typeof parsedConfig !== "object") {
+		throw new Error(
+			`The compose file ${path} on server ${compose.serverId} is not a YAML mapping`,
+		);
+	}
+	return parsedConfig;
+};
+
 export const loadDockerComposeRemote = async (
 	compose: Compose,
 ): Promise<ComposeSpecification | null> => {
-	const path = getComposePath(compose);
 	try {
-		if (!compose.serverId) {
-			return null;
-		}
-		const { stdout, stderr } = await execAsyncRemote(
-			compose.serverId,
-			`cat ${path}`,
-		);
-
-		if (stderr) {
-			return null;
-		}
-		if (!stdout) return null;
-		const parsedConfig = parse(stdout, {
-			maxAliasCount: 10000,
-		}) as ComposeSpecification;
-		return parsedConfig;
-	} catch {
+		return await readDockerComposeRemote(compose);
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : error);
 		return null;
 	}
 };
@@ -220,6 +252,7 @@ export const applyComposeFilePatch = async (
 	try {
 		const parsed = parse(composeFilePatch.content, {
 			maxAliasCount: 10000,
+			merge: true,
 		}) as ComposeSpecification;
 		return parsed ?? null;
 	} catch {
@@ -329,9 +362,10 @@ export const addDomainToCompose = async (
 	if (compose.sourceType === "raw") {
 		result = parse(compose.composeFile, {
 			maxAliasCount: 10000,
+			merge: true,
 		}) as ComposeSpecification;
 	} else if (compose.serverId) {
-		result = await loadDockerComposeRemote(compose);
+		result = await readDockerComposeRemote(compose);
 	} else {
 		result = await loadDockerCompose(compose);
 	}
