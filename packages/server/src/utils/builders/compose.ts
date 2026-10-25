@@ -1,6 +1,10 @@
 import { dirname, join } from "node:path";
 import { paths } from "@dokploy/server/constants";
 import {
+	applyMemoryPolicyToCompose,
+	getMemoryPolicy,
+} from "@dokploy/server/services/memory-policy";
+import {
 	type Registry,
 	safeDockerLoginCommand,
 } from "@dokploy/server/services/registry";
@@ -88,11 +92,15 @@ export const getBuildComposeCommand = async (
 			? `env -i PATH="$PATH" HOME="$HOME" docker ${getComposeBaseArgs(compose, projectDirectory)} pull ${quote(prebuiltServices)} 2>&1 || { echo "Error: ❌ Pulling prebuilt images failed"; exit 1; }`
 			: "";
 
+	const memoryPolicy = await getMemoryPolicy(targetServerId);
 	const newCompose = await writeDomainsToCompose(compose, domains, {
 		loadServerId: targetServerId,
-		transform: prebuilt
-			? (spec) => applyPrebuiltImages(spec, prebuilt.images)
-			: undefined,
+		transform: (spec) => {
+			const withImages = prebuilt
+				? applyPrebuiltImages(spec, prebuilt.images)
+				: spec;
+			return applyMemoryPolicyToCompose(withImages, memoryPolicy);
+		},
 	});
 
 	const logContent = `

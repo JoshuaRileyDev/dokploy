@@ -57,6 +57,14 @@
       "tag": "0006_notification_targets",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792831446631,
+      "tag": "0007_memory_policy",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
     }
   ]
 }

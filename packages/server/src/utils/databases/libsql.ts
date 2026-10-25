@@ -1,3 +1,4 @@
+import { resolveServiceMemoryLimit } from "@dokploy/server/services/memory-policy";
 import type { InferResultType } from "@dokploy/server/types/with";
 import type { CreateServiceOptions, PortConfig } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
@@ -28,7 +29,6 @@ export const buildLibsql = async (rawLibsql: LibsqlNested) => {
 		externalPort,
 		externalGRPCPort,
 		externalAdminPort,
-		memoryLimit,
 		memoryReservation,
 		databaseUser,
 		databasePassword,
@@ -62,7 +62,7 @@ export const buildLibsql = async (rawLibsql: LibsqlNested) => {
 		UpdateConfig,
 	} = generateConfigContainer(libsql);
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: await resolveServiceMemoryLimit(libsql),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,

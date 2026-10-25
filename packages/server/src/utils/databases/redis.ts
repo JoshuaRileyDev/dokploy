@@ -1,3 +1,4 @@
+import { resolveServiceMemoryLimit } from "@dokploy/server/services/memory-policy";
 import type { InferResultType } from "@dokploy/server/types/with";
 import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
@@ -24,7 +25,6 @@ export const buildRedis = async (rawRedis: RedisNested) => {
 		env,
 		externalPort,
 		dockerImage,
-		memoryLimit,
 		memoryReservation,
 		databasePassword,
 		cpuLimit,
@@ -53,7 +53,7 @@ export const buildRedis = async (rawRedis: RedisNested) => {
 		Ulimits,
 	} = generateConfigContainer(redis);
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: await resolveServiceMemoryLimit(redis),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,

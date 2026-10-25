@@ -11,7 +11,11 @@ import { createInsertSchema } from "drizzle-zod";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { organization } from "./account";
-import { certificateType } from "./shared";
+import {
+	certificateType,
+	type MemoryPolicy,
+	MemoryPolicySchema,
+} from "./shared";
 
 export const webServerSettings = pgTable("webServerSettings", {
 	id: text("id")
@@ -141,6 +145,7 @@ export const webServerSettings = pgTable("webServerSettings", {
 		.notNull()
 		.default(false),
 	createdAt: timestamp("created_at").defaultNow(),
+	forkMemoryPolicy: jsonb("forkMemoryPolicy").$type<MemoryPolicy>(),
 	updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -198,11 +203,14 @@ export const apiUpdateWebServerSettings = createSchema
 	.omit({
 		telemetryProviderIds: true,
 		vectorAgentOrganizationId: true,
+		forkMemoryPolicy: true,
 	});
 
 export const apiUpdateWebServerBuildsConcurrency = z.object({
 	buildsConcurrency: z.number().int().min(1).max(100),
 });
+
+export const apiUpdateWebServerMemoryPolicy = MemoryPolicySchema;
 
 export const apiAssignDomain = z
 	.object({

@@ -1,3 +1,4 @@
+import { resolveServiceMemoryLimit } from "@dokploy/server/services/memory-policy";
 import type { InferResultType } from "@dokploy/server/types/with";
 import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
@@ -25,7 +26,6 @@ export const buildMongo = async (rawMongo: MongoNested) => {
 		env,
 		externalPort,
 		dockerImage,
-		memoryLimit,
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,
@@ -103,7 +103,7 @@ ${command ?? "wait $MONGOD_PID"}`;
 	} = generateConfigContainer(mongo);
 
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: await resolveServiceMemoryLimit(mongo),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,

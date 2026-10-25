@@ -28,6 +28,7 @@ const baseSettings: WebServerSettings = {
 	telemetryProviderIds: [],
 	vectorAgentOrganizationId: null,
 	buildsConcurrency: 1,
+	forkMemoryPolicy: null,
 	logCleanupCron: null,
 	metricsConfig: {
 		containers: {

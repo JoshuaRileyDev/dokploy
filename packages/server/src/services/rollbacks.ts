@@ -21,6 +21,7 @@ import { withResolvedVaultRefs } from "../utils/vault";
 import { type Application, findApplicationById } from "./application";
 import { findDeploymentById } from "./deployment";
 import type { Environment } from "./environment";
+import { getMemoryPolicy, resolveMemoryLimit } from "./memory-policy";
 import type { Mount } from "./mount";
 import { resolveServiceNetworks } from "./network";
 import type { Port } from "./port";
@@ -230,7 +231,11 @@ const rollbackApplication = async (
 	} = resolvedContext;
 
 	const resources = calculateResources({
-		memoryLimit,
+		memoryLimit: resolveMemoryLimit(
+			memoryLimit,
+			memoryReservation,
+			await getMemoryPolicy(serverId),
+		),
 		memoryReservation,
 		cpuLimit,
 		cpuReservation,
