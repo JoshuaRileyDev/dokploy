@@ -19,6 +19,7 @@ vi.mock("@dokploy/server", () => ({
 	cleanupImages: noop,
 	cleanupSystem: noop,
 	cleanupVolumes: noop,
+	DOKPLOY_IMAGE_REPOSITORY: "joshua2212/dokploy",
 	DEFAULT_UPDATE_DATA: { latestVersion: null, updateAvailable: false },
 	findServerById: noop,
 	getDockerDiskUsage: noop,
@@ -143,7 +144,7 @@ describe("settings.updateServer", () => {
 
 		expect(mockSpawnAsync).toHaveBeenCalledWith(
 			"docker",
-			expect.arrayContaining(["service", "update", "dokploy/dokploy:v9.9.9"]),
+			expect.arrayContaining(["service", "update", "joshua2212/dokploy:v9.9.9"]),
 		);
 	});
 });
