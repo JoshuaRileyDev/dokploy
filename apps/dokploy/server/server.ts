@@ -9,6 +9,7 @@ import {
 	initEnterpriseBackupCronJobs,
 	initializeNetwork,
 	initSchedules,
+	initServerCommands,
 	initVolumeBackupsCronJobs,
 	initWorkflowRuns,
 	restoreInterruptedTraefik,
@@ -73,6 +74,7 @@ void app.prepare().then(async () => {
 			await sendDokployRestartNotifications();
 		}
 		await initEnterpriseBackupCronJobs();
+		await initServerCommands();
 
 		if (!IS_CLOUD) {
 			console.log("Starting Deployment Worker");

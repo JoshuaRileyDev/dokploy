@@ -1,5 +1,5 @@
-import { generateOpenApiDocument } from "@dokploy/trpc-openapi";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { buildOpenApiDocument } from "@/server/api/openapi";
 import { appRouter } from "@/server/api/root";
 
 // Public on purpose: the spec is derived from code (the same document is in
@@ -9,7 +9,7 @@ import { appRouter } from "@/server/api/root";
 let cachedDocument: string | undefined;
 
 const buildDocument = () => {
-	const document = generateOpenApiDocument(appRouter, {
+	const document = buildOpenApiDocument({
 		title: "Dokploy API",
 		// The exact version is left out so the spec can't fingerprint an instance.
 		version: "1.0.0",
@@ -24,17 +24,6 @@ const buildDocument = () => {
 		description:
 			"API for this Dokploy instance. Every endpoint requires an API key in the x-api-key header; generate one under Settings > Profile > API Keys.",
 		version: "1.0.0",
-	};
-	document.components = {
-		...document.components,
-		securitySchemes: {
-			apiKey: {
-				type: "apiKey",
-				in: "header",
-				name: "x-api-key",
-				description: "API key authentication",
-			},
-		},
 	};
 	document.security = [{ apiKey: [] }];
 
