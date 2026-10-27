@@ -430,6 +430,14 @@ export const apiFindOneWorkflowRun = z.object({
 	workflowRunId: z.string().min(1),
 });
 
+export const apiReadWorkflowRunLogs = z.object({
+	workflowRunId: z.string().min(1),
+	/** One job's log. Omitted: every job's log, plus the run's own log. */
+	workflowJobId: z.string().min(1).optional(),
+	/** Lines from the end of each log. */
+	tail: z.number().int().min(1).max(10000).default(500),
+});
+
 export const apiDispatchWorkflow = z.object({
 	workflowDefinitionId: z.string().min(1),
 	branch: z.string().min(1),

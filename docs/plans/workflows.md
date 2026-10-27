@@ -57,7 +57,7 @@ UI:
 
 ## Phase 2: Events and execution (done)
 
-Shipped as: migration `drizzle-fork/0001_workflows_and_server_roles`; `utils/workflows/{events,triggers,act,act-log,ssh,executor,queue}.ts`; `services/workflow-run.ts`; router `workflow.{runs,oneRun,dispatch,rerun,cancelRun,branches}`; pages `/dashboard/workflows/runs/[workflowRunId]` plus the Run dialog and runs list. Notes on what differs from the original sketch:
+Shipped as: migration `drizzle-fork/0001_workflows_and_server_roles`; `utils/workflows/{events,triggers,act,act-log,ssh,executor,queue}.ts`; `services/workflow-run.ts`; router `workflow.{runs,oneRun,readLogs,dispatch,rerun,cancelRun,branches}`; pages `/dashboard/workflows/runs/[workflowRunId]` plus the Run dialog and runs list. Notes on what differs from the original sketch:
 
 - One run at a time per workflow server (in-memory FIFO, like deployments). Server choice: the repository's server, else the least busy workflow server. `runs-on` labels map to runner images, not to servers.
 - Pull requests run against the head commit, not GitHub's merge commit.
