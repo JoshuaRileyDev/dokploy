@@ -32,6 +32,8 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
           set -euo pipefail
+          test -n "$REGISTRY_USERNAME" || { echo "REGISTRY_USERNAME is empty; set it as a secret for this workflow repository." >&2; exit 1; }
+          test -n "$REGISTRY_PASSWORD" || { echo "REGISTRY_PASSWORD is empty; set it as a secret for this workflow repository." >&2; exit 1; }
           if [[ ! "$REGISTRY_IMAGE" =~ ^[a-zA-Z0-9.-]+(:[0-9]+)?/[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+$ ]]; then
             echo "REGISTRY_IMAGE must be a full registry image reference including a tag." >&2
             exit 1
