@@ -39,6 +39,33 @@ jobs:
             exit 1
           fi
           registry_host="${REGISTRY_IMAGE%%/*}"
+          REGISTRY_HOST="$registry_host" python3 - <<'PY'
+          import base64
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          credentials = f"{os.environ['REGISTRY_USERNAME']}:{os.environ['REGISTRY_PASSWORD']}"
+          request = urllib.request.Request(f"https://{os.environ['REGISTRY_HOST']}/v2/")
+          request.add_header(
+              "Authorization",
+              "Basic " + base64.b64encode(credentials.encode()).decode(),
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  if response.status == 200:
+                      print("Registry accepted the workflow credentials.")
+                  else:
+                      print(f"Registry credential check returned HTTP {response.status}.")
+                      sys.exit(1)
+          except urllib.error.HTTPError as error:
+              print(f"Registry rejected the workflow credentials with HTTP {error.code}.")
+              sys.exit(1)
+          except Exception as error:
+              print(f"Could not check registry credentials: {type(error).__name__}.")
+              sys.exit(1)
+          PY
           printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry_host" --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build and push ARM64 image
