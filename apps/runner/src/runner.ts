@@ -13,6 +13,9 @@ const MAX_BACKOFF_MS = 60_000;
 const log = (message: string) =>
 	console.log(`${new Date().toISOString()} ${message}`);
 
+const errorMessage = (error: unknown) =>
+	error instanceof Error ? error.message : String(error);
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Api = ReturnType<typeof createApi>;
@@ -80,6 +83,7 @@ const executeRun = async (
 	);
 
 	let lastSent = Date.now();
+	let lastOutputErrorLog = 0;
 	const ticker = setInterval(() => {
 		if (sender.size === 0 && Date.now() - lastSent < HEARTBEAT_INTERVAL_MS)
 			return;
@@ -90,9 +94,12 @@ const executeRun = async (
 			.then(() => {
 				if (cancelRequested) stop("cancelled in Dokploy");
 			})
-			.catch((error) =>
-				log(`Couldn't send output, will retry: ${error.message}`),
-			);
+			.catch((error: unknown) => {
+				const now = Date.now();
+				if (now - lastOutputErrorLog < 30_000) return;
+				lastOutputErrorLog = now;
+				log(`Couldn't send output, will retry: ${errorMessage(error)}`);
+			});
 	}, FLUSH_INTERVAL_MS);
 
 	const exitCode = await new Promise<number>((resolve) => {
@@ -116,7 +123,7 @@ const executeRun = async (
 	// The run isn't finished in Dokploy until its output and result arrive, so keep retrying.
 	for (let attempt = 1; ; attempt++) {
 		try {
-			await sender.flush();
+			await sender.flush(true);
 			await api.post(
 				`/api/workflow-runner/runs/${run.workflowRunId}/complete`,
 				{
@@ -131,7 +138,7 @@ const executeRun = async (
 			if (error instanceof ApiError && error.status === 404) break;
 			const delay = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
 			log(
-				`Couldn't report the result, retrying in ${delay / 1000}s: ${(error as Error).message}`,
+				`Couldn't report the result, retrying in ${delay / 1000}s: ${errorMessage(error)}`,
 			);
 			await sleep(delay);
 		}

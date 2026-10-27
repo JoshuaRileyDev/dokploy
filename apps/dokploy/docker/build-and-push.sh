@@ -24,6 +24,7 @@ if [[ ! -f apps/dokploy/.env.production ]]; then
 fi
 
 docker buildx build \
+	--progress=plain \
 	--platform linux/arm64 \
 	--pull \
 	--tag "$IMAGE" \

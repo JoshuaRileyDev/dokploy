@@ -48,6 +48,7 @@ jobs:
           registry_host="${REGISTRY_IMAGE%%/*}"
           docker_config="$(mktemp -d)"
           chmod 700 "$docker_config"
+          export DOCKER_CONFIG="$docker_config"
           printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
           REGISTRY_HOST="$registry_host" python3 - <<'PY'
           import base64
