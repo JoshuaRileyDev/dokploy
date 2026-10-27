@@ -14,11 +14,16 @@ import { TRPCError } from "@trpc/server";
 import {
 	and,
 	arrayContains,
+	count,
 	desc,
 	eq,
+	ilike,
 	inArray,
 	isNotNull,
+	isNull,
 	lt,
+	or,
+	type SQL,
 	sql,
 } from "drizzle-orm";
 import { scheduledJobs, scheduleJob } from "node-schedule";
@@ -66,6 +71,44 @@ const FINISHED_STATUSES: WorkflowRunStatus[] = [
 export const isFinishedRunStatus = (status: WorkflowRunStatus) =>
 	FINISHED_STATUSES.includes(status);
 
+const runListColumns = {
+	workflowRunId: workflowRuns.workflowRunId,
+	workflowRepositoryId: workflowRuns.workflowRepositoryId,
+	workflowName: workflowRuns.workflowName,
+	workflowPath: workflowRuns.workflowPath,
+	source: workflowRuns.source,
+	runNumber: workflowRuns.runNumber,
+	attempt: workflowRuns.attempt,
+	event: workflowRuns.event,
+	eventAction: workflowRuns.eventAction,
+	branch: workflowRuns.branch,
+	ref: workflowRuns.ref,
+	sha: workflowRuns.sha,
+	title: workflowRuns.title,
+	actor: workflowRuns.actor,
+	status: workflowRuns.status,
+	createdAt: workflowRuns.createdAt,
+	startedAt: workflowRuns.startedAt,
+	finishedAt: workflowRuns.finishedAt,
+	archivedAt: workflowRuns.archivedAt,
+	owner: workflowRepositories.owner,
+	repository: workflowRepositories.repository,
+};
+
+const repositoryJoin = eq(
+	workflowRuns.workflowRepositoryId,
+	workflowRepositories.workflowRepositoryId,
+);
+
+const runScope = (organizationId: string, workflowRepositoryId?: string) =>
+	and(
+		eq(workflowRepositories.organizationId, organizationId),
+		workflowRepositoryId
+			? eq(workflowRuns.workflowRepositoryId, workflowRepositoryId)
+			: undefined,
+	);
+
+/** Unarchived runs, newest first. */
 export const findWorkflowRuns = async ({
 	organizationId,
 	workflowRepositoryId,
@@ -78,46 +121,196 @@ export const findWorkflowRuns = async ({
 	limit: number;
 }) =>
 	db
-		.select({
-			workflowRunId: workflowRuns.workflowRunId,
-			workflowRepositoryId: workflowRuns.workflowRepositoryId,
-			workflowName: workflowRuns.workflowName,
-			workflowPath: workflowRuns.workflowPath,
-			runNumber: workflowRuns.runNumber,
-			attempt: workflowRuns.attempt,
-			event: workflowRuns.event,
-			eventAction: workflowRuns.eventAction,
-			branch: workflowRuns.branch,
-			ref: workflowRuns.ref,
-			sha: workflowRuns.sha,
-			title: workflowRuns.title,
-			actor: workflowRuns.actor,
-			status: workflowRuns.status,
-			createdAt: workflowRuns.createdAt,
-			startedAt: workflowRuns.startedAt,
-			finishedAt: workflowRuns.finishedAt,
-			owner: workflowRepositories.owner,
-			repository: workflowRepositories.repository,
-		})
+		.select(runListColumns)
 		.from(workflowRuns)
-		.innerJoin(
-			workflowRepositories,
-			eq(
-				workflowRuns.workflowRepositoryId,
-				workflowRepositories.workflowRepositoryId,
-			),
-		)
+		.innerJoin(workflowRepositories, repositoryJoin)
 		.where(
 			and(
-				eq(workflowRepositories.organizationId, organizationId),
-				workflowRepositoryId
-					? eq(workflowRuns.workflowRepositoryId, workflowRepositoryId)
-					: undefined,
+				runScope(organizationId, workflowRepositoryId),
+				isNull(workflowRuns.archivedAt),
 				status ? eq(workflowRuns.status, status) : undefined,
 			),
 		)
 		.orderBy(desc(workflowRuns.createdAt))
 		.limit(limit);
+
+const escapeLike = (value: string) => value.replace(/[\\%_]/g, "\\$&");
+
+export const searchWorkflowRuns = async ({
+	organizationId,
+	workflowRepositoryId,
+	search,
+	status,
+	workflowPath,
+	event,
+	branch,
+	archived,
+	limit,
+	offset,
+}: {
+	organizationId: string;
+	workflowRepositoryId?: string;
+	search?: string;
+	status?: WorkflowRunStatus;
+	workflowPath?: string;
+	event?: string;
+	branch?: string;
+	archived: boolean;
+	limit: number;
+	offset: number;
+}) => {
+	const pattern = search ? `%${escapeLike(search)}%` : undefined;
+	const runNumber = search?.match(/^#?(\d{1,9})$/)?.[1];
+	const where = and(
+		runScope(organizationId, workflowRepositoryId),
+		archived
+			? isNotNull(workflowRuns.archivedAt)
+			: isNull(workflowRuns.archivedAt),
+		status ? eq(workflowRuns.status, status) : undefined,
+		workflowPath ? eq(workflowRuns.workflowPath, workflowPath) : undefined,
+		event ? eq(workflowRuns.event, event) : undefined,
+		branch ? eq(workflowRuns.branch, branch) : undefined,
+		pattern
+			? or(
+					ilike(workflowRuns.workflowName, pattern),
+					ilike(workflowRuns.title, pattern),
+					ilike(workflowRuns.branch, pattern),
+					ilike(workflowRuns.sha, `${escapeLike(search!)}%`),
+					ilike(workflowRuns.actor, pattern),
+					ilike(
+						sql`${workflowRepositories.owner} || '/' || ${workflowRepositories.repository}`,
+						pattern,
+					),
+					runNumber ? eq(workflowRuns.runNumber, Number(runNumber)) : undefined,
+				)
+			: undefined,
+	);
+	const [runs, [totals]] = await Promise.all([
+		db
+			.select(runListColumns)
+			.from(workflowRuns)
+			.innerJoin(workflowRepositories, repositoryJoin)
+			.where(where)
+			.orderBy(desc(workflowRuns.createdAt))
+			.limit(limit)
+			.offset(offset),
+		db
+			.select({ total: count() })
+			.from(workflowRuns)
+			.innerJoin(workflowRepositories, repositoryJoin)
+			.where(where),
+	]);
+	return { runs, total: totals?.total ?? 0 };
+};
+
+/** The workflows, events and branches that have runs, for the run list's filters. */
+export const findWorkflowRunFilterOptions = async ({
+	organizationId,
+	workflowRepositoryId,
+}: {
+	organizationId: string;
+	workflowRepositoryId?: string;
+}) => {
+	const scope = runScope(organizationId, workflowRepositoryId);
+	const [workflows, events, branches] = await Promise.all([
+		db
+			.selectDistinctOn([workflowRuns.workflowPath], {
+				workflowPath: workflowRuns.workflowPath,
+				workflowName: workflowRuns.workflowName,
+			})
+			.from(workflowRuns)
+			.innerJoin(workflowRepositories, repositoryJoin)
+			.where(scope)
+			.orderBy(workflowRuns.workflowPath, desc(workflowRuns.createdAt)),
+		db
+			.selectDistinct({ event: workflowRuns.event })
+			.from(workflowRuns)
+			.innerJoin(workflowRepositories, repositoryJoin)
+			.where(scope)
+			.orderBy(workflowRuns.event),
+		db
+			.select({
+				branch: workflowRuns.branch,
+				lastRunAt: sql<string>`max(${workflowRuns.createdAt})`,
+			})
+			.from(workflowRuns)
+			.innerJoin(workflowRepositories, repositoryJoin)
+			.where(and(scope, isNotNull(workflowRuns.branch)))
+			.groupBy(workflowRuns.branch)
+			.orderBy(sql`max(${workflowRuns.createdAt}) desc`)
+			.limit(100),
+	]);
+	return {
+		workflows: workflows.sort((a, b) =>
+			a.workflowName.localeCompare(b.workflowName),
+		),
+		events: events.map((row) => row.event),
+		branches: branches.flatMap((row) => (row.branch ? [row.branch] : [])),
+	};
+};
+
+/** Loads the runs, refusing if any is missing, belongs to another organization or hasn't finished. */
+const findFinishedOwnedRuns = async (
+	workflowRunIds: string[],
+	organizationId: string,
+) => {
+	const runs = await db
+		.select({
+			workflowRunId: workflowRuns.workflowRunId,
+			status: workflowRuns.status,
+			organizationId: workflowRepositories.organizationId,
+		})
+		.from(workflowRuns)
+		.innerJoin(workflowRepositories, repositoryJoin)
+		.where(inArray(workflowRuns.workflowRunId, workflowRunIds));
+	const owned = runs.filter((run) => run.organizationId === organizationId);
+	if (owned.length !== new Set(workflowRunIds).size) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Run not found" });
+	}
+	if (owned.some((run) => !isFinishedRunStatus(run.status))) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Only finished runs can be archived or deleted",
+		});
+	}
+	return owned.map((run) => run.workflowRunId);
+};
+
+export const setWorkflowRunsArchived = async (
+	workflowRunIds: string[],
+	archived: boolean,
+	organizationId: string,
+) => {
+	const ids = await findFinishedOwnedRuns(workflowRunIds, organizationId);
+	await db
+		.update(workflowRuns)
+		.set({ archivedAt: archived ? new Date().toISOString() : null })
+		.where(inArray(workflowRuns.workflowRunId, ids));
+	return ids.length;
+};
+
+export const removeWorkflowRuns = async (
+	workflowRunIds: string[],
+	organizationId: string,
+) => {
+	const ids = await findFinishedOwnedRuns(workflowRunIds, organizationId);
+	await deleteRunsAndLogs(inArray(workflowRuns.workflowRunId, ids));
+	return ids.length;
+};
+
+const deleteRunsAndLogs = async (where: SQL | undefined) => {
+	const removed = await db
+		.delete(workflowRuns)
+		.where(where)
+		.returning({ workflowRunId: workflowRuns.workflowRunId });
+	for (const run of removed) {
+		await rm(workflowLogsDirectory(run.workflowRunId), {
+			recursive: true,
+			force: true,
+		});
+	}
+	return removed.length;
+};
 
 export const findWorkflowRunById = async (workflowRunId: string) => {
 	const run = await db.query.workflowRuns.findFirst({
@@ -1028,22 +1221,12 @@ export const cleanupOldWorkflowRuns = async () => {
 	const cutoff = new Date(
 		Date.now() - RUN_RETENTION_DAYS * 24 * 60 * 60 * 1000,
 	).toISOString();
-	const removed = await db
-		.delete(workflowRuns)
-		.where(
-			and(
-				lt(workflowRuns.createdAt, cutoff),
-				inArray(workflowRuns.status, FINISHED_STATUSES),
-			),
-		)
-		.returning({ workflowRunId: workflowRuns.workflowRunId });
-	for (const run of removed) {
-		await rm(workflowLogsDirectory(run.workflowRunId), {
-			recursive: true,
-			force: true,
-		});
-	}
-	return removed.length;
+	return deleteRunsAndLogs(
+		and(
+			lt(workflowRuns.createdAt, cutoff),
+			inArray(workflowRuns.status, FINISHED_STATUSES),
+		),
+	);
 };
 
 export type WorkflowServiceType = "application" | "compose";
