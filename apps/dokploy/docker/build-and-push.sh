@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT_DIR"
 
-IMAGE="joshua2212/dokploy:latest"
+IMAGE="${REGISTRY_IMAGE:?Set REGISTRY_IMAGE to the private registry image, including its tag}"
 EXAMPLE_ENV="apps/dokploy/.env.production.example"
 
 if ! docker info >/dev/null 2>&1; then

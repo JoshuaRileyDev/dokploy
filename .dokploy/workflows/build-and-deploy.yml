@@ -25,19 +25,32 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub
+      - name: Log in to private registry
         env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+          REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REGISTRY_IMAGE" =~ ^[a-zA-Z0-9.-]+(:[0-9]+)?/[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+$ ]]; then
+            echo "REGISTRY_IMAGE must be a full registry image reference including a tag." >&2
+            exit 1
+          fi
+          registry_host="${REGISTRY_IMAGE%%/*}"
+          echo "$REGISTRY_PASSWORD" | docker login "$registry_host" --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build and push ARM64 image
+        env:
+          REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
         run: bash apps/dokploy/docker/build-and-push.sh
 
       - name: Update production Swarm service
         env:
           DEPLOY_HOST: 37.27.252.79
           DEPLOY_USER: root
+          REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
+          REGISTRY_PULL_USERNAME: ${{ secrets.REGISTRY_PULL_USERNAME }}
+          REGISTRY_PULL_PASSWORD: ${{ secrets.REGISTRY_PULL_PASSWORD }}
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
         run: |
@@ -48,11 +61,14 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$key_file"
           chmod 600 "$key_file"
           test -n "$DEPLOY_KNOWN_HOSTS" || { echo "DEPLOY_KNOWN_HOSTS must contain the verified SSH host-key entry." >&2; exit 1; }
+          [[ "$REGISTRY_IMAGE" =~ ^[a-zA-Z0-9.-]+(:[0-9]+)?/[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+$ ]] || { echo "REGISTRY_IMAGE must be a full registry image reference including a tag." >&2; exit 1; }
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts_file"
-          ssh \
+          registry_host="${REGISTRY_IMAGE%%/*}"
+          printf -v deploy_command 'trap '\''docker logout %q >/dev/null 2>&1 || true'\'' EXIT; docker login %q --username %q --password-stdin && docker pull %q && docker service update --with-registry-auth --force --image %q --update-parallelism 1 --update-order stop-first --update-monitor 60s --update-failure-action rollback dokploy' "$registry_host" "$registry_host" "$REGISTRY_PULL_USERNAME" "$REGISTRY_IMAGE" "$REGISTRY_IMAGE"
+          printf '%s' "$REGISTRY_PULL_PASSWORD" | ssh \
             -i "$key_file" \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=$known_hosts_file" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            'docker pull joshua2212/dokploy:latest && docker service update --force --image joshua2212/dokploy:latest --update-parallelism 1 --update-order stop-first --update-monitor 60s --update-failure-action rollback dokploy'
+            "$deploy_command"
