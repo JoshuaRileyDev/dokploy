@@ -14,6 +14,7 @@ import {
 	findWorkflowRepositoryById,
 	findWorkflowRepositoryForService,
 	findWorkflowRunById,
+	findWorkflowRunFilterOptions,
 	findWorkflowRunners,
 	findWorkflowRuns,
 	getWorkflowRepositoryOctokit,
@@ -27,10 +28,13 @@ import {
 	removeWorkflowNotificationRule,
 	removeWorkflowRepository,
 	removeWorkflowRunner,
+	removeWorkflowRuns,
 	rerunWorkflowRun,
+	searchWorkflowRuns,
 	setWorkflowDefinitionEnabled,
 	setWorkflowEnv,
 	setWorkflowJobEnabled,
+	setWorkflowRunsArchived,
 	syncWorkflowRepository,
 	syncWorkflowSchedules,
 	updateWorkflowRepository,
@@ -61,11 +65,15 @@ import {
 	apiReadWorkflowRunLogs,
 	apiRemoveWorkflowEnv,
 	apiRemoveWorkflowNotification,
+	apiSearchWorkflowRuns,
 	apiSetWorkflowDefinitionEnabled,
 	apiSetWorkflowEnv,
 	apiSetWorkflowJobEnabled,
+	apiSetWorkflowRunsArchived,
 	apiUpdateWorkflowRepository,
 	apiUpdateWorkflowRunner,
+	apiWorkflowRunFilterOptions,
+	apiWorkflowRunIds,
 	apiWorkflowService,
 } from "@/server/db/schema";
 
@@ -260,6 +268,53 @@ export const workflowRouter = createTRPCRouter({
 				...input,
 			}),
 		),
+	searchRuns: workflowProcedure("read")
+		.input(apiSearchWorkflowRuns)
+		.query(({ input, ctx }) =>
+			searchWorkflowRuns({
+				organizationId: ctx.session.activeOrganizationId,
+				...input,
+			}),
+		),
+	runFilterOptions: workflowProcedure("read")
+		.input(apiWorkflowRunFilterOptions)
+		.query(({ input, ctx }) =>
+			findWorkflowRunFilterOptions({
+				organizationId: ctx.session.activeOrganizationId,
+				...input,
+			}),
+		),
+	setRunsArchived: workflowProcedure("run")
+		.input(apiSetWorkflowRunsArchived)
+		.mutation(async ({ input, ctx }) => {
+			const updated = await setWorkflowRunsArchived(
+				input.workflowRunIds,
+				input.archived,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "workflow",
+				resourceName: `${input.archived ? "Archived" : "Unarchived"} ${updated} ${updated === 1 ? "run" : "runs"}`,
+				metadata: { workflowRunIds: input.workflowRunIds },
+			});
+			return { updated };
+		}),
+	removeRuns: workflowProcedure("delete")
+		.input(apiWorkflowRunIds)
+		.mutation(async ({ input, ctx }) => {
+			const removed = await removeWorkflowRuns(
+				input.workflowRunIds,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "delete",
+				resourceType: "workflow",
+				resourceName: `Deleted ${removed} ${removed === 1 ? "run" : "runs"}`,
+				metadata: { workflowRunIds: input.workflowRunIds },
+			});
+			return { removed };
+		}),
 	oneRun: workflowProcedure("read")
 		.input(apiFindOneWorkflowRun)
 		.query(async ({ input, ctx }) => {

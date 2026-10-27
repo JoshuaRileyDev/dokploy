@@ -252,6 +252,7 @@ export const workflowRuns = pgTable(
 			.$defaultFn(() => new Date().toISOString()),
 		startedAt: text("startedAt"),
 		finishedAt: text("finishedAt"),
+		archivedAt: text("archivedAt"),
 	},
 	(table) => [
 		index("workflow_run_repo_created_idx").on(
@@ -424,6 +425,31 @@ export const apiFindWorkflowRuns = z.object({
 	workflowRepositoryId: z.string().optional(),
 	status: z.enum(workflowRunStatus.enumValues).optional(),
 	limit: z.number().int().min(1).max(200).default(50),
+});
+
+export const apiSearchWorkflowRuns = z.object({
+	workflowRepositoryId: z.string().optional(),
+	/** Matches the workflow name, run title, branch, commit, actor, repository or "#<run number>". */
+	search: z.string().trim().max(200).optional(),
+	status: z.enum(workflowRunStatus.enumValues).optional(),
+	workflowPath: z.string().optional(),
+	event: z.string().optional(),
+	branch: z.string().optional(),
+	archived: z.boolean().default(false),
+	limit: z.number().int().min(1).max(100).default(20),
+	offset: z.number().int().min(0).default(0),
+});
+
+export const apiWorkflowRunFilterOptions = z.object({
+	workflowRepositoryId: z.string().optional(),
+});
+
+export const apiWorkflowRunIds = z.object({
+	workflowRunIds: z.array(z.string().min(1)).min(1).max(100),
+});
+
+export const apiSetWorkflowRunsArchived = apiWorkflowRunIds.extend({
+	archived: z.boolean(),
 });
 
 export const apiFindOneWorkflowRun = z.object({

@@ -1,4 +1,13 @@
-import { ArrowLeft, Ban, GitBranch, Loader2, RotateCcw } from "lucide-react";
+import {
+	Archive,
+	ArchiveRestore,
+	ArrowLeft,
+	Ban,
+	GitBranch,
+	Loader2,
+	RotateCcw,
+	Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
@@ -46,6 +55,8 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 	);
 	const rerun = api.workflow.rerun.useMutation();
 	const cancel = api.workflow.cancelRun.useMutation();
+	const setArchived = api.workflow.setRunsArchived.useMutation();
+	const remove = api.workflow.removeRuns.useMutation();
 	const [selected, setSelected] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -74,6 +85,7 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 	);
 	const selectedJob = run.jobs.find((job) => job.workflowJobId === selected);
 	const canRun = !!permissions?.workflow.run;
+	const canDelete = !!permissions?.workflow.delete;
 	const finished = isFinished(run.status);
 
 	return (
@@ -96,6 +108,12 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 									<span className="text-base font-normal text-muted-foreground">
 										attempt {run.attempt}
 									</span>
+								)}
+								{run.archivedAt && (
+									<Badge variant="secondary" className="gap-1 font-normal">
+										<Archive className="size-3" />
+										Archived
+									</Badge>
 								)}
 							</CardTitle>
 							<p className="truncate text-sm">{run.title}</p>
@@ -138,9 +156,9 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								</span>
 							</CardDescription>
 						</div>
-						{canRun && (
+						{(canRun || canDelete) && (
 							<div className="flex gap-2">
-								{!finished && (
+								{canRun && !finished && (
 									<DialogAction
 										title="Cancel run"
 										description="Stop this run? Running jobs are terminated."
@@ -163,7 +181,7 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 										</Button>
 									</DialogAction>
 								)}
-								{finished && (
+								{canRun && finished && (
 									<Button
 										variant="outline"
 										isLoading={rerun.isPending}
@@ -181,6 +199,58 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 										<RotateCcw className="size-4" />
 										Re-run
 									</Button>
+								)}
+								{canRun && finished && (
+									<Button
+										variant="outline"
+										isLoading={setArchived.isPending}
+										onClick={() =>
+											setArchived
+												.mutateAsync({
+													workflowRunIds: [workflowRunId],
+													archived: !run.archivedAt,
+												})
+												.then(() => {
+													toast.success(
+														run.archivedAt ? "Run restored" : "Run archived",
+													);
+													return utils.workflow.oneRun.invalidate({
+														workflowRunId,
+													});
+												})
+												.catch((error) => toast.error(error.message))
+										}
+									>
+										{run.archivedAt ? (
+											<ArchiveRestore className="size-4" />
+										) : (
+											<Archive className="size-4" />
+										)}
+										{run.archivedAt ? "Restore" : "Archive"}
+									</Button>
+								)}
+								{canDelete && finished && (
+									<DialogAction
+										title="Delete run"
+										description="The run, its jobs and its logs are removed permanently. Archive it instead to hide it but keep the history."
+										type="destructive"
+										onClick={() =>
+											remove
+												.mutateAsync({ workflowRunIds: [workflowRunId] })
+												.then(() => {
+													toast.success("Run deleted");
+													return router.push(
+														`/dashboard/workflows/repositories/${run.workflowRepositoryId}?tab=runs`,
+													);
+												})
+												.catch((error) => toast.error(error.message))
+										}
+									>
+										<Button variant="outline" isLoading={remove.isPending}>
+											<Trash2 className="size-4" />
+											Delete
+										</Button>
+									</DialogAction>
 								)}
 							</div>
 						)}

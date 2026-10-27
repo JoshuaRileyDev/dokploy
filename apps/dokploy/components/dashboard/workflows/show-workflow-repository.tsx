@@ -1,5 +1,12 @@
-import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
+import {
+	ArrowLeft,
+	ExternalLink,
+	FileCode2,
+	History,
+	Loader2,
+} from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { GithubIcon } from "@/components/icons/data-tools-icons";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { DateTooltip } from "@/components/shared/date-tooltip";
@@ -10,6 +17,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/utils/api";
 import { ShowWorkflowRuns } from "./show-workflow-runs";
 import { SyncWorkflowsButton } from "./sync-workflows-button";
@@ -17,11 +25,18 @@ import { githubRepositoryUrl } from "./utils";
 import { WorkflowDefinitionsTable } from "./workflow-definitions-table";
 import { WorkflowRepositorySettings } from "./workflow-repository-settings";
 
+const TABS = ["workflows", "runs"] as const;
+type Tab = (typeof TABS)[number];
+
 interface Props {
 	workflowRepositoryId: string;
 }
 
 export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
+	const router = useRouter();
+	const tab: Tab = TABS.includes(router.query.tab as Tab)
+		? (router.query.tab as Tab)
+		: "workflows";
 	const { data: permissions } = api.user.getPermissions.useQuery();
 	const { data: repository, isPending } = api.workflow.oneRepository.useQuery({
 		workflowRepositoryId,
@@ -86,33 +101,50 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 							</div>
 						)}
 					</CardHeader>
-					<CardContent className="flex flex-col gap-3 border-t pt-4">
-						{repository.syncError && (
+					{repository.syncError && (
+						<CardContent className="pt-0">
 							<AlertBlock type="error">
 								Last sync failed: {repository.syncError}
 							</AlertBlock>
-						)}
-						<div>
-							<h3 className="font-medium">Workflows</h3>
+						</CardContent>
+					)}
+				</div>
+			</Card>
+			<Card className="rounded-xl bg-sidebar p-2.5">
+				<div className="rounded-xl bg-background p-4 shadow-md">
+					<Tabs
+						value={tab}
+						onValueChange={(value) =>
+							router.replace(
+								{ query: { ...router.query, tab: value } },
+								undefined,
+								{ shallow: true },
+							)
+						}
+					>
+						<TabsList>
+							<TabsTrigger value="workflows">
+								<FileCode2 />
+								Workflows
+							</TabsTrigger>
+							<TabsTrigger value="runs">
+								<History />
+								Runs
+							</TabsTrigger>
+						</TabsList>
+						<TabsContent value="workflows" className="flex flex-col gap-3 pt-3">
 							<p className="text-sm text-muted-foreground">
 								Read from the {repository.defaultBranch} branch. Runs always use
 								the workflow files at the commit that triggered them.
 							</p>
-						</div>
-						<WorkflowDefinitionsTable
-							workflowRepositoryId={workflowRepositoryId}
-						/>
-					</CardContent>
-				</div>
-			</Card>
-			<Card className="rounded-xl bg-sidebar p-2.5">
-				<div className="rounded-xl bg-background shadow-md">
-					<CardHeader>
-						<CardTitle className="text-lg">Runs</CardTitle>
-					</CardHeader>
-					<CardContent className="border-t pt-4">
-						<ShowWorkflowRuns workflowRepositoryId={workflowRepositoryId} />
-					</CardContent>
+							<WorkflowDefinitionsTable
+								workflowRepositoryId={workflowRepositoryId}
+							/>
+						</TabsContent>
+						<TabsContent value="runs" className="pt-3">
+							<ShowWorkflowRuns workflowRepositoryId={workflowRepositoryId} />
+						</TabsContent>
+					</Tabs>
 				</div>
 			</Card>
 		</div>
