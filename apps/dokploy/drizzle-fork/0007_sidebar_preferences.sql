@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "forkHiddenSidebarItems" text[] DEFAULT ARRAY[]::text[] NOT NULL;
