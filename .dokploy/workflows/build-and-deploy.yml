@@ -19,7 +19,7 @@ concurrency:
 jobs:
   build-and-deploy:
     name: Build ARM64 image and update Swarm
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, dokploy-build]
     steps:
       - name: Require the deployment branch
         run: |
@@ -46,6 +46,9 @@ jobs:
             exit 1
           fi
           registry_host="${REGISTRY_IMAGE%%/*}"
+          docker_config="$(mktemp -d)"
+          chmod 700 "$docker_config"
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
           REGISTRY_HOST="$registry_host" python3 - <<'PY'
           import base64
           import os
@@ -80,6 +83,17 @@ jobs:
         env:
           REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
         run: bash apps/dokploy/docker/build-and-push.sh
+
+      - name: Remove temporary registry credentials
+        if: always()
+        env:
+          REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
+        run: |
+          if [[ -n "${DOCKER_CONFIG:-}" ]]; then
+            registry_host="${REGISTRY_IMAGE%%/*}"
+            docker logout "$registry_host" >/dev/null 2>&1 || true
+            rm -rf "$DOCKER_CONFIG"
+          fi
 
       - name: Update production Swarm service
         env:
