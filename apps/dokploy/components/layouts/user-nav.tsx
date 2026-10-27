@@ -80,6 +80,14 @@ export const UserNav = () => {
 					<DropdownMenuItem
 						className="cursor-pointer"
 						onClick={() => {
+							router.push("/dashboard/settings/sidebar");
+						}}
+					>
+						Sidebar
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						className="cursor-pointer"
+						onClick={() => {
 							router.push("/dashboard/home");
 						}}
 					>

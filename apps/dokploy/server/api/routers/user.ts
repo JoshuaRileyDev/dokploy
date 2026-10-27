@@ -200,6 +200,7 @@ export const userRouter = createTRPCRouter({
 						serversQuantity: true,
 						isEnterpriseCloud: true,
 						sendInvoiceNotifications: true,
+						hiddenSidebarItems: true,
 					},
 					with: {
 						apiKeys: {
@@ -324,6 +325,16 @@ export const userRouter = createTRPCRouter({
 						error instanceof Error ? error.message : "Failed to update user",
 				});
 			}
+		}),
+	updateHiddenSidebarItems: protectedProcedure
+		.input(
+			z.object({ hiddenSidebarItems: z.array(z.string().max(255)).max(100) }),
+		)
+		.mutation(async ({ input, ctx }) => {
+			await db
+				.update(user)
+				.set({ hiddenSidebarItems: input.hiddenSidebarItems })
+				.where(eq(user.id, ctx.user.id));
 		}),
 	listSessions: protectedProcedure.query(async ({ ctx }) => {
 		const isOwner = ctx.user.role === "owner";

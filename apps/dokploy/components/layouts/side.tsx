@@ -136,7 +136,7 @@ type SingleNavItem = {
 // Consists of a single item or a group of items
 // If `isSingle` is true or undefined, the item is a single item
 // If `isSingle` is false, the item is a group of items
-type NavItem =
+export type NavItem =
 	| SingleNavItem
 	| {
 			isSingle: false;
@@ -167,7 +167,7 @@ type Menu = {
 // Consists of unfiltered home, settings, and help items
 // The items are filtered based on the user's role and permissions
 // The `isEnabled` function is called to determine if the item should be displayed
-const MENU: Menu = {
+export const MENU: Menu = {
 	home: [
 		{
 			isSingle: true,
@@ -496,7 +496,7 @@ const MENU: Menu = {
  * Creates a menu based on the current user's role and permissions
  * @returns a menu object with the home, settings, and help items
  */
-function createMenuForAuthUser(opts: {
+export function createMenuForAuthUser(opts: {
 	auth?: AuthQueryOutput;
 	permissions?: PermissionsOutput;
 	isCloud: boolean;
@@ -592,6 +592,10 @@ function findActiveNavItem(
 	return found?.items.find((item) =>
 		isActiveRoute({ itemUrl: item.url, pathname }),
 	);
+}
+
+export function getNavItemKey(item: NavItem): string {
+	return item.isSingle === false ? item.title : item.url;
 }
 
 interface Props {
@@ -1000,9 +1004,17 @@ export default function Page({ children }: Props) {
 		whitelabeling,
 	});
 
+	// Hidden items still resolve for the breadcrumb, so their pages stay titled.
 	const activeItem = findActiveNavItem(
 		[...filteredHome, ...filteredSettings],
 		pathname,
+	);
+	const hiddenSidebarItems = new Set(auth?.user?.hiddenSidebarItems ?? []);
+	const visibleHome = filteredHome.filter(
+		(item) => !hiddenSidebarItems.has(getNavItemKey(item)),
+	);
+	const visibleSettings = filteredSettings.filter(
+		(item) => !hiddenSidebarItems.has(getNavItemKey(item)),
 	);
 
 	if (!isLoaded) {
@@ -1040,7 +1052,7 @@ export default function Page({ children }: Props) {
 					<SidebarGroup>
 						<SidebarGroupLabel>Home</SidebarGroupLabel>
 						<SidebarMenu>
-							{filteredHome.map((item) => {
+							{visibleHome.map((item) => {
 								const isSingle = item.isSingle !== false;
 								const isActive = isSingle
 									? isActiveRoute({ itemUrl: item.url, pathname })
@@ -1129,7 +1141,7 @@ export default function Page({ children }: Props) {
 					<SidebarGroup>
 						<SidebarGroupLabel>Settings</SidebarGroupLabel>
 						<SidebarMenu className="gap-1">
-							{filteredSettings.map((item) => {
+							{visibleSettings.map((item) => {
 								const isSingle = item.isSingle !== false;
 								const isActive = isSingle
 									? isActiveRoute({ itemUrl: item.url, pathname })

@@ -74,6 +74,10 @@ export const user = pgTable("user", {
 		.array()
 		.default(sql`ARRAY[]::text[]`),
 	onboardingCompletedAt: timestamp("onboardingCompletedAt"),
+	hiddenSidebarItems: text("forkHiddenSidebarItems")
+		.array()
+		.notNull()
+		.default(sql`ARRAY[]::text[]`),
 });
 
 export const usersRelations = relations(user, ({ one, many }) => ({
@@ -99,6 +103,7 @@ const createSchema = createInsertSchema(user, {
 	isValidEnterpriseLicense: true,
 	isEnterpriseCloud: true,
 	onboardingCompletedAt: true,
+	hiddenSidebarItems: true,
 });
 
 export const apiCreateUserInvitation = createSchema.pick({}).extend({

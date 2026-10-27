@@ -57,6 +57,14 @@
       "tag": "0006_notification_targets",
       "breakpoints": true,
       "upstreamSnapshotId": "e2f2cd03-52dd-457a-8854-1ef6d0b5d168"
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793137240868,
+      "tag": "0007_sidebar_preferences",
+      "breakpoints": true,
+      "upstreamSnapshotId": "4c5cd64c-f0fa-4b62-9a8e-504f2f435212"
     }
   ]
 }
