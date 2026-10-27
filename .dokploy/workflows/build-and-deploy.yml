@@ -5,6 +5,12 @@ on:
     branches:
       - fork
   workflow_dispatch:
+    inputs:
+      deploy_only:
+        description: Deploy the image already published as REGISTRY_IMAGE without rebuilding
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: dokploy-production-deploy
@@ -26,6 +32,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Log in to private registry
+        if: ${{ inputs.deploy_only != true }}
         env:
           REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
@@ -69,6 +76,7 @@ jobs:
           printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry_host" --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build and push ARM64 image
+        if: ${{ inputs.deploy_only != true }}
         env:
           REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
         run: bash apps/dokploy/docker/build-and-push.sh
@@ -86,9 +94,25 @@ jobs:
           set -euo pipefail
           key_file="$(mktemp)"
           known_hosts_file="$(mktemp)"
-          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
-          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$key_file"
+          public_key_file="${key_file}.pub"
+          trap 'rm -f "$key_file" "$known_hosts_file" "$public_key_file"' EXIT
+          python3 - "$key_file" <<'PY'
+          import os
+          import sys
+
+          key = os.environ["DEPLOY_SSH_PRIVATE_KEY"]
+          if "\n" not in key and "\\n" in key:
+              key = key.replace("\\r\\n", "\n").replace("\\n", "\n")
+          key = key.replace("\r\n", "\n").replace("\r", "\n")
+          with open(sys.argv[1], "w") as private_key:
+              private_key.write(key.rstrip("\n") + "\n")
+          PY
           chmod 600 "$key_file"
+          if ! ssh-keygen -y -f "$key_file" > "$public_key_file" 2>/dev/null; then
+            echo "DEPLOY_SSH_PRIVATE_KEY is not a usable unencrypted private key. Store the complete private key block with real or escaped newlines and no quotes or passphrase." >&2
+            exit 1
+          fi
+          ssh-keygen -lf "$public_key_file"
           test -n "$DEPLOY_KNOWN_HOSTS" || { echo "DEPLOY_KNOWN_HOSTS must contain the verified SSH host-key entry." >&2; exit 1; }
           [[ "$REGISTRY_IMAGE" =~ ^[a-zA-Z0-9.-]+(:[0-9]+)?/[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+$ ]] || { echo "REGISTRY_IMAGE must be a full registry image reference including a tag." >&2; exit 1; }
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts_file"
@@ -96,6 +120,9 @@ jobs:
           printf -v deploy_command 'trap '\''docker logout %q >/dev/null 2>&1 || true'\'' EXIT; docker login %q --username %q --password-stdin && docker pull %q && docker service update --with-registry-auth --force --image %q --update-parallelism 1 --update-order stop-first --update-monitor 60s --update-failure-action rollback dokploy' "$registry_host" "$registry_host" "$REGISTRY_PULL_USERNAME" "$REGISTRY_IMAGE" "$REGISTRY_IMAGE"
           printf '%s' "$REGISTRY_PULL_PASSWORD" | ssh \
             -i "$key_file" \
+            -o BatchMode=yes \
+            -o PasswordAuthentication=no \
+            -o KbdInteractiveAuthentication=no \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=$known_hosts_file" \
