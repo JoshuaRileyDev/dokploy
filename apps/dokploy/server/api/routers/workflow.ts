@@ -42,6 +42,7 @@ import {
 	checkServiceAccess,
 	checkServicePermissionAndAccess,
 } from "@dokploy/server/services/permission";
+import { readLogTail } from "@dokploy/server/utils/workflows/logs";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
@@ -57,6 +58,7 @@ import {
 	apiImportLinkedServiceEnv,
 	apiImportWorkflowRepository,
 	apiLinkedServiceEnv,
+	apiReadWorkflowRunLogs,
 	apiRemoveWorkflowEnv,
 	apiRemoveWorkflowNotification,
 	apiSetWorkflowDefinitionEnabled,
@@ -272,6 +274,45 @@ export const workflowRouter = createTRPCRouter({
 					...repositoryFields,
 					githubUrl: github?.githubUrl ?? null,
 				},
+			};
+		}),
+	// The live log viewer streams over a websocket, so this is how API clients (CLIs, agents fixing a failed run) read
+	// the logs. Logs are written with secrets already masked.
+	readLogs: workflowProcedure("read")
+		.input(apiReadWorkflowRunLogs)
+		.query(async ({ input, ctx }) => {
+			const run = await findOwnedRun(
+				input.workflowRunId,
+				ctx.session.activeOrganizationId,
+			);
+			const jobs = input.workflowJobId
+				? run.jobs.filter((job) => job.workflowJobId === input.workflowJobId)
+				: run.jobs;
+			if (input.workflowJobId && jobs.length === 0) {
+				throw new TRPCError({ code: "NOT_FOUND", message: "Job not found" });
+			}
+			return {
+				workflowRunId: run.workflowRunId,
+				status: run.status,
+				errorMessage: run.errorMessage,
+				// Setup output and anything act printed outside a job, such as a clone or parse failure.
+				runLog:
+					input.workflowJobId || !run.logPath
+						? null
+						: await readLogTail(run.logPath, input.tail),
+				jobs: await Promise.all(
+					jobs.map(async (job) => ({
+						workflowJobId: job.workflowJobId,
+						jobId: job.jobId,
+						name: job.name,
+						matrix: job.matrix,
+						status: job.status,
+						failedSteps: job.steps
+							.filter((step) => step.status === "failure")
+							.map((step) => step.name),
+						log: await readLogTail(job.logPath, input.tail),
+					})),
+				),
 			};
 		}),
 	dispatch: workflowProcedure("run")
