@@ -16,6 +16,7 @@
 		"server:dev": "pnpm --filter=server run dev",
 		"server:build": "pnpm --filter=server run build",
 		"docker:build:canary": "./apps/dokploy/docker/build.sh canary",
+		"docker:build:hub": "./apps/dokploy/docker/build-and-push.sh",
 		"typecheck": "pnpm -r run typecheck",
 		"build": "pnpm -r run build",
 		"format-and-lint": "biome check .",

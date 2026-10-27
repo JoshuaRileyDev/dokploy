@@ -169,7 +169,7 @@ export const removeWorkflowRepository = async (workflowRepositoryId: string) =>
 
 export const getWorkflowRepositoryOctokit = async (
 	repository: Pick<WorkflowRepository, "githubId">,
-) => {
+): Promise<ReturnType<typeof authGithub>> => {
 	if (!repository.githubId) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",

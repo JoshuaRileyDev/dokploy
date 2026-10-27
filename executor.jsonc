@@ -1,0 +1,33 @@
+{
+  "sources": [
+    {
+      "kind": "openapi",
+      "spec": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
+      "baseUrl": "https://api.cloudflare.com/client/v4",
+      "namespace": "cloudflare_api",
+      "headers": {
+        "Authorization": {
+          "value": "secret-public-ref:cloudflare",
+          "prefix": "Bearer "
+        }
+      }
+    },
+    {
+      "kind": "mcp",
+      "transport": "remote",
+      "name": "Context7",
+      "endpoint": "https://mcp.context7.com/mcp",
+      "remoteTransport": "auto",
+      "namespace": "context7"
+    },
+    {
+      "kind": "openapi",
+      "spec": "https://raw.githubusercontent.com/Dokploy/dokploy/refs/heads/canary/openapi.json",
+      "baseUrl": "https://apps.joshuariley.co.uk/api",
+      "namespace": "dokploy_api",
+      "headers": {
+        "x-api-key": "secret-public-ref:dokploy"
+      }
+    }
+  ]
+}

@@ -9,6 +9,8 @@ FROM base AS build
 COPY . /usr/src/app
 WORKDIR /usr/src/app
 
+ARG TARGETARCH
+
 RUN apt-get update && apt-get install -y python3 make g++ git python3-pip pkg-config libsecret-1-dev && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
@@ -19,6 +21,10 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 ENV NODE_ENV=production
 RUN pnpm --filter=@dokploy/server build
 RUN pnpm --filter=./apps/dokploy run build
+
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+	node -e 'const fs = require("fs"); const p = "node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/package.json"; const pkg = JSON.parse(fs.readFileSync(p, "utf8")); pkg.scripts.postinstall = "true"; fs.writeFileSync(p, JSON.stringify(pkg, null, 2));'; \
+fi
 
 RUN pnpm --filter=./apps/dokploy --prod deploy --legacy /prod/dokploy
 

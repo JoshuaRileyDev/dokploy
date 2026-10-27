@@ -1,0 +1,58 @@
+name: Build and deploy Dokploy
+
+on:
+    push:
+        branches:
+            - fork
+    workflow_dispatch:
+
+concurrency:
+    group: dokploy-production-deploy
+    cancel-in-progress: false
+
+jobs:
+    build-and-deploy:
+        name: Build ARM64 image and update Swarm
+        runs-on: ubuntu-latest
+        steps:
+            - name: Require the deployment branch
+                run: |
+                    if [[ "$GITHUB_REF" != "refs/heads/fork" ]]; then
+                        echo "Production deployments only run from the fork branch." >&2
+                        exit 1
+                    fi
+
+            - name: Check out source
+                uses: actions/checkout@v4
+
+            - name: Log in to Docker Hub
+                env:
+                    DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+                    DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+                run: echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+
+            - name: Build and push ARM64 image
+                run: bash apps/dokploy/docker/build-and-push.sh
+
+            - name: Update production Swarm service
+                env:
+                    DEPLOY_HOST: 37.27.252.79
+                    DEPLOY_USER: root
+                    DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+                    DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+                run: |
+                    set -euo pipefail
+                    key_file="$(mktemp)"
+                    known_hosts_file="$(mktemp)"
+                    trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+                    printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$key_file"
+                    chmod 600 "$key_file"
+                    test -n "$DEPLOY_KNOWN_HOSTS" || { echo "DEPLOY_KNOWN_HOSTS must contain the verified SSH host-key entry." >&2; exit 1; }
+                    printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts_file"
+                    ssh \
+                        -i "$key_file" \
+                        -o IdentitiesOnly=yes \
+                        -o StrictHostKeyChecking=yes \
+                        -o "UserKnownHostsFile=$known_hosts_file" \
+                        "$DEPLOY_USER@$DEPLOY_HOST" \
+                        'docker pull joshua2212/dokploy:latest && docker service update --force --image joshua2212/dokploy:latest --update-parallelism 1 --update-order stop-first --update-monitor 60s --update-failure-action rollback dokploy'
