@@ -90,6 +90,7 @@ import {
 	useMoveServersToFolder,
 	useServerFolders,
 } from "./server-folders";
+import { type ServerService, ServerServicesPill } from "./server-services";
 import { ServerStorage } from "./server-storage";
 import { SetupServer } from "./setup-server";
 import { ShowMonitoringModal } from "./show-monitoring-modal";
@@ -132,6 +133,7 @@ interface ServerItemProps {
 	showFolder: boolean;
 	cost: ServerCost | undefined;
 	provider: ServerProvider | undefined;
+	services: ServerService[] | undefined;
 	onNewFolder: (serverId: string) => void;
 }
 
@@ -155,7 +157,7 @@ const ServerActions = ({
 	folders,
 	folder,
 	onNewFolder,
-}: Omit<ServerItemProps, "showFolder" | "cost" | "provider">) => {
+}: Omit<ServerItemProps, "showFolder" | "cost" | "provider" | "services">) => {
 	const isDeployServer = server.serverRoles.includes("deploy");
 	const canManage = !!permissions?.server.create;
 
@@ -296,6 +298,23 @@ const RoleBadges = ({ roles }: { roles: Server["serverRoles"] }) => (
 	</>
 );
 
+const ServicesSlot = ({
+	server,
+	services,
+}: {
+	server: Server;
+	services: ServerService[] | undefined;
+}) => {
+	if (server.serverStatus !== "active" || !services) return null;
+	return (
+		<ServerServicesPill
+			serverName={server.name}
+			serverRoles={server.serverRoles}
+			services={services}
+		/>
+	);
+};
+
 const ServerStorageSlot = ({
 	server,
 	permissions,
@@ -324,7 +343,8 @@ const ServerStorageSlot = ({
 };
 
 const ServerTile = (props: ServerItemProps) => {
-	const { server, folder, showFolder, permissions, cost, provider } = props;
+	const { server, folder, showFolder, permissions, cost, provider, services } =
+		props;
 	const isActive = server.serverStatus === "active";
 	return (
 		<div className="flex flex-col gap-2.5 rounded-lg border bg-background p-3 transition-shadow hover:shadow-sm">
@@ -352,6 +372,7 @@ const ServerTile = (props: ServerItemProps) => {
 				<StatusBadge server={server} />
 				<RoleBadges roles={server.serverRoles} />
 				<ServerCostBadge cost={cost} />
+				<ServicesSlot server={server} services={services} />
 				{showFolder && folder && (
 					<span className="ml-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
 						<Folder className="size-3 shrink-0" />
@@ -371,7 +392,8 @@ const ServerTile = (props: ServerItemProps) => {
 };
 
 const ServerRow = (props: ServerItemProps) => {
-	const { server, folder, showFolder, permissions, cost, provider } = props;
+	const { server, folder, showFolder, permissions, cost, provider, services } =
+		props;
 	return (
 		<TableRow>
 			<TableCell className="max-w-32 py-2 sm:max-w-56">
@@ -398,6 +420,7 @@ const ServerRow = (props: ServerItemProps) => {
 					<StatusBadge server={server} />
 					<RoleBadges roles={server.serverRoles} />
 					<ServerCostBadge cost={cost} />
+					<ServicesSlot server={server} services={services} />
 				</div>
 			</TableCell>
 			<TableCell className="py-2 sm:w-56">
@@ -493,6 +516,19 @@ export const ShowServers = () => {
 	const { folders, folderByServer } = useServerFolders();
 	const moveServers = useMoveServersToFolder();
 	const { byServerId: costByServer, providerByServerId } = useServerCosts();
+	const { data: allServices } = api.server.servicesOverview.useQuery(
+		undefined,
+		{ refetchInterval: 30_000 },
+	);
+	const servicesByServer = useMemo(() => {
+		const map = new Map<string, ServerService[]>();
+		for (const service of allServices ?? []) {
+			const list = map.get(service.serverId);
+			if (list) list.push(service);
+			else map.set(service.serverId, [service]);
+		}
+		return map;
+	}, [allServices]);
 
 	const [view, setView] = useSortPreference("servers-view", "grid", VIEWS);
 	const [pageSizePref, setPageSize] = useSortPreference(
@@ -595,6 +631,9 @@ export const ShowServers = () => {
 			showFolder: selectedFolder === ALL_FOLDERS,
 			cost: costByServer.get(server.serverId),
 			provider: providerByServerId.get(server.serverId),
+			services: allServices
+				? (servicesByServer.get(server.serverId) ?? [])
+				: undefined,
 			onNewFolder: setNewFolderFor,
 		};
 	};

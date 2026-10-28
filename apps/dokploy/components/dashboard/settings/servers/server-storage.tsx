@@ -3,6 +3,7 @@ import { formatDistanceToNowStrict } from "date-fns";
 import {
 	AlertTriangle,
 	ChevronRight,
+	ExternalLink,
 	HardDrive,
 	RefreshCw,
 	WifiOff,
@@ -19,10 +20,31 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { AppRouter } from "@/server/api/root";
 import { api } from "@/utils/api";
+import { useHoverPopover } from "./use-hover-popover";
 
 type StorageResult = inferRouterOutputs<AppRouter>["server"]["storage"];
 type StorageVolume = NonNullable<StorageResult["sample"]>["volumes"][number];
 type HistoryPoint = StorageResult["history"][number];
+type AttachedVolume = NonNullable<
+	StorageResult["sample"]
+>["attachedVolumes"][number];
+type CloudVolume =
+	inferRouterOutputs<AppRouter>["server"]["cloudVolumes"]["volumes"][number];
+type UsageFields = Pick<
+	StorageVolume,
+	| "mount"
+	| "filesystem"
+	| "totalBytes"
+	| "usedBytes"
+	| "availableBytes"
+	| "usedPercent"
+	| "inodesTotal"
+	| "inodesUsed"
+	| "inodesUsedPercent"
+>;
+
+const HETZNER_VOLUME_DOCS =
+	"https://docs.hetzner.com/cloud/volumes/getting-started/using-volumes/";
 
 const POLL_INTERVAL_MS = 15_000;
 const WARNING_PERCENT = 80;
@@ -37,7 +59,7 @@ const levelOf = (percent: number | null): Level => {
 	return "ok";
 };
 
-const worstLevel = (volume: StorageVolume): Level => {
+const worstLevel = (volume: UsageFields): Level => {
 	const levels = [
 		levelOf(volume.usedPercent),
 		levelOf(volume.inodesUsedPercent),
@@ -122,7 +144,14 @@ const Meter = ({
 	</div>
 );
 
-const LevelNotice = ({ level }: { level: Level }) => {
+const worseOf = (a: Level, b: Level): Level =>
+	a === "critical" || b === "critical"
+		? "critical"
+		: a === "warning" || b === "warning"
+			? "warning"
+			: "ok";
+
+const LevelNotice = ({ level, text }: { level: Level; text?: string }) => {
 	if (level === "ok") return null;
 	return (
 		<span
@@ -134,7 +163,7 @@ const LevelNotice = ({ level }: { level: Level }) => {
 			)}
 		>
 			<AlertTriangle className="size-3" />
-			{level === "critical" ? "Almost full" : "Running low"}
+			{text ?? (level === "critical" ? "Almost full" : "Running low")}
 		</span>
 	);
 };
@@ -269,19 +298,29 @@ const TrendChart = ({ history }: { history: HistoryPoint[] }) => {
 	);
 };
 
-const VolumeDetails = ({ volume }: { volume: StorageVolume }) => {
+const VolumeDetails = ({
+	volume,
+	label,
+	detail,
+}: {
+	volume: UsageFields;
+	label: string;
+	detail?: string;
+}) => {
 	const level = worstLevel(volume);
 	const inodeLevel = levelOf(volume.inodesUsedPercent);
 	return (
 		<div className="space-y-2">
 			<div className="flex items-baseline justify-between gap-2">
 				<div className="min-w-0">
-					<p className="text-sm font-medium">{volumeLabel(volume)}</p>
+					<p className="truncate text-sm font-medium" title={label}>
+						{label}
+					</p>
 					<p
 						className="truncate font-mono text-xs text-muted-foreground"
 						title={`${volume.filesystem} on ${volume.mount}`}
 					>
-						{volume.mount} · {volume.filesystem}
+						{volume.mount} · {detail ?? volume.filesystem}
 					</p>
 				</div>
 				<span className="text-sm font-semibold tabular-nums">
@@ -291,7 +330,7 @@ const VolumeDetails = ({ volume }: { volume: StorageVolume }) => {
 			<Meter
 				percent={volume.usedPercent}
 				level={levelOf(volume.usedPercent)}
-				label={`${volumeLabel(volume)} usage`}
+				label={`${label} usage`}
 			/>
 			<dl className="grid grid-cols-3 gap-2 text-xs">
 				<div>
@@ -333,6 +372,107 @@ const VolumeDetails = ({ volume }: { volume: StorageVolume }) => {
 				</div>
 			)}
 			{level !== "ok" && <LevelNotice level={level} />}
+		</div>
+	);
+};
+
+const volumeName = (volumeId: string, cloud: CloudVolume | undefined) =>
+	cloud?.name ?? `Volume ${volumeId}`;
+
+const NotMounted = ({ title, detail }: { title: string; detail: string }) => (
+	<div className="space-y-1">
+		<p className="truncate text-sm font-medium" title={title}>
+			{title}
+		</p>
+		<div className="flex gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+			<AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
+			<div className="min-w-0 space-y-0.5">
+				<p className="font-medium">Not mounted</p>
+				<p className="break-words text-muted-foreground">{detail}</p>
+				<a
+					href={HETZNER_VOLUME_DOCS}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="inline-flex items-center gap-0.5 font-medium text-foreground hover:underline"
+				>
+					How to mount a volume
+					<ExternalLink className="size-3" />
+				</a>
+			</div>
+		</div>
+	</div>
+);
+
+const AttachedVolumes = ({
+	serverId,
+	attached,
+}: {
+	serverId: string;
+	attached: AttachedVolume[];
+}) => {
+	const { data: cloud } = api.server.cloudVolumes.useQuery(
+		{ serverId },
+		{
+			staleTime: 60_000,
+			retry: false,
+			trpc: { context: { skipBatch: true } },
+		},
+	);
+	const cloudById = new Map(
+		(cloud?.volumes ?? []).map((volume) => [volume.id, volume]),
+	);
+	const seenIds = new Set(attached.map((volume) => volume.volumeId));
+	const listed = attached.filter((volume) => !volume.alsoListed);
+	// Hetzner can report an attachment before the kernel sees the disk, e.g. straight after attaching.
+	const notOnServer = (cloud?.volumes ?? []).filter(
+		(volume) => !seenIds.has(volume.id),
+	);
+
+	if (listed.length === 0 && notOnServer.length === 0) return null;
+
+	return (
+		<div className="space-y-3 border-t pt-3">
+			<div className="flex items-center justify-between gap-2">
+				<span className="flex items-center gap-1.5 text-sm font-semibold">
+					<HardDrive className="size-3.5 text-muted-foreground" />
+					Attached volumes
+				</span>
+				<span className="text-xs text-muted-foreground tabular-nums">
+					{formatBytes(
+						[...listed, ...notOnServer].reduce(
+							(sum, volume) =>
+								sum +
+								("sizeGb" in volume
+									? volume.sizeGb * 1024 ** 3
+									: (volume.usage?.totalBytes ?? volume.sizeBytes)),
+							0,
+						),
+					)}
+				</span>
+			</div>
+			{listed.map((volume) => {
+				const name = `${volumeName(volume.volumeId, cloudById.get(volume.volumeId))}${volume.partition ? ` · partition ${volume.partition}` : ""}`;
+				return volume.usage ? (
+					<VolumeDetails
+						key={`${volume.volumeId}-${volume.partition}`}
+						volume={volume.usage}
+						label={name}
+					/>
+				) : (
+					<NotMounted
+						key={`${volume.volumeId}-${volume.partition}`}
+						title={name}
+						detail={`${formatBytes(volume.sizeBytes)} attached as ${volume.device} but not mounted, so the space can't be used yet.`}
+					/>
+				);
+			})}
+			{notOnServer.map((volume) => (
+				<NotMounted
+					key={volume.id}
+					title={volume.name}
+					detail={`Hetzner shows ${volume.sizeGb} GB attached, but the server can't see the disk yet.${volume.linuxDevice ? ` Expected at ${volume.linuxDevice}.` : ""}`}
+				/>
+			))}
 		</div>
 	);
 };
@@ -388,13 +528,28 @@ const StorageDetails = ({
 			)}
 
 			{data.sample?.volumes.map((volume) => (
-				<VolumeDetails key={volume.mount} volume={volume} />
+				<VolumeDetails
+					key={volume.mount}
+					volume={volume}
+					label={
+						volume.attachedVolumeId
+							? `${volumeLabel(volume)} · Volume ${volume.attachedVolumeId}`
+							: volumeLabel(volume)
+					}
+				/>
 			))}
 
 			{data.sample && data.sample.volumes.length > 0 && (
 				<div className="border-t pt-3">
 					<TrendChart history={data.history} />
 				</div>
+			)}
+
+			{data.sample && (
+				<AttachedVolumes
+					serverId={serverId}
+					attached={data.sample.attachedVolumes ?? []}
+				/>
 			)}
 
 			<div className="flex items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
@@ -445,6 +600,7 @@ export const ServerStorage = ({
 }) => {
 	const utils = api.useUtils();
 	const [refreshing, setRefreshing] = useState(false);
+	const hover = useHoverPopover();
 	const { data, isPending, refetch } = api.server.storage.useQuery(
 		{ serverId },
 		{
@@ -514,14 +670,38 @@ export const ServerStorage = ({
 		);
 	}
 
-	const level = worstLevel(primary);
+	const attachedVolumes = data.sample?.attachedVolumes ?? [];
+	const others = [
+		...(data.sample?.volumes.slice(1) ?? []),
+		...attachedVolumes.flatMap((volume) =>
+			volume.usage && !volume.alsoListed ? [volume.usage] : [],
+		),
+	];
+	const primaryLevel = worstLevel(primary);
+	const fullestOther = others.reduce<(typeof others)[number] | undefined>(
+		(fullest, volume) =>
+			!fullest || volume.usedPercent > fullest.usedPercent ? volume : fullest,
+		undefined,
+	);
+	const otherLevel = others.reduce<Level>(
+		(worst, volume) => worseOf(worst, worstLevel(volume)),
+		"ok",
+	);
+	const level = worseOf(primaryLevel, otherLevel);
+	// The tile's numbers describe the main disk, so name the other volume when it's the one filling up.
+	const levelText =
+		primaryLevel === level || !fullestOther
+			? undefined
+			: `Volume at ${Math.round(fullestOther.usedPercent)}%`;
+	const unmounted = attachedVolumes.some((volume) => !volume.usage);
 	const percentLabel = `${Math.round(primary.usedPercent)}%`;
 
 	return (
-		<Popover>
+		<Popover open={hover.open} onOpenChange={hover.setOpen}>
 			<PopoverTrigger asChild>
 				<button
 					type="button"
+					{...hover.triggerProps}
 					className={cn(
 						"group rounded-md text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 						isRow
@@ -553,7 +733,8 @@ export const ServerStorage = ({
 										level === "critical" ? "text-red-500" : "text-amber-500",
 									)}
 									aria-label={
-										level === "critical" ? "Almost full" : "Running low"
+										levelText ??
+										(level === "critical" ? "Almost full" : "Running low")
 									}
 								/>
 							)}
@@ -563,7 +744,28 @@ export const ServerStorage = ({
 							<span className="flex items-center justify-between gap-2">
 								<span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
 									<StatusDot status={data.status} />
-									{level === "ok" ? "Storage" : <LevelNotice level={level} />}
+									{level === "ok" ? (
+										"Storage"
+									) : (
+										<LevelNotice level={level} text={levelText} />
+									)}
+									{attachedVolumes.length > 0 &&
+										(level === "ok" || unmounted) && (
+											<span
+												className={cn(
+													"inline-flex items-center gap-0.5 tabular-nums",
+													unmounted && "text-amber-600 dark:text-amber-400",
+												)}
+												title={
+													unmounted
+														? "An attached volume isn't mounted"
+														: `${attachedVolumes.length} attached ${attachedVolumes.length === 1 ? "volume" : "volumes"}`
+												}
+											>
+												<HardDrive className="size-3" />
+												{attachedVolumes.length}
+											</span>
+										)}
 								</span>
 								<span className="truncate tabular-nums text-muted-foreground">
 									<span className="font-medium text-foreground">
@@ -583,6 +785,7 @@ export const ServerStorage = ({
 				</button>
 			</PopoverTrigger>
 			<PopoverContent
+				{...hover.contentProps}
 				className="w-80 max-h-(--radix-popover-content-available-height) overflow-y-auto"
 				side={isRow ? "left" : "right"}
 				align="center"

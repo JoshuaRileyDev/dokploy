@@ -16,12 +16,39 @@ export interface StorageVolume {
 	inodesUsedPercent: number | null;
 	holdsRoot: boolean;
 	holdsDocker: boolean;
+	/** Set when this filesystem lives on an attached Hetzner volume */
+	attachedVolumeId: string | null;
+}
+
+export interface AttachedVolumeUsage {
+	filesystem: string;
+	mount: string;
+	totalBytes: number;
+	usedBytes: number;
+	availableBytes: number;
+	usedPercent: number;
+	inodesTotal: number | null;
+	inodesUsed: number | null;
+	inodesUsedPercent: number | null;
+}
+
+/** A Hetzner Cloud volume as the server sees it, mounted or not. */
+export interface AttachedVolume {
+	/** Hetzner's volume id; partitions keep the parent's id */
+	volumeId: string;
+	partition: number | null;
+	device: string;
+	sizeBytes: number;
+	usage: AttachedVolumeUsage | null;
+	/** The volume also holds "/" or Docker's data, so it is already listed in `volumes` */
+	alsoListed: boolean;
 }
 
 export interface StorageSample {
 	checkedAt: number;
 	dockerRoot: string;
 	volumes: StorageVolume[];
+	attachedVolumes: AttachedVolume[];
 }
 
 export interface StorageHistoryPoint {
@@ -57,6 +84,18 @@ export const STORAGE_COMMAND = [
 	`echo "docker-root $root"`,
 	`df -kP / "$root" 2>/dev/null | sed 's/^/blocks /'`,
 	`df -iP / "$root" 2>/dev/null | sed 's/^/inodes /'`,
+	// Hetzner exposes each attached volume (and its partitions) under a stable by-id link.
+	"for link in /dev/disk/by-id/scsi-0HC_Volume_*; do",
+	`  [ -e "$link" ] || continue`,
+	`  dev=$(readlink -f "$link")`,
+	"  name=${link##*/scsi-0HC_Volume_}",
+	`  sectors=$(cat "/sys/class/block/\${dev##*/}/size" 2>/dev/null || echo 0)`,
+	`  mnt=$(findmnt -n -o TARGET --source "$dev" 2>/dev/null | head -n 1)`,
+	`  echo "hcvol $name $dev $sectors $mnt"`,
+	`  [ -n "$mnt" ] || continue`,
+	`  df -kP "$mnt" 2>/dev/null | tail -n +2 | sed "s|^|hcblocks $name |"`,
+	`  df -iP "$mnt" 2>/dev/null | tail -n +2 | sed "s|^|hcinodes $name |"`,
+	"done",
 	"exit 0",
 ].join("\n");
 
@@ -79,11 +118,58 @@ export const parseStorageOutput = (
 	>();
 	const inodes = new Map<string, { total: number; used: number }>();
 	const pathOrder: string[] = [];
+	const attached = new Map<
+		string,
+		{ device: string; sizeBytes: number; mounted: boolean }
+	>();
+	const attachedBlocks = new Map<
+		string,
+		{ filesystem: string; mount: string; used: number; available: number }
+	>();
+	const attachedInodes = new Map<string, { total: number; used: number }>();
 
 	for (const line of stdout.split("\n")) {
 		const [kind, ...rest] = line.trim().split(/\s+/);
 		if (kind === "docker-root" && rest.length > 0) {
 			dockerRoot = rest.join(" ");
+			continue;
+		}
+		if (kind === "hcvol") {
+			const [name, device, sectors, ...mountParts] = rest;
+			if (!name || !device) continue;
+			attached.set(name, {
+				device,
+				sizeBytes: (toNumber(sectors) ?? 0) * 512,
+				mounted: mountParts.join(" ").length > 0,
+			});
+			continue;
+		}
+		if (kind === "hcblocks" || kind === "hcinodes") {
+			const [
+				name,
+				filesystem = "",
+				sizeRaw,
+				usedRaw,
+				availRaw,
+				,
+				...mountParts
+			] = rest;
+			const size = toNumber(sizeRaw);
+			const used = toNumber(usedRaw);
+			const available = toNumber(availRaw);
+			if (!name || size === null || used === null || available === null) {
+				continue;
+			}
+			if (kind === "hcblocks") {
+				attachedBlocks.set(name, {
+					filesystem,
+					mount: mountParts.join(" "),
+					used: used * 1024,
+					available: available * 1024,
+				});
+			} else {
+				attachedInodes.set(name, { total: size, used });
+			}
 			continue;
 		}
 		if (kind !== "blocks" && kind !== "inodes") continue;
@@ -120,6 +206,55 @@ export const parseStorageOutput = (
 	const rootMount = pathOrder[0];
 	const dockerMount = pathOrder[pathOrder.length - 1];
 
+	const attachedVolumes: AttachedVolume[] = [];
+	const volumeIdByMount = new Map<string, string>();
+	for (const [name, entry] of attached) {
+		const match = /^(\d+)(?:-part(\d+))?$/.exec(name);
+		if (!match?.[1]) continue;
+		const volumeId = match[1];
+		const partition = match[2] ? Number(match[2]) : null;
+		// A partitioned volume's whole-disk link is never mounted itself; its partitions are listed instead.
+		if (
+			partition === null &&
+			!entry.mounted &&
+			[...attached.keys()].some((key) => key.startsWith(`${volumeId}-part`))
+		) {
+			continue;
+		}
+		const block = attachedBlocks.get(name);
+		const inode = attachedInodes.get(name);
+		const hasInodes = !!inode && inode.total > 0;
+		const usage: AttachedVolumeUsage | null = block
+			? {
+					filesystem: block.filesystem,
+					mount: block.mount,
+					totalBytes: block.used + block.available,
+					usedBytes: block.used,
+					availableBytes: block.available,
+					usedPercent: percent(block.used, block.used + block.available),
+					inodesTotal: hasInodes ? inode.total : null,
+					inodesUsed: hasInodes ? inode.used : null,
+					inodesUsedPercent: hasInodes
+						? percent(inode.used, inode.total)
+						: null,
+				}
+			: null;
+		if (usage) volumeIdByMount.set(usage.mount, volumeId);
+		attachedVolumes.push({
+			volumeId,
+			partition,
+			device: entry.device,
+			sizeBytes: entry.sizeBytes,
+			usage,
+			alsoListed: !!usage && blocks.has(usage.mount),
+		});
+	}
+	attachedVolumes.sort(
+		(a, b) =>
+			a.volumeId.localeCompare(b.volumeId) ||
+			(a.partition ?? 0) - (b.partition ?? 0),
+	);
+
 	const volumes = pathOrder.map((mount): StorageVolume => {
 		const entry = blocks.get(mount)!;
 		const inode = inodes.get(mount);
@@ -137,13 +272,14 @@ export const parseStorageOutput = (
 			inodesUsedPercent: hasInodes ? percent(inode.used, inode.total) : null,
 			holdsRoot: mount === rootMount,
 			holdsDocker: mount === dockerMount,
+			attachedVolumeId: volumeIdByMount.get(mount) ?? null,
 		};
 	});
 
 	// The Docker volume is what fills up on a deploy server, so it leads.
 	volumes.sort((a, b) => Number(b.holdsDocker) - Number(a.holdsDocker));
 
-	return { checkedAt, dockerRoot, volumes };
+	return { checkedAt, dockerRoot, volumes, attachedVolumes };
 };
 
 const findServerConnection = async (serverId: string) => {

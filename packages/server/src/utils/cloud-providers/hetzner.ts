@@ -7,6 +7,7 @@ import {
 	CloudProviderError,
 	type CloudServer,
 	type CloudServerType,
+	type CloudVolume,
 } from "./types";
 
 const HETZNER_API_URL = "https://api.hetzner.cloud/v1";
@@ -83,6 +84,14 @@ interface HetznerBilledServer extends HetznerServer {
 interface HetznerVolume {
 	id: number;
 	size: number;
+}
+
+interface HetznerVolumeDetails extends HetznerVolume {
+	name: string;
+	server: number | null;
+	status: string;
+	linux_device: string | null;
+	location: { name: string };
 }
 
 interface HetznerPricing {
@@ -420,6 +429,33 @@ class HetznerClient implements CloudProviderClient {
 				};
 			}),
 		};
+	}
+
+	async listVolumes(): Promise<CloudVolume[]> {
+		const [volumes, servers] = await Promise.all([
+			this.paginate<HetznerVolumeDetails>("/volumes", "volumes"),
+			this.paginate<HetznerServer>("/servers", "servers"),
+		]);
+		const serverById = new Map(servers.map((s) => [s.id, s]));
+		return volumes.map((volume) => {
+			const attachedTo =
+				volume.server === null ? undefined : serverById.get(volume.server);
+			return {
+				id: String(volume.id),
+				name: volume.name,
+				sizeGb: volume.size,
+				location: volume.location.name,
+				status: volume.status,
+				linuxDevice: volume.linux_device,
+				server: attachedTo
+					? {
+							id: String(attachedTo.id),
+							ipv4: attachedTo.public_net.ipv4?.ip ?? null,
+							ipv6: attachedTo.public_net.ipv6?.ip ?? null,
+						}
+					: null,
+			};
+		});
 	}
 
 	async deleteServer(id: string) {

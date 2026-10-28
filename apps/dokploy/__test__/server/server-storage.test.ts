@@ -116,6 +116,75 @@ describe("parseStorageOutput", () => {
 		expect(sample.volumes[0]?.mount).toBe("/mnt/my disk");
 	});
 
+	test("reads attached Hetzner volumes, mounted or not", () => {
+		const sample = parseStorageOutput(
+			`${SAME_DISK}hcvol 100200300 /dev/sdb 41943040 /mnt/HC_Volume_100200300
+hcblocks 100200300 /dev/sdb 20511312 16409049 3037739 85% /mnt/HC_Volume_100200300
+hcinodes 100200300 /dev/sdb 1310720 120000 1190720 10% /mnt/HC_Volume_100200300
+hcvol 100200400 /dev/sdc 20971520
+`,
+			1,
+		);
+		expect(sample.attachedVolumes).toEqual([
+			{
+				volumeId: "100200300",
+				partition: null,
+				device: "/dev/sdb",
+				sizeBytes: 41943040 * 512,
+				alsoListed: false,
+				usage: {
+					filesystem: "/dev/sdb",
+					mount: "/mnt/HC_Volume_100200300",
+					usedBytes: 16409049 * 1024,
+					availableBytes: 3037739 * 1024,
+					totalBytes: (16409049 + 3037739) * 1024,
+					usedPercent: 84.4,
+					inodesTotal: 1310720,
+					inodesUsed: 120000,
+					inodesUsedPercent: 9.2,
+				},
+			},
+			{
+				volumeId: "100200400",
+				partition: null,
+				device: "/dev/sdc",
+				sizeBytes: 20971520 * 512,
+				alsoListed: false,
+				usage: null,
+			},
+		]);
+		expect(sample.volumes[0]?.attachedVolumeId).toBeNull();
+	});
+
+	test("lists a partitioned volume by its partitions", () => {
+		const sample = parseStorageOutput(
+			`${SAME_DISK}hcvol 7 /dev/sdb 2097152
+hcvol 7-part1 /dev/sdb1 2095104 /data
+hcblocks 7-part1 /dev/sdb1 1000 100 900 10% /data
+`,
+		);
+		expect(
+			sample.attachedVolumes.map((v) => [
+				v.volumeId,
+				v.partition,
+				v.usage?.mount,
+			]),
+		).toEqual([["7", 1, "/data"]]);
+	});
+
+	test("links a volume that also holds Docker's data to that filesystem", () => {
+		const sample = parseStorageOutput(
+			`${SEPARATE_DISK}hcvol 55 /dev/sdb1 200000000 /mnt/data
+hcblocks 55 /dev/sdb1 100000000 95000000 5000000 95% /mnt/data
+`,
+		);
+		expect(sample.volumes[0]).toMatchObject({
+			mount: "/mnt/data",
+			attachedVolumeId: "55",
+		});
+		expect(sample.attachedVolumes[0]?.alsoListed).toBe(true);
+	});
+
 	test("throws when df produced nothing usable", () => {
 		expect(() => parseStorageOutput("")).toThrow();
 		expect(() =>
