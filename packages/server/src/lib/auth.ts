@@ -7,7 +7,7 @@ import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { admin, organization, twoFactor } from "better-auth/plugins";
+import { admin, bearer, organization, twoFactor } from "better-auth/plugins";
 import { and, desc, eq } from "drizzle-orm";
 import { IS_CLOUD } from "../constants";
 import { db } from "../db";
@@ -488,6 +488,9 @@ const createBetterAuth = () =>
 				},
 			}),
 			twoFactor(),
+			// Lets native clients (the mobile app) send the session token as
+			// `Authorization: Bearer`, since they have no browser cookie jar.
+			bearer(),
 			passkey(),
 			organization({
 				ac,
@@ -635,6 +638,9 @@ export const validateRequest = async (request: IncomingMessage) => {
 	const session = await api.getSession({
 		headers: new Headers({
 			cookie: request.headers.cookie || "",
+			...(request.headers.authorization
+				? { authorization: request.headers.authorization }
+				: {}),
 		}),
 	});
 
