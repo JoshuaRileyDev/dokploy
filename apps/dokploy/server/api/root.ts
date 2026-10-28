@@ -52,6 +52,7 @@ import { scheduleRouter } from "./routers/schedule";
 import { securityRouter } from "./routers/security";
 import { serverRouter } from "./routers/server";
 import { serverCommandRouter } from "./routers/server-command";
+import { serverFilesRouter } from "./routers/server-files";
 import { serverFolderRouter } from "./routers/server-folder";
 import { settingsRouter } from "./routers/settings";
 import { sshRouter } from "./routers/ssh-key";
@@ -136,6 +137,7 @@ export const appRouter = createTRPCRouter({
 	projectFolder: projectFolderRouter,
 	serverFolder: serverFolderRouter,
 	serverCommand: serverCommandRouter,
+	serverFiles: serverFilesRouter,
 });
 
 // export type definition of API

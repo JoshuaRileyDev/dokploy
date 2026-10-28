@@ -63,6 +63,7 @@ export * from "./services/schedule";
 export * from "./services/security";
 export * from "./services/server";
 export * from "./services/server-command";
+export * from "./services/server-files";
 export * from "./services/server-health";
 export * from "./services/server-services";
 export * from "./services/server-storage";
