@@ -90,6 +90,18 @@ export interface CloudCostReport {
 	servers: CloudServerCost[];
 }
 
+/** A block storage volume and the provider server it is attached to, if any. */
+export interface CloudVolume {
+	id: string;
+	name: string;
+	sizeGb: number;
+	location: string;
+	status: string;
+	/** Where the provider says the volume appears on the attached server */
+	linuxDevice: string | null;
+	server: { id: string; ipv4: string | null; ipv6: string | null } | null;
+}
+
 export interface CreateCloudServerInput {
 	name: string;
 	location: string;
@@ -110,6 +122,8 @@ export interface CloudProviderClient {
 	deleteServer(id: string): Promise<void>;
 	/** Optional: providers without pricing data are left out of cost totals. */
 	listServerCosts?(): Promise<CloudCostReport>;
+	/** Optional: providers without block storage are skipped. */
+	listVolumes?(): Promise<CloudVolume[]>;
 }
 
 export interface CloudProviderDefinition {

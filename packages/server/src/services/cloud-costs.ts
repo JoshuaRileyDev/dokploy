@@ -34,7 +34,7 @@ const withTimeout = <T>(promise: Promise<T>, fallback: T) =>
 	]);
 
 /** Server addresses may be hostnames, so they're resolved before matching. */
-const resolveAddresses = async (host: string) => {
+export const resolveAddresses = async (host: string) => {
 	const value = host.trim().toLowerCase();
 	if (!value) return [];
 	if (isIP(value)) return [value];
@@ -70,7 +70,7 @@ const looksLikeHetzner = async (addresses: string[]) => {
 	return false;
 };
 
-const readCredentials = (raw: string): CloudCredentials | null => {
+export const readCredentials = (raw: string): CloudCredentials | null => {
 	try {
 		return JSON.parse(raw) as CloudCredentials;
 	} catch {

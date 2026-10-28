@@ -8,7 +8,9 @@ import {
 	forgetServerStorage,
 	getAccessibleServerIds,
 	getPublicIpWithFallback,
+	getServerCloudVolumes,
 	getServerRoleUsage,
+	getServerServices,
 	getServerStorage,
 	getServicesByServerId,
 	haveActiveServices,
@@ -120,6 +122,21 @@ const findServersWithRole = async (
 	);
 };
 
+const filterAccessibleServices = async <T extends { id: string }>(
+	ctx: {
+		user: { id: string; role: string };
+		session: { activeOrganizationId: string };
+	},
+	services: T[],
+) => {
+	if (ctx.user.role === "owner" || ctx.user.role === "admin") return services;
+	const { accessedServices } = await findMemberByUserId(
+		ctx.user.id,
+		ctx.session.activeOrganizationId,
+	);
+	return services.filter((service) => accessedServices.includes(service.id));
+};
+
 export const serverRouter = createTRPCRouter({
 	create: withPermission("server", "create")
 		.input(apiCreateServer)
@@ -203,6 +220,26 @@ export const serverRouter = createTRPCRouter({
 				});
 			}
 			return getServerStorage(input.serverId, { force: input.force });
+		}),
+	servicesOverview: withPermission("server", "read").query(async ({ ctx }) => {
+		const accessibleIds = await getAccessibleServerIds(ctx.session);
+		const services = await getServerServices([...accessibleIds]);
+		return filterAccessibleServices(ctx, services);
+	}),
+	cloudVolumes: withPermission("server", "read")
+		.input(z.object({ serverId: z.string().min(1) }))
+		.query(async ({ input, ctx }) => {
+			const accessibleIds = await getAccessibleServerIds(ctx.session);
+			if (!accessibleIds.has(input.serverId)) {
+				throw new TRPCError({
+					code: "UNAUTHORIZED",
+					message: "You are not authorized to access this server",
+				});
+			}
+			return getServerCloudVolumes(
+				ctx.session.activeOrganizationId,
+				input.serverId,
+			);
 		}),
 	getDefaultCommand: withPermission("server", "read")
 		.input(apiFindOneServer)

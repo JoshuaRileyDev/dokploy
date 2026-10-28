@@ -364,3 +364,71 @@ describe("matching costs to Dokploy servers", () => {
 		expect(costMatchesAddresses(cost, ["1.2.3.5"])).toBe(false);
 	});
 });
+
+describe("hetzner volumes", () => {
+	it("lists volumes with the public addresses of the server they're attached to", async () => {
+		mockHetzner({
+			"GET /volumes": () =>
+				json(
+					page("volumes", [
+						{
+							id: 100200300,
+							name: "db-data",
+							size: 50,
+							server: 42,
+							status: "available",
+							linux_device: "/dev/disk/by-id/scsi-0HC_Volume_100200300",
+							location: { name: "nbg1" },
+						},
+						{
+							id: 100200400,
+							name: "spare",
+							size: 10,
+							server: null,
+							status: "available",
+							linux_device: null,
+							location: { name: "nbg1" },
+						},
+					]),
+				),
+			"GET /servers": () =>
+				json(
+					page("servers", [
+						{
+							id: 42,
+							status: "running",
+							public_net: {
+								ipv4: { ip: "1.2.3.4" },
+								ipv6: { ip: "2a01:4f8::/64" },
+							},
+						},
+					]),
+				),
+		});
+
+		const volumes = await client().listVolumes!();
+		expect(volumes).toEqual([
+			{
+				id: "100200300",
+				name: "db-data",
+				sizeGb: 50,
+				location: "nbg1",
+				status: "available",
+				linuxDevice: "/dev/disk/by-id/scsi-0HC_Volume_100200300",
+				server: { id: "42", ipv4: "1.2.3.4", ipv6: "2a01:4f8::/64" },
+			},
+			{
+				id: "100200400",
+				name: "spare",
+				sizeGb: 10,
+				location: "nbg1",
+				status: "available",
+				linuxDevice: null,
+				server: null,
+			},
+		]);
+		expect(costMatchesAddresses(volumes[0]!.server!, ["2a01:4f8::1"])).toBe(
+			true,
+		);
+	});
+});
