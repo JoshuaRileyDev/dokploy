@@ -25,7 +25,7 @@ import { githubRepositoryUrl } from "./utils";
 import { WorkflowDefinitionsTable } from "./workflow-definitions-table";
 import { WorkflowRepositorySettings } from "./workflow-repository-settings";
 
-const TABS = ["workflows", "runs"] as const;
+const TABS = ["runs", "workflows"] as const;
 type Tab = (typeof TABS)[number];
 
 interface Props {
@@ -36,7 +36,7 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 	const router = useRouter();
 	const tab: Tab = TABS.includes(router.query.tab as Tab)
 		? (router.query.tab as Tab)
-		: "workflows";
+		: "runs";
 	const { data: permissions } = api.user.getPermissions.useQuery();
 	const { data: repository, isPending } = api.workflow.oneRepository.useQuery({
 		workflowRepositoryId,
@@ -123,13 +123,13 @@ export const ShowWorkflowRepository = ({ workflowRepositoryId }: Props) => {
 						}
 					>
 						<TabsList>
-							<TabsTrigger value="workflows">
-								<FileCode2 />
-								Workflows
-							</TabsTrigger>
 							<TabsTrigger value="runs">
 								<History />
 								Runs
+							</TabsTrigger>
+							<TabsTrigger value="workflows">
+								<FileCode2 />
+								Workflows
 							</TabsTrigger>
 						</TabsList>
 						<TabsContent value="workflows" className="flex flex-col gap-3 pt-3">
