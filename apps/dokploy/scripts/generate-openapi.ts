@@ -9,8 +9,7 @@
 import { writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateOpenApiDocument } from "@dokploy/trpc-openapi";
-import { appRouter } from "../server/api/root";
+import { buildOpenApiDocument } from "../server/api/openapi";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,7 +18,7 @@ async function generateOpenAPI() {
 	try {
 		console.log("🔄 Generating OpenAPI specification...");
 
-		const openApiDocument = generateOpenApiDocument(appRouter, {
+		const openApiDocument = buildOpenApiDocument({
 			title: "Dokploy API",
 			version: "1.0.0",
 			baseUrl: "https://your-dokploy-instance.com/api",

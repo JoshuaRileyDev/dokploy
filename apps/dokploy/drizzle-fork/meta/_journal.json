@@ -73,6 +73,14 @@
       "tag": "0008_workflow_run_archive",
       "breakpoints": true,
       "upstreamSnapshotId": "4c5cd64c-f0fa-4b62-9a8e-504f2f435212"
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793139303324,
+      "tag": "0009_server_commands",
+      "breakpoints": true,
+      "upstreamSnapshotId": "4c5cd64c-f0fa-4b62-9a8e-504f2f435212"
     }
   ]
 }
