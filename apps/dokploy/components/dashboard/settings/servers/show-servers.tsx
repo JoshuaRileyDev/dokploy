@@ -185,6 +185,19 @@ const ServerActions = ({
 					</Button>
 				</TerminalModal>
 			)}
+			{server.sshKeyId && isDeployServer && (
+				<ShowServerActions serverId={server.serverId}>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="hidden size-7 sm:inline-flex"
+						aria-label="Docker cleanup and web server actions"
+						title="Docker cleanup & web server actions"
+					>
+						<Activity className="size-4" />
+					</Button>
+				</ShowServerActions>
+			)}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button
@@ -227,7 +240,7 @@ const ServerActions = ({
 						<ShowServerActions serverId={server.serverId}>
 							<DropdownMenuItem onSelect={(event) => event.preventDefault()}>
 								<Activity className="size-4" />
-								Web server actions
+								Docker cleanup
 							</DropdownMenuItem>
 						</ShowServerActions>
 					)}
