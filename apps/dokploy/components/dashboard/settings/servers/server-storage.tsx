@@ -4,6 +4,7 @@ import {
 	AlertTriangle,
 	ChevronRight,
 	ExternalLink,
+	FolderSearch,
 	HardDrive,
 	RefreshCw,
 	WifiOff,
@@ -20,6 +21,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { AppRouter } from "@/server/api/root";
 import { api } from "@/utils/api";
+import { formatBytes } from "./format-bytes";
+import { ServerFilesExplorer } from "./server-files-explorer";
 import { useHoverPopover } from "./use-hover-popover";
 
 type StorageResult = inferRouterOutputs<AppRouter>["server"]["storage"];
@@ -73,18 +76,6 @@ const FILL_CLASS: Record<Level, string> = {
 	ok: "bg-primary",
 	warning: "bg-amber-500",
 	critical: "bg-red-500",
-};
-
-const formatBytes = (bytes: number) => {
-	if (bytes < 1024) return `${bytes} B`;
-	const units = ["KB", "MB", "GB", "TB", "PB"];
-	let value = bytes / 1024;
-	let unit = 0;
-	while (value >= 1024 && unit < units.length - 1) {
-		value /= 1024;
-		unit++;
-	}
-	return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 };
 
 const formatCount = (value: number) =>
@@ -483,12 +474,14 @@ const StorageDetails = ({
 	onRefresh,
 	refreshing,
 	canViewDocker,
+	onBrowseFiles,
 }: {
 	serverId: string;
 	data: StorageResult;
 	onRefresh: () => void;
 	refreshing: boolean;
 	canViewDocker: boolean;
+	onBrowseFiles?: () => void;
 }) => {
 	const now = useNow(1000);
 	const checkedAt = data.sample?.checkedAt;
@@ -558,18 +551,30 @@ const StorageDetails = ({
 						? `Checked ${Math.max(0, Math.round((now - checkedAt) / 1000))}s ago`
 						: "Not checked yet"}
 				</span>
-				{canViewDocker && (
-					<Link
-						href={{
-							pathname: "/dashboard/docker",
-							query: { serverId, tab: "disk-usage" },
-						}}
-						className="inline-flex items-center gap-0.5 font-medium text-foreground hover:underline"
-					>
-						What's using space
-						<ChevronRight className="size-3" />
-					</Link>
-				)}
+				<span className="flex items-center gap-3">
+					{onBrowseFiles && (
+						<button
+							type="button"
+							onClick={onBrowseFiles}
+							className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+						>
+							<FolderSearch className="size-3" />
+							Browse files
+						</button>
+					)}
+					{canViewDocker && (
+						<Link
+							href={{
+								pathname: "/dashboard/docker",
+								query: { serverId, tab: "disk-usage" },
+							}}
+							className="inline-flex items-center gap-0.5 font-medium text-foreground hover:underline"
+						>
+							Docker usage
+							<ChevronRight className="size-3" />
+						</Link>
+					)}
+				</span>
 			</div>
 		</div>
 	);
@@ -591,15 +596,20 @@ const StatusDot = ({ status }: { status: StorageResult["status"] }) => (
 
 export const ServerStorage = ({
 	serverId,
+	serverName,
 	canViewDocker,
+	canBrowseFiles = false,
 	variant = "tile",
 }: {
 	serverId: string;
+	serverName?: string;
 	canViewDocker: boolean;
+	canBrowseFiles?: boolean;
 	variant?: "tile" | "row";
 }) => {
 	const utils = api.useUtils();
 	const [refreshing, setRefreshing] = useState(false);
+	const [explorerOpen, setExplorerOpen] = useState(false);
 	const hover = useHoverPopover();
 	const { data, isPending, refetch } = api.server.storage.useQuery(
 		{ serverId },
@@ -697,108 +707,128 @@ export const ServerStorage = ({
 	const percentLabel = `${Math.round(primary.usedPercent)}%`;
 
 	return (
-		<Popover open={hover.open} onOpenChange={hover.setOpen}>
-			<PopoverTrigger asChild>
-				<button
-					type="button"
-					{...hover.triggerProps}
-					className={cn(
-						"group rounded-md text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-						isRow
-							? "-mx-1.5 flex min-w-0 items-center gap-2 px-1.5 py-1 hover:bg-muted/60"
-							: "-mx-1.5 block w-[calc(100%+0.75rem)] space-y-1.5 px-1.5 py-1 hover:bg-muted/60",
-						data.status !== "ok" && "opacity-70",
-					)}
-					aria-label={`Storage ${percentLabel} used, ${formatBytes(primary.availableBytes)} free. Show details`}
-				>
-					{isRow ? (
-						<>
-							<StatusDot status={data.status} />
-							<Meter
-								percent={primary.usedPercent}
-								level={levelOf(primary.usedPercent)}
-								label={`${volumeLabel(primary)} usage`}
-								className="hidden h-1.5 w-14 shrink-0 sm:block"
-							/>
-							<span className="w-8 shrink-0 text-right font-medium tabular-nums">
-								{percentLabel}
-							</span>
-							<span className="hidden truncate text-muted-foreground tabular-nums sm:inline">
-								{formatBytes(primary.availableBytes)} free
-							</span>
-							{level !== "ok" && (
-								<AlertTriangle
-									className={cn(
-										"size-3.5 shrink-0",
-										level === "critical" ? "text-red-500" : "text-amber-500",
-									)}
-									aria-label={
-										levelText ??
-										(level === "critical" ? "Almost full" : "Running low")
-									}
+		<>
+			<Popover open={hover.open} onOpenChange={hover.setOpen}>
+				<PopoverTrigger asChild>
+					<button
+						type="button"
+						{...hover.triggerProps}
+						className={cn(
+							"group rounded-md text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+							isRow
+								? "-mx-1.5 flex min-w-0 items-center gap-2 px-1.5 py-1 hover:bg-muted/60"
+								: "-mx-1.5 block w-[calc(100%+0.75rem)] space-y-1.5 px-1.5 py-1 hover:bg-muted/60",
+							data.status !== "ok" && "opacity-70",
+						)}
+						aria-label={`Storage ${percentLabel} used, ${formatBytes(primary.availableBytes)} free. Show details`}
+					>
+						{isRow ? (
+							<>
+								<StatusDot status={data.status} />
+								<Meter
+									percent={primary.usedPercent}
+									level={levelOf(primary.usedPercent)}
+									label={`${volumeLabel(primary)} usage`}
+									className="hidden h-1.5 w-14 shrink-0 sm:block"
 								/>
-							)}
-						</>
-					) : (
-						<>
-							<span className="flex items-center justify-between gap-2">
-								<span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-									<StatusDot status={data.status} />
-									{level === "ok" ? (
-										"Storage"
-									) : (
-										<LevelNotice level={level} text={levelText} />
-									)}
-									{attachedVolumes.length > 0 &&
-										(level === "ok" || unmounted) && (
-											<span
-												className={cn(
-													"inline-flex items-center gap-0.5 tabular-nums",
-													unmounted && "text-amber-600 dark:text-amber-400",
-												)}
-												title={
-													unmounted
-														? "An attached volume isn't mounted"
-														: `${attachedVolumes.length} attached ${attachedVolumes.length === 1 ? "volume" : "volumes"}`
-												}
-											>
-												<HardDrive className="size-3" />
-												{attachedVolumes.length}
-											</span>
+								<span className="w-8 shrink-0 text-right font-medium tabular-nums">
+									{percentLabel}
+								</span>
+								<span className="hidden truncate text-muted-foreground tabular-nums sm:inline">
+									{formatBytes(primary.availableBytes)} free
+								</span>
+								{level !== "ok" && (
+									<AlertTriangle
+										className={cn(
+											"size-3.5 shrink-0",
+											level === "critical" ? "text-red-500" : "text-amber-500",
 										)}
+										aria-label={
+											levelText ??
+											(level === "critical" ? "Almost full" : "Running low")
+										}
+									/>
+								)}
+							</>
+						) : (
+							<>
+								<span className="flex items-center justify-between gap-2">
+									<span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+										<StatusDot status={data.status} />
+										{level === "ok" ? (
+											"Storage"
+										) : (
+											<LevelNotice level={level} text={levelText} />
+										)}
+										{attachedVolumes.length > 0 &&
+											(level === "ok" || unmounted) && (
+												<span
+													className={cn(
+														"inline-flex items-center gap-0.5 tabular-nums",
+														unmounted && "text-amber-600 dark:text-amber-400",
+													)}
+													title={
+														unmounted
+															? "An attached volume isn't mounted"
+															: `${attachedVolumes.length} attached ${attachedVolumes.length === 1 ? "volume" : "volumes"}`
+													}
+												>
+													<HardDrive className="size-3" />
+													{attachedVolumes.length}
+												</span>
+											)}
+									</span>
+									<span className="truncate tabular-nums text-muted-foreground">
+										<span className="font-medium text-foreground">
+											{formatBytes(primary.availableBytes)}
+										</span>{" "}
+										free · {percentLabel}
+									</span>
 								</span>
-								<span className="truncate tabular-nums text-muted-foreground">
-									<span className="font-medium text-foreground">
-										{formatBytes(primary.availableBytes)}
-									</span>{" "}
-									free · {percentLabel}
-								</span>
-							</span>
-							<Meter
-								percent={primary.usedPercent}
-								level={levelOf(primary.usedPercent)}
-								label={`${volumeLabel(primary)} usage`}
-								className="h-1.5"
-							/>
-						</>
-					)}
-				</button>
-			</PopoverTrigger>
-			<PopoverContent
-				{...hover.contentProps}
-				className="w-80 max-h-(--radix-popover-content-available-height) overflow-y-auto"
-				side={isRow ? "left" : "right"}
-				align="center"
-				collisionPadding={16}
-			>
-				<StorageDetails
+								<Meter
+									percent={primary.usedPercent}
+									level={levelOf(primary.usedPercent)}
+									label={`${volumeLabel(primary)} usage`}
+									className="h-1.5"
+								/>
+							</>
+						)}
+					</button>
+				</PopoverTrigger>
+				<PopoverContent
+					{...hover.contentProps}
+					className="w-80 max-h-(--radix-popover-content-available-height) overflow-y-auto"
+					side={isRow ? "left" : "right"}
+					align="center"
+					collisionPadding={16}
+				>
+					<StorageDetails
+						serverId={serverId}
+						data={data}
+						onRefresh={refresh}
+						refreshing={refreshing}
+						canViewDocker={canViewDocker}
+						onBrowseFiles={
+							canBrowseFiles
+								? () => {
+										hover.setOpen(false);
+										setExplorerOpen(true);
+									}
+								: undefined
+						}
+					/>
+				</PopoverContent>
+			</Popover>
+			{canBrowseFiles && (
+				// Lives outside the popover, which unmounts its content as soon as it closes.
+				<ServerFilesExplorer
 					serverId={serverId}
-					data={data}
-					onRefresh={refresh}
-					refreshing={refreshing}
+					serverName={serverName}
 					canViewDocker={canViewDocker}
+					open={explorerOpen}
+					onOpenChange={setExplorerOpen}
 				/>
-			</PopoverContent>
-		</Popover>
+			)}
+		</>
 	);
 };

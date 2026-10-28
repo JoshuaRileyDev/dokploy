@@ -160,6 +160,13 @@ const ServerActions = ({
 }: Omit<ServerItemProps, "showFolder" | "cost" | "provider" | "services">) => {
 	const isDeployServer = server.serverRoles.includes("deploy");
 	const canManage = !!permissions?.server.create;
+	const serverActionsProps = {
+		serverId: server.serverId,
+		serverName: server.name,
+		showTraefik: isDeployServer,
+		canBrowseFiles: !!permissions?.server.terminal,
+		canViewDocker: !!permissions?.docker.read,
+	};
 
 	return (
 		<div className="flex shrink-0 items-center">
@@ -187,8 +194,8 @@ const ServerActions = ({
 					</Button>
 				</TerminalModal>
 			)}
-			{server.sshKeyId && isDeployServer && (
-				<ShowServerActions serverId={server.serverId}>
+			{server.sshKeyId && (
+				<ShowServerActions {...serverActionsProps}>
 					<Button
 						variant="ghost"
 						size="icon"
@@ -238,8 +245,8 @@ const ServerActions = ({
 							Edit server
 						</DropdownMenuItem>
 					</HandleServers>
-					{server.sshKeyId && isDeployServer && (
-						<ShowServerActions serverId={server.serverId}>
+					{server.sshKeyId && (
+						<ShowServerActions {...serverActionsProps}>
 							<DropdownMenuItem onSelect={(event) => event.preventDefault()}>
 								<Activity className="size-4" />
 								Docker cleanup
@@ -349,7 +356,9 @@ const ServerStorageSlot = ({
 	return (
 		<ServerStorage
 			serverId={server.serverId}
+			serverName={server.name}
 			canViewDocker={!!permissions?.docker.read}
+			canBrowseFiles={!!permissions?.server.terminal}
 			variant={variant}
 		/>
 	);

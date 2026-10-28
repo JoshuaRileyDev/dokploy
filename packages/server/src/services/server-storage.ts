@@ -296,7 +296,19 @@ const findServerConnection = async (serverId: string) => {
 
 // execAsyncRemote waits up to ~100s on an unreachable host and has no command timeout,
 // which would leave live polls hanging, so storage uses its own bounded runner.
-const runRemote = async (serverId: string, command: string) => {
+export const runRemote = async (
+	serverId: string,
+	command: string,
+	{
+		timeoutMs = COMMAND_TIMEOUT_MS,
+		maxOutputBytes = MAX_OUTPUT_BYTES,
+		timeoutMessage = "Timed out reading disk usage",
+	}: {
+		timeoutMs?: number;
+		maxOutputBytes?: number;
+		timeoutMessage?: string;
+	} = {},
+) => {
 	const target = await findServerConnection(serverId);
 
 	return new Promise<string>((resolve, reject) => {
@@ -314,8 +326,8 @@ const runRemote = async (serverId: string, command: string) => {
 		};
 
 		const timer = setTimeout(
-			() => finish(new Error("Timed out reading disk usage")),
-			COMMAND_TIMEOUT_MS,
+			() => finish(new Error(timeoutMessage)),
+			timeoutMs,
 		);
 
 		conn
@@ -327,7 +339,7 @@ const runRemote = async (serverId: string, command: string) => {
 					}
 					stream
 						.on("data", (data: Buffer) => {
-							if (output.length < MAX_OUTPUT_BYTES) output += data.toString();
+							if (output.length < maxOutputBytes) output += data.toString();
 						})
 						.on("close", () => finish(null));
 					stream.stderr.resume();
