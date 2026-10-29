@@ -866,9 +866,7 @@ export const settingsRouter = createTRPCRouter({
 					totalCount: 0,
 				};
 			}
-			const rawConfig = await readMonitoringConfig(
-				!!input.dateRange?.start && !!input.dateRange?.end,
-			);
+			const rawConfig = await readMonitoringConfig(input.dateRange);
 
 			const parsedConfig = parseRawConfig(
 				rawConfig as string,
@@ -906,9 +904,7 @@ export const settingsRouter = createTRPCRouter({
 			if (IS_CLOUD) {
 				return [];
 			}
-			const rawConfig = await readMonitoringConfig(
-				!!input?.dateRange?.start || !!input?.dateRange?.end,
-			);
+			const rawConfig = await readMonitoringConfig(input?.dateRange);
 			const processedLogs = processLogs(rawConfig as string, input?.dateRange);
 			return processedLogs || [];
 		}),
