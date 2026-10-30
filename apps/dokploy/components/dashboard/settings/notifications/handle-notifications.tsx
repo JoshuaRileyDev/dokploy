@@ -101,7 +101,7 @@ export const notificationSchema = z.discriminatedUnion("type", [
 			fromAddress: z.string().min(1, { message: "From Address is required" }),
 			toAddresses: z
 				.array(
-					z.string().min(1, { message: "Email is required" }).email({
+					z.string().trim().min(1, { message: "Email is required" }).email({
 						message: "Email is invalid",
 					}),
 				)
@@ -114,11 +114,12 @@ export const notificationSchema = z.discriminatedUnion("type", [
 			apiKey: z.string().min(1, { message: "API Key is required" }),
 			fromAddress: z
 				.string()
+				.trim()
 				.min(1, { message: "From Address is required" })
 				.email({ message: "Email is invalid" }),
 			toAddresses: z
 				.array(
-					z.string().min(1, { message: "Email is required" }).email({
+					z.string().trim().min(1, { message: "Email is required" }).email({
 						message: "Email is invalid",
 					}),
 				)
