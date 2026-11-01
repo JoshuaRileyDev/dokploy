@@ -18,11 +18,13 @@ import {
 	getDockerResourceType,
 	getDokployImageTag,
 	getLogCleanupStatus,
+	getPostHogKey,
 	getTraefikOverview,
 	getUpdateData,
 	DOKPLOY_IMAGE_REPOSITORY,
 	getWebServerSettings,
 	IS_CLOUD,
+	POSTHOG_HOST,
 	parseRawConfig,
 	paths,
 	prepareEnvironmentVariables,
@@ -965,6 +967,10 @@ export const settingsRouter = createTRPCRouter({
 		}),
 	isCloud: publicProcedure.query(async () => {
 		return IS_CLOUD;
+	}),
+	getPostHogConfig: publicProcedure.query(() => {
+		const key = getPostHogKey();
+		return key ? { key, host: POSTHOG_HOST } : null;
 	}),
 	isUserSubscribed: protectedProcedure.query(async ({ ctx }) => {
 		const haveServers = await db.query.server.findMany({
