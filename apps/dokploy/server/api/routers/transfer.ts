@@ -1,14 +1,24 @@
 import {
 	getAccessibleServerIds,
 	IS_CLOUD,
+	migrateServer,
+	planServerMigration,
 	transferService,
 } from "@dokploy/server";
-import { checkServicePermissionAndAccess } from "@dokploy/server/services/permission";
+import {
+	checkPermission,
+	checkServicePermissionAndAccess,
+	findMemberByUserId,
+} from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
-import { z } from "zod";
+import type { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
-import { apiTransferService } from "@/server/db/schema";
+import {
+	apiMigrateServer,
+	apiPlanServerMigration,
+	apiTransferService,
+} from "@/server/db/schema";
 
 type TransferInput = z.infer<typeof apiTransferService>;
 
@@ -38,6 +48,44 @@ const checkTransferAccess = async (ctx: TransferCtx, input: TransferInput) => {
 	}
 };
 
+type ServerMigrationInput = z.infer<typeof apiPlanServerMigration>;
+
+const checkServerMigrationAccess = async (
+	ctx: TransferCtx,
+	input: ServerMigrationInput,
+) => {
+	await checkPermission(ctx, { service: ["create"], deployment: ["create"] });
+	const accessibleIds = await getAccessibleServerIds(ctx.session);
+	if (!accessibleIds.has(input.sourceServerId)) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You don't have access to the source server",
+		});
+	}
+	if (input.targetServerId) {
+		if (!accessibleIds.has(input.targetServerId)) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You don't have access to the target server",
+			});
+		}
+	} else if (IS_CLOUD) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "The Dokploy server is not available as a target",
+		});
+	}
+};
+
+const accessibleServiceIds = async (ctx: TransferCtx) => {
+	if (ctx.user.role === "owner" || ctx.user.role === "admin") return null;
+	const { accessedServices } = await findMemberByUserId(
+		ctx.user.id,
+		ctx.session.activeOrganizationId,
+	);
+	return new Set(accessedServices);
+};
+
 const runTransfer = async (
 	ctx: TransferCtx,
 	input: TransferInput,
@@ -65,7 +113,7 @@ export const transferRouter = createTRPCRouter({
 				method: "POST",
 				summary: "Transfer a service to another server",
 				description:
-					"Stops the service, copies its volumes and bind mounts to the target server, moves its configuration and redeploys it there. Responds once the transfer and deployment have finished, with the full transfer log. Set targetServerId to null to move it onto the Dokploy server.",
+					"Copies the service's volumes and bind mounts to the target server, moves its configuration and redeploys it there. A service without persistent data keeps running on the source until the new copy is healthy; one with data is stopped while it is copied. If the deploy fails or the new copy doesn't stay up, the service is rolled back to the source. Responds once the transfer has finished, with the full transfer log. Set targetServerId to null to move it onto the Dokploy server.",
 			},
 		})
 		.input(apiTransferService)
@@ -74,9 +122,7 @@ export const transferRouter = createTRPCRouter({
 
 			const logs: string[] = [];
 			try {
-				const result = await runTransfer(ctx, input, (line) =>
-					logs.push(line),
-				);
+				const result = await runTransfer(ctx, input, (line) => logs.push(line));
 				return { ...result, logs };
 			} catch (error) {
 				// The log says how far the transfer got (e.g. data moved but the
@@ -114,6 +160,85 @@ export const transferRouter = createTRPCRouter({
 				.catch((error) => {
 					log(
 						`Transfer failed ❌ ${error instanceof Error ? error.message : String(error)}`,
+					);
+				})
+				.finally(() => {
+					done = true;
+				});
+
+			while (!done || queue.length > 0) {
+				if (queue.length > 0) {
+					yield queue.shift()!;
+				} else {
+					await new Promise((r) => setTimeout(r, 50));
+				}
+
+				if (signal?.aborted) {
+					return;
+				}
+			}
+		}),
+	planServer: protectedProcedure
+		.input(apiPlanServerMigration)
+		.query(async ({ input, ctx }) => {
+			await checkServerMigrationAccess(ctx, input);
+			const allowed = await accessibleServiceIds(ctx);
+			return planServerMigration(
+				{ ...input, organizationId: ctx.session.activeOrganizationId },
+				async (services) =>
+					allowed ? services.filter((s) => allowed.has(s.id)) : services,
+			);
+		}),
+	startServer: protectedProcedure
+		.meta({
+			openapi: {
+				path: "/transfer/start-server",
+				method: "POST",
+				override: true,
+				enabled: false,
+			},
+		})
+		.input(apiMigrateServer)
+		.subscription(async function* ({ input, ctx, signal }) {
+			await checkServerMigrationAccess(ctx, input);
+			for (const service of input.services) {
+				await checkServicePermissionAndAccess(ctx, service.serviceId, {
+					service: ["create"],
+					deployment: ["create"],
+				});
+			}
+
+			const queue: string[] = [];
+			let done = false;
+			const log = (line: string) => queue.push(line);
+
+			migrateServer(
+				{ ...input, organizationId: ctx.session.activeOrganizationId },
+				log,
+				{
+					onTransferred: (result) =>
+						audit(ctx, {
+							action: "move",
+							resourceType: "service",
+							resourceId: result.serviceId,
+							resourceName: result.appName,
+							metadata: {
+								sourceServerId: input.sourceServerId,
+								targetServerId: input.targetServerId,
+							},
+						}),
+				},
+			)
+				.then((result) =>
+					log(
+						result.failed.length === 0
+							? "Migration completed successfully!"
+							: `Migration finished with ${result.failed.length} failed service(s)`,
+					),
+				)
+				.catch((error) => {
+					log(
+						`Migration failed ❌ ${error instanceof Error ? error.message : String(error)}`,
 					);
 				})
 				.finally(() => {
