@@ -446,11 +446,34 @@ const deployOnTarget = async (
 	}
 };
 
-export const transferService = async (
-	input: TransferServiceInput,
-	log: Logger,
-) => {
-	const { serviceType, serviceId, targetServerId, removeSourceData } = input;
+const originalStatus = (service: TransferableService): ServiceStatus =>
+	isCompose(service)
+		? service.composeStatus
+		: (service as { applicationStatus: ServiceStatus }).applicationStatus;
+
+export interface StagedTransfer {
+	serviceType: ServiceType;
+	serviceId: string;
+	/** The service as it was on the source server, before its record moved. */
+	source: TransferableService;
+	sourceServerId: string | null;
+	targetServerId: string | null;
+	sourceName: string;
+	targetName: string;
+	volumes: string[];
+	bindMounts: string[];
+	/** Has data that has to be copied with the source stopped, so it can't run on both servers at once. */
+	stateful: boolean;
+	status: ServiceStatus;
+	sourceStopped: boolean;
+	switched: boolean;
+}
+
+/** Validates the move and reads what it involves, without changing anything. */
+export const prepareTransfer = async (
+	input: Omit<TransferServiceInput, "removeSourceData">,
+): Promise<StagedTransfer> => {
+	const { serviceType, serviceId, targetServerId } = input;
 	const service = await findService(serviceType, serviceId);
 
 	if (service.environment.project.organizationId !== input.organizationId) {
@@ -487,115 +510,361 @@ export const transferService = async (
 		}
 	}
 
-	const sourceName = service.server?.name ?? "Dokploy Server";
-	const targetName = targetServer?.name ?? "Dokploy Server";
-	const originalNetworkIds =
-		"networkIds" in service ? service.networkIds : undefined;
-	let switched = false;
-
-	log(`Transferring ${service.appName} from ${sourceName} to ${targetName}`);
-	try {
-		log(`Stopping service on ${sourceName}`);
-		await stopOnSource(service, log);
-		await updateStatus(serviceType, serviceId, "running");
-
-		const volumes = await listVolumes(service);
-		const bindMounts = listBindMounts(service);
-		log(
-			`Found ${volumes.length} volume(s) and ${bindMounts.length} bind mount(s)`,
-		);
-		for (const volume of volumes) {
-			log(`Copying volume ${volume}`);
-			await copyStream(
-				volume,
-				{ serverId: sourceServerId, command: volumeExportCommand(volume) },
-				{ serverId: targetServerId, command: volumeImportCommand(volume) },
-				log,
-			);
-		}
-		for (const hostPath of bindMounts) {
-			if (!(await directoryExists(sourceServerId, hostPath))) {
-				log(`Skipping bind mount ${hostPath}: not found on ${sourceName}`);
-				continue;
-			}
-			log(`Copying bind mount ${hostPath}`);
-			await copyStream(
-				hostPath,
-				{
-					serverId: sourceServerId,
-					command: directoryExportCommand(hostPath),
-				},
-				{
-					serverId: targetServerId,
-					command: directoryImportCommand(hostPath),
-				},
-				log,
-			);
-		}
-
-		const networks = await resolveNetworkIds(
-			originalNetworkIds,
-			targetServerId,
-		);
-		if (networks.dropped.length > 0) {
-			log(
-				`Detaching networks not available on ${targetName}: ${networks.dropped.join(", ")}`,
-			);
-		}
-		await updateServer(serviceType, serviceId, {
-			serverId: targetServerId,
-			networkIds: originalNetworkIds === undefined ? undefined : networks.kept,
-		});
-		switched = true;
-		const moved = await findService(serviceType, serviceId);
-
-		const fileMounts = moved.mounts.filter((mount) => mount.type === "file");
-		if (fileMounts.length > 0) {
-			log(`Recreating ${fileMounts.length} file mount(s) on ${targetName}`);
-			for (const mount of fileMounts) {
-				await createFileMount(mount.mountId);
-			}
-		}
-		if (isApplication(service) && isApplication(moved)) {
-			log(`Recreating Traefik configuration on ${targetName}`);
-			await moveTraefikConfig(service, moved, log);
-		}
-		if (isApplication(service) || isCompose(service)) {
-			await moveDeploymentLogs(service, targetServerId, log);
-		}
-
-		log(`Cleaning up ${sourceName}`);
-		await cleanupSource(service, volumes, removeSourceData, log);
-		await updateStatus(serviceType, serviceId, "idle");
-	} catch (error) {
-		if (switched) {
-			await updateServer(serviceType, serviceId, {
-				serverId: sourceServerId,
-				networkIds: originalNetworkIds,
-			});
-		}
-		log(`Data already copied to ${targetName} was left in place`);
-		log(`Restoring service on ${sourceName}`);
-		await startOnSource(service, log);
-		await updateStatus(serviceType, serviceId, "error");
-		throw error;
-	}
-
-	try {
-		await deployOnTarget(serviceType, serviceId, targetName, log);
-	} catch (error) {
-		await updateStatus(serviceType, serviceId, "error");
-		log(
-			`Data was transferred but the deployment on ${targetName} failed, run Deploy to retry`,
-		);
-		throw error;
-	}
-
+	const volumes = await listVolumes(service);
+	const bindMounts = listBindMounts(service);
 	return {
 		serviceType,
 		serviceId,
-		appName: service.appName,
+		source: service,
+		sourceServerId,
 		targetServerId,
+		sourceName: service.server?.name ?? "Dokploy Server",
+		targetName: targetServer?.name ?? "Dokploy Server",
+		volumes,
+		bindMounts,
+		stateful:
+			(!isApplication(service) && !isCompose(service)) ||
+			volumes.length > 0 ||
+			bindMounts.length > 0,
+		status: originalStatus(service),
+		sourceStopped: false,
+		switched: false,
+	};
+};
+
+/**
+ * Brings the service up on the target. A stateless service keeps running on
+ * the source meanwhile; a stateful one is stopped there so its data can be
+ * copied consistently. Nothing is removed from the source, so a failure here
+ * can always be undone with rollbackTransfer.
+ */
+export const stageTransfer = async (staged: StagedTransfer, log: Logger) => {
+	const {
+		serviceType,
+		serviceId,
+		source,
+		sourceServerId,
+		targetServerId,
+		sourceName,
 		targetName,
+	} = staged;
+
+	log(`Transferring ${source.appName} from ${sourceName} to ${targetName}`);
+	await updateStatus(serviceType, serviceId, "running");
+
+	if (staged.stateful) {
+		log(`Stopping service on ${sourceName} to copy its data`);
+		staged.sourceStopped = true;
+		await stopOnSource(source, log);
+		log(
+			`Found ${staged.volumes.length} volume(s) and ${staged.bindMounts.length} bind mount(s)`,
+		);
+	} else {
+		log(`No persistent data, ${sourceName} keeps serving it meanwhile`);
+	}
+
+	for (const volume of staged.volumes) {
+		log(`Copying volume ${volume}`);
+		await copyStream(
+			volume,
+			{ serverId: sourceServerId, command: volumeExportCommand(volume) },
+			{ serverId: targetServerId, command: volumeImportCommand(volume) },
+			log,
+		);
+	}
+	for (const hostPath of staged.bindMounts) {
+		if (!(await directoryExists(sourceServerId, hostPath))) {
+			log(`Skipping bind mount ${hostPath}: not found on ${sourceName}`);
+			continue;
+		}
+		log(`Copying bind mount ${hostPath}`);
+		await copyStream(
+			hostPath,
+			{ serverId: sourceServerId, command: directoryExportCommand(hostPath) },
+			{ serverId: targetServerId, command: directoryImportCommand(hostPath) },
+			log,
+		);
+	}
+
+	const originalNetworkIds =
+		"networkIds" in source ? source.networkIds : undefined;
+	const networks = await resolveNetworkIds(originalNetworkIds, targetServerId);
+	if (networks.dropped.length > 0) {
+		log(
+			`Detaching networks not available on ${targetName}: ${networks.dropped.join(", ")}`,
+		);
+	}
+	staged.switched = true;
+	await updateServer(serviceType, serviceId, {
+		serverId: targetServerId,
+		networkIds: originalNetworkIds === undefined ? undefined : networks.kept,
+	});
+	const moved = await findService(serviceType, serviceId);
+
+	const fileMounts = moved.mounts.filter((mount) => mount.type === "file");
+	if (fileMounts.length > 0) {
+		log(`Recreating ${fileMounts.length} file mount(s) on ${targetName}`);
+		for (const mount of fileMounts) {
+			await createFileMount(mount.mountId);
+		}
+	}
+	if (isApplication(source) && isApplication(moved)) {
+		log(`Recreating Traefik configuration on ${targetName}`);
+		await moveTraefikConfig(source, moved, log);
+	}
+
+	await deployOnTarget(serviceType, serviceId, targetName, log);
+};
+
+const HEALTH_POLL_MS = 5_000;
+const HEALTH_STABLE_MS = 15_000;
+
+type HealthSnapshot =
+	| { state: "healthy"; ids: string }
+	| { state: "waiting" | "failed"; reason: string };
+
+const swarmTasksSnapshot = (
+	stdout: string,
+	expected: number,
+): HealthSnapshot => {
+	const tasks = stdout
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) => {
+			const [id = "", state = "", error = ""] = line.split("|");
+			return { id, state, error };
+		});
+	const running = tasks.filter((task) => task.state.startsWith("Running"));
+	if (running.length >= expected) {
+		return {
+			state: "healthy",
+			ids: running
+				.map((task) => task.id)
+				.sort()
+				.join(","),
+		};
+	}
+	const failed = tasks.find((task) => /^(Failed|Rejected)/.test(task.state));
+	if (failed) {
+		return {
+			state: "failed",
+			reason: failed.error || failed.state,
+		};
+	}
+	return {
+		state: "waiting",
+		reason: `${running.length}/${expected} task(s) running${tasks[0] ? ` (${tasks[0].state})` : ""}`,
+	};
+};
+
+const composeContainersSnapshot = (stdout: string): HealthSnapshot => {
+	const containers = stdout
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) => {
+			const [id = "", name = "", state = "", status = ""] = line.split("|");
+			return { id, name, state, status };
+		});
+	if (containers.length === 0) {
+		return { state: "waiting", reason: "no containers yet" };
+	}
+	// One-shot containers (migrations, init jobs) legitimately exit with 0.
+	const broken = containers.find(
+		(c) =>
+			c.state === "restarting" ||
+			c.status.includes("(unhealthy)") ||
+			(c.state === "exited" && !c.status.startsWith("Exited (0)")),
+	);
+	if (broken) {
+		return {
+			state: "waiting",
+			reason: `${broken.name} is ${broken.status || broken.state}`,
+		};
+	}
+	const starting = containers.find(
+		(c) => c.state !== "running" && c.state !== "exited",
+	);
+	if (
+		starting ||
+		containers.some((c) => c.status.includes("health: starting"))
+	) {
+		return { state: "waiting", reason: "containers are starting" };
+	}
+	return {
+		state: "healthy",
+		ids: containers
+			.filter((c) => c.state === "running")
+			.map((c) => c.id)
+			.sort()
+			.join(","),
+	};
+};
+
+const healthSnapshot = async (
+	staged: StagedTransfer,
+): Promise<HealthSnapshot> => {
+	const { source, targetServerId } = staged;
+	const name = q(source.appName);
+	if (isCompose(source)) {
+		if (source.composeType === "stack") {
+			const { stdout } = await runOn(
+				targetServerId,
+				`docker stack ps ${name} --filter desired-state=running --format '{{.ID}}|{{.CurrentState}}|{{.Error}}' 2>/dev/null || true`,
+			);
+			return swarmTasksSnapshot(stdout, 1);
+		}
+		const { stdout } = await runOn(
+			targetServerId,
+			`docker ps -a --filter label=com.docker.compose.project=${name} --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Status}}'`,
+		);
+		return composeContainersSnapshot(stdout);
+	}
+	const expected = isApplication(source) ? source.replicas : 1;
+	if (expected === 0) return { state: "healthy", ids: "" };
+	const { stdout } = await runOn(
+		targetServerId,
+		`docker service ps ${name} --filter desired-state=running --format '{{.ID}}|{{.CurrentState}}|{{.Error}}' 2>/dev/null || true`,
+	);
+	return swarmTasksSnapshot(stdout, expected);
+};
+
+/**
+ * A deploy returns once Swarm has scheduled the task, so this waits until the
+ * same containers have stayed up for a while, which catches crash loops.
+ */
+export const waitUntilHealthy = async (
+	staged: StagedTransfer,
+	log: Logger,
+	timeoutMs = 5 * 60_000,
+) => {
+	const deadline = Date.now() + timeoutMs;
+	let stableSince: number | null = null;
+	let stableIds: string | null = null;
+	let lastReason = "";
+
+	while (Date.now() < deadline) {
+		const snapshot = await healthSnapshot(staged);
+		if (snapshot.state === "failed") {
+			throw new Error(
+				`${staged.source.appName} failed to start on ${staged.targetName}: ${snapshot.reason}`,
+			);
+		}
+		if (snapshot.state === "healthy") {
+			if (stableIds !== snapshot.ids) {
+				stableIds = snapshot.ids;
+				stableSince = Date.now();
+			} else if (stableSince && Date.now() - stableSince >= HEALTH_STABLE_MS) {
+				log(`${staged.source.appName} is running on ${staged.targetName}`);
+				return;
+			}
+		} else {
+			stableIds = null;
+			stableSince = null;
+			if (snapshot.reason !== lastReason) {
+				lastReason = snapshot.reason;
+				log(`Waiting for ${staged.source.appName}: ${snapshot.reason}`);
+			}
+		}
+		await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_MS));
+	}
+	throw new Error(
+		`${staged.source.appName} did not become healthy on ${staged.targetName} within ${Math.round(timeoutMs / 60_000)} minutes${lastReason ? ` (${lastReason})` : ""}`,
+	);
+};
+
+const removeFromTarget = async (staged: StagedTransfer) => {
+	const moved = await findService(staged.serviceType, staged.serviceId);
+	const serverId = staged.targetServerId;
+	if (isApplication(moved)) {
+		await removeSourceTraefikConfig(moved);
+		await removeService(moved.appName, serverId);
+		await removeDirectoryCode(moved.appName, serverId);
+		await removeMonitoringDirectory(moved.appName, serverId);
+	} else if (isCompose(moved)) {
+		await removeCompose(moved, false);
+	} else {
+		await removeService(moved.appName, serverId);
+		await removeDirectoryCode(moved.appName, serverId);
+	}
+};
+
+/** Puts the service back on the source server as it was before stageTransfer. */
+export const rollbackTransfer = async (staged: StagedTransfer, log: Logger) => {
+	const { serviceType, serviceId, source, sourceName, targetName } = staged;
+	log(`Rolling ${source.appName} back to ${sourceName}`);
+	if (staged.switched) {
+		try {
+			await removeFromTarget(staged);
+		} catch (error) {
+			log(`  Could not remove it from ${targetName}: ${errorMessage(error)}`);
+		}
+		await updateServer(serviceType, serviceId, {
+			serverId: staged.sourceServerId,
+			networkIds: "networkIds" in source ? source.networkIds : undefined,
+		});
+		staged.switched = false;
+	}
+	if (staged.volumes.length > 0) {
+		log(`  Data copied to ${targetName} was left in place`);
+	}
+	if (staged.sourceStopped) {
+		if (isCompose(source) && source.composeType === "stack") {
+			log(`  Redeploying the stack on ${sourceName}`);
+			await deployCompose({
+				composeId: source.composeId,
+				titleLog: "Restore after failed transfer",
+				descriptionLog: `Transfer to ${targetName} was rolled back`,
+			});
+		} else {
+			await startOnSource(source, log);
+		}
+		staged.sourceStopped = false;
+	}
+	await updateStatus(serviceType, serviceId, staged.status);
+};
+
+/** Removes the old copy from the source server once the target is serving. */
+export const commitTransfer = async (
+	staged: StagedTransfer,
+	removeSourceData: boolean,
+	log: Logger,
+) => {
+	const { source, targetServerId, sourceName } = staged;
+	if (isApplication(source) || isCompose(source)) {
+		await moveDeploymentLogs(source, targetServerId, log);
+	}
+	log(`Cleaning up ${source.appName} on ${sourceName}`);
+	await cleanupSource(source, staged.volumes, removeSourceData, log);
+	await updateStatus(staged.serviceType, staged.serviceId, "done");
+};
+
+export const transferService = async (
+	input: TransferServiceInput,
+	log: Logger,
+) => {
+	const staged = await prepareTransfer(input);
+	try {
+		await stageTransfer(staged, log);
+		await waitUntilHealthy(staged, log);
+	} catch (error) {
+		log(`Transfer failed: ${errorMessage(error)}`);
+		try {
+			await rollbackTransfer(staged, log);
+		} catch (rollbackError) {
+			await updateStatus(staged.serviceType, staged.serviceId, "error");
+			log(`Rollback failed: ${errorMessage(rollbackError)}`);
+		}
+		throw error;
+	}
+	await commitTransfer(staged, input.removeSourceData, log);
+
+	return {
+		serviceType: staged.serviceType,
+		serviceId: staged.serviceId,
+		appName: staged.source.appName,
+		targetServerId: staged.targetServerId,
+		targetName: staged.targetName,
 	};
 };

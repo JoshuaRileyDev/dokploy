@@ -1,5 +1,6 @@
 import {
 	Activity,
+	ArrowRightLeft,
 	BarChartHorizontalBigIcon,
 	ChevronLeft,
 	ChevronRight,
@@ -71,6 +72,7 @@ import { TerminalModal } from "../web-server/terminal-modal";
 import { ShowServerActions } from "./actions/show-server-actions";
 import { DeleteServerModal } from "./delete-server-modal";
 import { HandleServers } from "./handle-servers";
+import { MigrateServer } from "./migrate-server";
 import { ProvisionServer } from "./provision-server";
 import {
 	type ServerCost,
@@ -160,6 +162,13 @@ const ServerActions = ({
 }: Omit<ServerItemProps, "showFolder" | "cost" | "provider" | "services">) => {
 	const isDeployServer = server.serverRoles.includes("deploy");
 	const canManage = !!permissions?.server.create;
+	const canMigrate =
+		!!server.sshKeyId &&
+		isDeployServer &&
+		server.serverStatus === "active" &&
+		!!permissions?.service.create &&
+		!!permissions?.deployment.create;
+	const [isMigrateOpen, setIsMigrateOpen] = useState(false);
 	const serverActionsProps = {
 		serverId: server.serverId,
 		serverName: server.name,
@@ -253,6 +262,12 @@ const ServerActions = ({
 							</DropdownMenuItem>
 						</ShowServerActions>
 					)}
+					{canMigrate && (
+						<DropdownMenuItem onSelect={() => setIsMigrateOpen(true)}>
+							<ArrowRightLeft className="size-4" />
+							Migrate services
+						</DropdownMenuItem>
+					)}
 					{isCloud && server.sshKeyId && isDeployServer && (
 						<ShowMonitoringModal
 							url={`http://${server.ipAddress}:${server.metricsConfig?.server?.port}/metrics`}
@@ -291,6 +306,14 @@ const ServerActions = ({
 					)}
 				</DropdownMenuContent>
 			</DropdownMenu>
+			{canMigrate && (
+				<MigrateServer
+					serverId={server.serverId}
+					serverName={server.name}
+					isOpen={isMigrateOpen}
+					onOpenChange={setIsMigrateOpen}
+				/>
+			)}
 		</div>
 	);
 };

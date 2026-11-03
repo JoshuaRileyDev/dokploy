@@ -62,6 +62,7 @@ export const dnsProviderConfigSchema = z.discriminatedUnion("providerType", [
 ]);
 
 export type DnsProviderConfig = z.infer<typeof dnsProviderConfigSchema>;
+export type CloudflareDnsConfig = z.infer<typeof cloudflareDnsConfigSchema>;
 
 export const dnsProvider = pgTable(
 	"dns_provider",
