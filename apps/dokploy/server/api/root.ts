@@ -54,6 +54,7 @@ import { serverRouter } from "./routers/server";
 import { serverCommandRouter } from "./routers/server-command";
 import { serverFilesRouter } from "./routers/server-files";
 import { serverFolderRouter } from "./routers/server-folder";
+import { serverSecurityRouter } from "./routers/server-security";
 import { settingsRouter } from "./routers/settings";
 import { sshRouter } from "./routers/ssh-key";
 import { stripeRouter } from "./routers/stripe";
@@ -110,6 +111,7 @@ export const appRouter = createTRPCRouter({
 	registry: registryRouter,
 	security: securityRouter,
 	server: serverRouter,
+	serverSecurity: serverSecurityRouter,
 	settings: settingsRouter,
 	sshKey: sshRouter,
 	stripe: stripeRouter,

@@ -14,6 +14,7 @@ import {
 	Search,
 	ServerIcon,
 	Settings,
+	ShieldCheck,
 	Terminal,
 	Trash2,
 	X,
@@ -74,6 +75,7 @@ import { DeleteServerModal } from "./delete-server-modal";
 import { HandleServers } from "./handle-servers";
 import { MigrateServer } from "./migrate-server";
 import { ProvisionServer } from "./provision-server";
+import { ShowServerSecurity } from "./security/show-server-security";
 import {
 	type ServerCost,
 	ServerCostBadge,
@@ -247,6 +249,14 @@ const ServerActions = ({
 								Terminal
 							</DropdownMenuItem>
 						</TerminalModal>
+					)}
+					{server.sshKeyId && permissions?.server.read && (
+						<ShowServerSecurity serverId={server.serverId}>
+							<DropdownMenuItem onSelect={(event) => event.preventDefault()}>
+								<ShieldCheck className="size-4" />
+								Security
+							</DropdownMenuItem>
+						</ShowServerSecurity>
 					)}
 					<HandleServers serverId={server.serverId}>
 						<DropdownMenuItem onSelect={(event) => event.preventDefault()}>

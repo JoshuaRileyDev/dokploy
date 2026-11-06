@@ -66,6 +66,7 @@ export * from "./services/server-command";
 export * from "./services/server-files";
 export * from "./services/server-health";
 export * from "./services/server-migration";
+export * from "./services/server-security";
 export * from "./services/server-services";
 export * from "./services/server-storage";
 export * from "./services/settings";
