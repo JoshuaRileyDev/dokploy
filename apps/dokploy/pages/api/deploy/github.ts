@@ -4,7 +4,7 @@ import {
 	createSecurityBlockedComment,
 	findGithubById,
 	findPreviewDeploymentByApplicationId,
-	findPreviewDeploymentsByPullRequestId,
+	findPreviewDeploymentsByPullRequestIdForGithub,
 	IS_CLOUD,
 	queueWorkflowRunsForGithubEvent,
 	removePreviewDeployment,
@@ -364,7 +364,10 @@ export default async function handler(
 
 		if (action === "closed") {
 			const previewDeploymentResult =
-				await findPreviewDeploymentsByPullRequestId(prId);
+				await findPreviewDeploymentsByPullRequestIdForGithub(
+					prId,
+					githubResult.githubId,
+				);
 
 			if (previewDeploymentResult.length > 0) {
 				for (const previewDeployment of previewDeploymentResult) {
