@@ -1,5 +1,5 @@
 import {
-	countInProgressProvisionings,
+	compareCloudOffers,
 	createCloudProviderAccount,
 	destroyProvisionedServer,
 	dismissServerProvisioning,
@@ -9,17 +9,13 @@ import {
 	findServerById,
 	findServerProvisioningInOrganization,
 	findServerProvisionings,
-	findServersByUserId,
-	findUserById,
 	getCloudCatalog,
 	getCloudProviderDefinition,
 	getServerCosts,
-	IS_CLOUD,
 	listCloudProviderDefinitions,
 	redactCloudProviderAccount,
 	removeCloudProviderAccount,
 	resolveTestCredentials,
-	startCloudServerProvisioning,
 	testCloudProviderCredentials,
 	updateCloudProviderAccount,
 } from "@dokploy/server";
@@ -35,7 +31,7 @@ import {
 	apiTestCloudProviderAccount,
 	apiUpdateCloudProviderAccount,
 } from "@/server/db/schema";
-import { applyDockerCleanupSchedule } from "@/server/utils/docker-cleanup";
+import { provisionCloudServer } from "@/server/utils/provision-server";
 
 const accountLabel = (account: { providerType: string; name: string }) =>
 	`${getCloudProviderDefinition(account.providerType).label} account ${account.name}`;
@@ -133,41 +129,13 @@ export const cloudProviderRouter = createTRPCRouter({
 			return getCloudCatalog(account);
 		}),
 
+	compare: withPermission("server", "create").query(({ ctx }) =>
+		compareCloudOffers(ctx.session.activeOrganizationId),
+	),
+
 	provision: withPermission("server", "create")
 		.input(apiProvisionCloudServer)
-		.mutation(async ({ ctx, input }) => {
-			if (IS_CLOUD) {
-				const owner = await findUserById(ctx.user.ownerId);
-				const servers = await findServersByUserId(owner.id);
-				// Jobs only register their server minutes later, so count them now
-				// or back-to-back requests could all pass the check.
-				const pending = await countInProgressProvisionings(
-					ctx.session.activeOrganizationId,
-				);
-				if (servers.length + pending >= owner.serversQuantity) {
-					throw new TRPCError({
-						code: "BAD_REQUEST",
-						message: "You cannot create more servers",
-					});
-				}
-			}
-			const organizationId = ctx.session.activeOrganizationId;
-			const provisioning = await startCloudServerProvisioning(
-				input,
-				organizationId,
-				async (serverId) => {
-					await applyDockerCleanupSchedule(serverId, organizationId, true);
-					await audit(ctx, {
-						action: "create",
-						resourceType: "server",
-						resourceId: serverId,
-						resourceName: input.name,
-						metadata: { location: input.location },
-					});
-				},
-			);
-			return provisioning;
-		}),
+		.mutation(({ ctx, input }) => provisionCloudServer(ctx, input)),
 
 	costs: withPermission("server", "read").query(({ ctx }) =>
 		getServerCosts(ctx.session.activeOrganizationId),

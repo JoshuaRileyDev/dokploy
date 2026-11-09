@@ -1,7 +1,6 @@
 import { standardSchemaResolver as zodResolver } from "@hookform/resolvers/standard-schema";
 import {
 	ArrowLeft,
-	ChevronRight,
 	Cloud,
 	Cpu,
 	HardDrive,
@@ -12,10 +11,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { HandleCloudProvider } from "@/components/dashboard/settings/cloud-providers/handle-cloud-provider";
 import { CloudProviderIcon } from "@/components/icons/cloud-provider-icons";
 import { AlertBlock } from "@/components/shared/alert-block";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -45,6 +42,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { api, type RouterOutputs } from "@/utils/api";
+import { ProvisionWizard, type ServerSelection } from "./provision-wizard";
 import {
 	hasOrphanedServer,
 	ServerProvisioningList,
@@ -78,17 +76,22 @@ const flagOf = (country: string) =>
 		.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
 
 type Step =
-	| { kind: "choose" }
-	| { kind: "configure"; provider: ProviderDefinition }
+	| { kind: "browse" }
+	| {
+			kind: "configure";
+			provider: ProviderDefinition;
+			initial?: ServerSelection;
+	  }
 	| { kind: "progress" };
 
 export const ProvisionServer = () => {
 	const [isOpen, setIsOpen] = useState(false);
-	const [step, setStep] = useState<Step>({ kind: "choose" });
+	const [step, setStep] = useState<Step>({ kind: "browse" });
 	const { provisionings, runningCount } = useServerProvisionings();
 
-	const { data: providers, isPending: isLoadingProviders } =
-		api.cloudProvider.providers.useQuery(undefined, { enabled: isOpen });
+	const { data: providers } = api.cloudProvider.providers.useQuery(undefined, {
+		enabled: isOpen,
+	});
 	const { data: accounts } = api.cloudProvider.all.useQuery(undefined, {
 		enabled: isOpen,
 	});
@@ -98,7 +101,7 @@ export const ProvisionServer = () => {
 		if (open) {
 			const needsAttention =
 				runningCount > 0 || provisionings.some(hasOrphanedServer);
-			setStep(needsAttention ? { kind: "progress" } : { kind: "choose" });
+			setStep(needsAttention ? { kind: "progress" } : { kind: "browse" });
 		}
 	};
 
@@ -122,24 +125,31 @@ export const ProvisionServer = () => {
 					step.kind === "configure" ? "sm:max-w-3xl" : "sm:max-w-2xl",
 				)}
 			>
-				{step.kind === "choose" && (
-					<ChooseProvider
-						providers={providers}
-						accounts={accounts}
-						isLoading={isLoadingProviders}
+				{step.kind === "browse" && (
+					<ProvisionWizard
 						hasProvisionings={provisionings.length > 0}
-						onChoose={(provider) => setStep({ kind: "configure", provider })}
 						onShowProgress={() => setStep({ kind: "progress" })}
+						onProvisioned={() => setStep({ kind: "progress" })}
+						onConfigureManually={(selection) => {
+							const provider = providers?.find(
+								(p) => p.type === selection.providerType,
+							);
+							if (provider) {
+								setStep({ kind: "configure", provider, initial: selection });
+							}
+						}}
 					/>
 				)}
 				{step.kind === "configure" && (
 					<ConfigureServer
+						key={`${step.provider.type}:${step.initial?.serverType ?? ""}`}
 						provider={step.provider}
+						initial={step.initial}
 						accounts={
 							accounts?.filter((a) => a.providerType === step.provider.type) ??
 							[]
 						}
-						onBack={() => setStep({ kind: "choose" })}
+						onBack={() => setStep({ kind: "browse" })}
 						onProvisioned={() => setStep({ kind: "progress" })}
 					/>
 				)}
@@ -162,7 +172,7 @@ export const ProvisionServer = () => {
 						<DialogFooter>
 							<Button
 								variant="outline"
-								onClick={() => setStep({ kind: "choose" })}
+								onClick={() => setStep({ kind: "browse" })}
 							>
 								Provision another
 							</Button>
@@ -175,106 +185,15 @@ export const ProvisionServer = () => {
 	);
 };
 
-const ChooseProvider = ({
-	providers,
-	accounts,
-	isLoading,
-	hasProvisionings,
-	onChoose,
-	onShowProgress,
-}: {
-	providers?: ProviderDefinition[];
-	accounts?: Account[];
-	isLoading: boolean;
-	hasProvisionings: boolean;
-	onChoose: (provider: ProviderDefinition) => void;
-	onShowProgress: () => void;
-}) => (
-	<>
-		<DialogHeader>
-			<DialogTitle>Provision a server</DialogTitle>
-			<DialogDescription>
-				Choose where to create it. Dokploy creates the server, installs Docker
-				and Traefik over SSH, and adds it to your servers.
-			</DialogDescription>
-		</DialogHeader>
-		{isLoading ? (
-			<div className="flex min-h-[20vh] items-center justify-center">
-				<Loader2 className="size-5 animate-spin text-muted-foreground" />
-			</div>
-		) : (
-			<ul className="flex flex-col gap-2">
-				{providers?.map((provider) => {
-					const connected =
-						accounts?.filter((a) => a.providerType === provider.type).length ??
-						0;
-					const row = (
-						<button
-							type="button"
-							onClick={connected ? () => onChoose(provider) : undefined}
-							className="group flex w-full items-center gap-3 rounded-lg border bg-background px-4 py-3 text-left transition-colors duration-150 ease-out hover:border-foreground/20 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						>
-							<CloudProviderIcon
-								providerType={provider.type}
-								className="size-9 shrink-0"
-							/>
-							<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-								<div className="flex items-center gap-2">
-									<span className="text-sm font-medium">{provider.label}</span>
-									{connected > 0 ? (
-										<Badge variant="secondary">
-											{connected} account{connected === 1 ? "" : "s"}
-										</Badge>
-									) : (
-										<Badge variant="outline">Not connected</Badge>
-									)}
-								</div>
-								<span className="text-xs text-muted-foreground">
-									{provider.description}
-								</span>
-							</div>
-							<span className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground transition-colors group-hover:text-foreground">
-								{connected ? "Continue" : "Connect"}
-								<ChevronRight className="size-4" />
-							</span>
-						</button>
-					);
-					return (
-						<li key={provider.type}>
-							{connected ? (
-								row
-							) : (
-								<HandleCloudProvider
-									providerType={provider.type}
-									onConnected={() => onChoose(provider)}
-								>
-									{row}
-								</HandleCloudProvider>
-							)}
-						</li>
-					);
-				})}
-			</ul>
-		)}
-		{hasProvisionings && (
-			<button
-				type="button"
-				onClick={onShowProgress}
-				className="self-start text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-			>
-				View recent provisioning
-			</button>
-		)}
-	</>
-);
-
 const ConfigureServer = ({
 	provider,
+	initial,
 	accounts,
 	onBack,
 	onProvisioned,
 }: {
 	provider: ProviderDefinition;
+	initial?: ServerSelection;
 	accounts: Account[];
 	onBack: () => void;
 	onProvisioned: () => void;
@@ -284,10 +203,13 @@ const ConfigureServer = ({
 
 	const form = useForm<Schema>({
 		defaultValues: {
-			cloudProviderAccountId: accounts[0]?.cloudProviderAccountId ?? "",
+			cloudProviderAccountId:
+				initial?.cloudProviderAccountId ??
+				accounts[0]?.cloudProviderAccountId ??
+				"",
 			name: "",
-			location: "",
-			serverType: "",
+			location: initial?.location ?? "",
+			serverType: initial?.serverType ?? "",
 			image: "",
 			role: "deploy",
 		},
@@ -337,9 +259,12 @@ const ConfigureServer = ({
 
 	useEffect(() => {
 		if (families.length && !families.includes(family)) {
-			setFamily(families[0] as string);
+			const preferred = catalog?.serverTypes.find(
+				(type) => type.id === initial?.serverType,
+			)?.family;
+			setFamily(preferred ?? (families[0] as string));
 		}
-	}, [families, family]);
+	}, [families, family, catalog, initial?.serverType]);
 
 	const selectedLocation = catalog?.locations.find((l) => l.id === location);
 	const selectedType = catalog?.serverTypes.find((t) => t.id === serverTypeId);
@@ -369,7 +294,8 @@ const ConfigureServer = ({
 	}, [catalog, location, form]);
 
 	useEffect(() => {
-		if (!selectedLocation) return;
+		// Waits for the family tab so a preselected type isn't replaced first.
+		if (!selectedLocation || !family) return;
 		const stillValid =
 			selectedType &&
 			selectedType.family === family &&
@@ -426,8 +352,10 @@ const ConfigureServer = ({
 					<div className="flex flex-col gap-1">
 						<DialogTitle>Create a server on {provider.label}</DialogTitle>
 						<DialogDescription>
-							It takes about two minutes. You can close this window while it
-							runs.
+							{(provider.bootTimeoutMs ?? 0) > 10 * 60_000
+								? `${provider.label} usually takes 10 to 20 minutes to start a server.`
+								: "It takes about two minutes."}{" "}
+							You can close this window while it runs.
 						</DialogDescription>
 					</div>
 				</div>
@@ -625,18 +553,22 @@ const ConfigureServer = ({
 																	</span>
 																	<span className="flex items-center gap-1.5 text-muted-foreground">
 																		<Cpu className="size-3.5" />
-																		{type.cores}
+																		{type.cores ?? "–"}
 																	</span>
 																	<span className="flex items-center gap-1.5 text-muted-foreground">
 																		<MemoryStick className="size-3.5" />
-																		{type.memoryGb} GB
+																		{type.memoryGb !== null
+																			? `${type.memoryGb} GB`
+																			: "–"}
 																	</span>
 																	<span className="flex items-center gap-1.5 text-muted-foreground">
 																		<HardDrive className="size-3.5" />
 																		{type.diskGb} GB
 																	</span>
 																	<span className="text-right font-medium tabular-nums">
-																		{price ? money.format(price.monthly) : "–"}
+																		{price?.monthly != null
+																			? money.format(price.monthly)
+																			: "–"}
 																	</span>
 																</button>
 															);
@@ -680,6 +612,16 @@ const ConfigureServer = ({
 						)
 					)}
 
+					{provider.removal === "cancel" && (
+						<AlertBlock type="warning">
+							{provider.label} bills servers by the month and can't delete them,
+							only cancel them for the end of their term. Prices aren't
+							available through its API, so check them on {provider.label}'s
+							site first. If provisioning fails, the server is kept rather than
+							cancelled.
+						</AlertBlock>
+					)}
+
 					<DialogFooter className="sticky -bottom-6 z-10 -mx-6 -mb-6 flex-col items-stretch gap-3 rounded-b-xl border-t bg-popover px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
 						<div className="flex flex-col text-sm">
 							{selectedType && selectedLocation ? (
@@ -688,7 +630,7 @@ const ConfigureServer = ({
 										{selectedType.label} in {selectedLocation.city}
 									</span>
 									<span className="text-muted-foreground">
-										{monthlyPrice !== undefined
+										{monthlyPrice != null
 											? `${money.format(monthlyPrice)} / month, billed by ${provider.label}`
 											: `Billed by ${provider.label}`}
 									</span>

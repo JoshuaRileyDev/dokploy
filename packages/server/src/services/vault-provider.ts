@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import { isUniqueConstraintViolation } from "@dokploy/server/db/errors";
 import {
 	type apiCreateVaultProvider,
 	projects,
@@ -60,8 +61,7 @@ export const mergeVaultProviderConfig = (
 };
 
 const isUniqueNameViolation = (error: unknown) =>
-	error instanceof Error &&
-	error.message.includes("vault_provider_org_name_idx");
+	isUniqueConstraintViolation(error, "vault_provider_org_name_idx");
 
 const validateAssignments = async (
 	assignments: VaultProviderAssignment[],

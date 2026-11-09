@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import { isUniqueConstraintViolation } from "@dokploy/server/db/errors";
 import {
 	type apiCreateDnsProvider,
 	type DnsProviderConfig,
@@ -55,7 +56,7 @@ export const mergeDnsProviderConfig = (
 };
 
 const isUniqueNameViolation = (error: unknown) =>
-	error instanceof Error && error.message.includes("dns_provider_org_name_idx");
+	isUniqueConstraintViolation(error, "dns_provider_org_name_idx");
 
 export const createDnsProvider = async (
 	input: z.infer<typeof apiCreateDnsProvider>,

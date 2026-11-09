@@ -19,9 +19,82 @@ export const HetznerIcon = ({ className }: Props) => (
 	</svg>
 );
 
+export const OvhCloudIcon = ({ className }: Props) => (
+	<svg
+		viewBox="0 0 24 24"
+		xmlns="http://www.w3.org/2000/svg"
+		className={className}
+	>
+		<rect width="24" height="24" rx="4" fill="#000E9C" />
+		<text
+			x="12"
+			y="15.5"
+			textAnchor="middle"
+			fontFamily="Arial, Helvetica, sans-serif"
+			fontSize="9"
+			fontWeight="700"
+			fill="#fff"
+		>
+			OVH
+		</text>
+	</svg>
+);
+
+export const ContaboIcon = ({ className }: Props) => (
+	<svg
+		viewBox="0 0 24 24"
+		xmlns="http://www.w3.org/2000/svg"
+		className={className}
+	>
+		<rect width="24" height="24" rx="4" fill="#1C3D5A" />
+		<text
+			x="12"
+			y="16.5"
+			textAnchor="middle"
+			fontFamily="Arial, Helvetica, sans-serif"
+			fontSize="13"
+			fontWeight="700"
+			fill="#fff"
+		>
+			C
+		</text>
+	</svg>
+);
+
+export const DigitalOceanIcon = ({ className }: Props) => (
+	<svg
+		viewBox="0 0 24 24"
+		xmlns="http://www.w3.org/2000/svg"
+		className={className}
+	>
+		<rect width="24" height="24" rx="4" fill="#0069FF" />
+		<path
+			fill="#fff"
+			d="M12 18.5v-2.6a3.9 3.9 0 1 0-3.9-3.9H5.5A6.5 6.5 0 1 1 12 18.5Zm0-2.6H9.4v-2.6H12Zm-2.6 2H7.4v-2h2Zm-2-2H5.8v-1.6h1.6Z"
+		/>
+	</svg>
+);
+
+export const VultrIcon = ({ className }: Props) => (
+	<svg
+		viewBox="0 0 24 24"
+		xmlns="http://www.w3.org/2000/svg"
+		className={className}
+	>
+		<rect width="24" height="24" rx="4" fill="#007BFC" />
+		<path fill="#51B9FF" d="M5 6h3.2l4 7-1.6 2.8Z" />
+		<path fill="#fff" d="M9.6 6h3.2l4 7-1.6 2.8Z" />
+		<path fill="#fff" d="M15.8 6H19l-5.6 10h-3.2Z" />
+	</svg>
+);
+
 const cloudProviderIcons: Record<string, (props: Props) => React.ReactElement> =
 	{
 		hetzner: HetznerIcon,
+		ovhcloud: OvhCloudIcon,
+		digitalocean: DigitalOceanIcon,
+		vultr: VultrIcon,
+		contabo: ContaboIcon,
 	};
 
 export const CloudProviderIcon = ({

@@ -1,9 +1,11 @@
 import {
+	checkTransferArchitecture,
 	getAccessibleServerIds,
 	IS_CLOUD,
 	migrateServer,
 	planServerMigration,
 	transferService,
+	waitForServerProvisioning,
 } from "@dokploy/server";
 import {
 	checkPermission,
@@ -15,19 +17,24 @@ import type { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {
+	apiCheckTransferArchitecture,
 	apiMigrateServer,
 	apiPlanServerMigration,
 	apiTransferService,
 } from "@/server/db/schema";
+import { provisionCloudServer } from "@/server/utils/provision-server";
 
 type TransferInput = z.infer<typeof apiTransferService>;
 
 type TransferCtx = {
-	user: { id: string; email: string; role: string };
+	user: { id: string; email: string; role: string; ownerId: string };
 	session: { userId: string; activeOrganizationId: string };
 };
 
-const checkTransferAccess = async (ctx: TransferCtx, input: TransferInput) => {
+const checkTransferAccess = async (
+	ctx: TransferCtx,
+	input: Pick<TransferInput, "serviceId" | "targetServerId">,
+) => {
 	await checkServicePermissionAndAccess(ctx, input.serviceId, {
 		service: ["create"],
 		deployment: ["create"],
@@ -48,11 +55,15 @@ const checkTransferAccess = async (ctx: TransferCtx, input: TransferInput) => {
 	}
 };
 
-type ServerMigrationInput = z.infer<typeof apiPlanServerMigration>;
+type ServerMigrationInput = Pick<
+	z.infer<typeof apiPlanServerMigration>,
+	"sourceServerId" | "targetServerId"
+>;
 
 const checkServerMigrationAccess = async (
 	ctx: TransferCtx,
 	input: ServerMigrationInput,
+	createsServer: boolean,
 ) => {
 	await checkPermission(ctx, { service: ["create"], deployment: ["create"] });
 	const accessibleIds = await getAccessibleServerIds(ctx.session);
@@ -62,7 +73,9 @@ const checkServerMigrationAccess = async (
 			message: "You don't have access to the source server",
 		});
 	}
-	if (input.targetServerId) {
+	if (createsServer) {
+		await checkPermission(ctx, { server: ["create"] });
+	} else if (input.targetServerId) {
 		if (!accessibleIds.has(input.targetServerId)) {
 			throw new TRPCError({
 				code: "UNAUTHORIZED",
@@ -178,10 +191,19 @@ export const transferRouter = createTRPCRouter({
 				}
 			}
 		}),
+	checkArchitecture: protectedProcedure
+		.input(apiCheckTransferArchitecture)
+		.query(async ({ input, ctx }) => {
+			await checkTransferAccess(ctx, input);
+			return checkTransferArchitecture({
+				...input,
+				organizationId: ctx.session.activeOrganizationId,
+			});
+		}),
 	planServer: protectedProcedure
 		.input(apiPlanServerMigration)
 		.query(async ({ input, ctx }) => {
-			await checkServerMigrationAccess(ctx, input);
+			await checkServerMigrationAccess(ctx, input, !!input.newServer);
 			const allowed = await accessibleServiceIds(ctx);
 			return planServerMigration(
 				{ ...input, organizationId: ctx.session.activeOrganizationId },
@@ -200,7 +222,7 @@ export const transferRouter = createTRPCRouter({
 		})
 		.input(apiMigrateServer)
 		.subscription(async function* ({ input, ctx, signal }) {
-			await checkServerMigrationAccess(ctx, input);
+			await checkServerMigrationAccess(ctx, input, !!input.provision);
 			for (const service of input.services) {
 				await checkServicePermissionAndAccess(ctx, service.serviceId, {
 					service: ["create"],
@@ -212,23 +234,48 @@ export const transferRouter = createTRPCRouter({
 			let done = false;
 			const log = (line: string) => queue.push(line);
 
-			migrateServer(
-				{ ...input, organizationId: ctx.session.activeOrganizationId },
-				log,
-				{
-					onTransferred: (result) =>
-						audit(ctx, {
-							action: "move",
-							resourceType: "service",
-							resourceId: result.serviceId,
-							resourceName: result.appName,
-							metadata: {
-								sourceServerId: input.sourceServerId,
-								targetServerId: input.targetServerId,
-							},
-						}),
-				},
-			)
+			const run = async () => {
+				let targetServerId = input.targetServerId;
+				if (input.provision) {
+					const { provision } = input;
+					log(
+						`Creating ${provision.name} (${provision.serverType} in ${provision.location})`,
+					);
+					const provisioning = await provisionCloudServer(ctx, {
+						...provision,
+						role: "deploy",
+					});
+					targetServerId = await waitForServerProvisioning(
+						provisioning.serverProvisioningId,
+						(message) => log(`  ${message}`),
+					);
+					log(`${provision.name} is ready`);
+					log("");
+				}
+				return migrateServer(
+					{
+						...input,
+						targetServerId,
+						organizationId: ctx.session.activeOrganizationId,
+					},
+					log,
+					{
+						onTransferred: (result) =>
+							audit(ctx, {
+								action: "move",
+								resourceType: "service",
+								resourceId: result.serviceId,
+								resourceName: result.appName,
+								metadata: {
+									sourceServerId: input.sourceServerId,
+									targetServerId,
+								},
+							}),
+					},
+				);
+			};
+
+			run()
 				.then((result) =>
 					log(
 						result.failed.length === 0

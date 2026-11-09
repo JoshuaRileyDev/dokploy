@@ -76,6 +76,7 @@ export const DeleteServerModal = ({
 		!!provisioning.cloudProviderAccountId;
 
 	const canDelete = (services?.length ?? 0) === 0;
+	const cancels = provisioning?.providerRemoval === "cancel";
 
 	const handleDeleteService = async (
 		service: NonNullable<typeof services>[number],
@@ -131,14 +132,14 @@ export const DeleteServerModal = ({
 				})
 					.then(() =>
 						toast.success(
-							`Deleted ${serverName} on ${provisioning.providerLabel}`,
+							`${cancels ? "Cancelled" : "Deleted"} ${serverName} on ${provisioning.providerLabel}`,
 						),
 					)
 					.catch((error) =>
 						toast.error(
-							`Could not delete the server on ${provisioning.providerLabel}`,
+							`Could not ${cancels ? "cancel" : "delete"} the server on ${provisioning.providerLabel}`,
 							{
-								description: `${error.message} Delete it from the ${provisioning.providerLabel} console to stop billing.`,
+								description: `${error.message} ${cancels ? "Cancel" : "Delete"} it from the ${provisioning.providerLabel} console to stop billing.`,
 							},
 						),
 					);
@@ -242,13 +243,13 @@ export const DeleteServerModal = ({
 						/>
 						<div className="flex flex-col gap-1">
 							<Label htmlFor={`delete-on-provider-${serverId}`}>
-								Also delete the server on {provisioning?.providerLabel}
+								Also {cancels ? "cancel" : "delete"} the server on{" "}
+								{provisioning?.providerLabel}
 							</Label>
 							<span className="text-xs text-muted-foreground">
-								Removes the {provisioning?.config.serverType} server in{" "}
-								{provisioning?.config.location} from the{" "}
-								{provisioning?.account?.name} account so it stops billing. Its
-								disk is erased.
+								{cancels
+									? `Cancels the ${provisioning?.config.serverType} server in ${provisioning?.config.location} on the ${provisioning?.account?.name} account. It keeps running, and billing, until the end of its current term.`
+									: `Removes the ${provisioning?.config.serverType} server in ${provisioning?.config.location} from the ${provisioning?.account?.name} account so it stops billing. Its disk is erased.`}
 							</span>
 						</div>
 					</div>

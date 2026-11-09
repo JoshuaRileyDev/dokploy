@@ -1,7 +1,7 @@
 import type { ServiceType } from "@dokploy/server/db/schema";
 import { standardSchemaResolver as zodResolver } from "@hookform/resolvers/standard-schema";
-import { ArrowRightLeft } from "lucide-react";
-import { useState } from "react";
+import { ArrowRightLeft, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -75,6 +75,30 @@ export const TransferService = ({ id, type, serverId }: Props) => {
 		defaultValues: { targetServerId: "", removeSourceData: false },
 		resolver: zodResolver(transferSchema),
 	});
+	const selectedTarget = form.watch("targetServerId");
+	const [acknowledgedArchitecture, setAcknowledgedArchitecture] =
+		useState(false);
+
+	const { data: architecture, isFetching: isCheckingArchitecture } =
+		api.transfer.checkArchitecture.useQuery(
+			{
+				serviceType: type,
+				serviceId: id,
+				targetServerId: selectedTarget === LOCAL_SERVER ? null : selectedTarget,
+			},
+			{
+				enabled: isOpen && !!selectedTarget,
+				refetchOnWindowFocus: false,
+				retry: false,
+			},
+		);
+
+	useEffect(() => {
+		setAcknowledgedArchitecture(false);
+	}, [selectedTarget]);
+
+	const blockedByArchitecture =
+		!!architecture?.mismatch && !acknowledgedArchitecture;
 
 	api.transfer.start.useSubscription(
 		{
@@ -178,6 +202,47 @@ export const TransferService = ({ id, type, serverId }: Props) => {
 										</FormItem>
 									)}
 								/>
+								{isCheckingArchitecture && (
+									<div className="flex items-center gap-2 text-sm text-muted-foreground">
+										<Loader2 className="size-4 animate-spin" />
+										Comparing CPU architectures…
+									</div>
+								)}
+								{architecture?.mismatch && !isCheckingArchitecture && (
+									<AlertBlock
+										type={
+											architecture.check?.status === "incompatible"
+												? "error"
+												: "warning"
+										}
+									>
+										<div className="grid gap-2">
+											<span>
+												{architecture.sourceName} is {architecture.source} but{" "}
+												{architecture.targetName} is {architecture.target}.
+											</span>
+											{architecture.check && (
+												<span>{architecture.check.message}</span>
+											)}
+											{architecture.check?.dataWarning && (
+												<span>{architecture.check.dataWarning}</span>
+											)}
+											<label
+												htmlFor="transfer-ack-architecture"
+												className="flex cursor-pointer items-center gap-2 font-medium"
+											>
+												<Checkbox
+													id="transfer-ack-architecture"
+													checked={acknowledgedArchitecture}
+													onCheckedChange={(checked) =>
+														setAcknowledgedArchitecture(checked === true)
+													}
+												/>
+												Transfer anyway
+											</label>
+										</div>
+									</AlertBlock>
+								)}
 								<FormField
 									control={form.control}
 									name="removeSourceData"
@@ -226,6 +291,7 @@ export const TransferService = ({ id, type, serverId }: Props) => {
 						{targets.length > 0 && (
 							<Button
 								isLoading={isTransferring}
+								disabled={blockedByArchitecture || isCheckingArchitecture}
 								form="hook-form-transfer-service"
 								type="submit"
 							>

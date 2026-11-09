@@ -2,7 +2,13 @@
  * Adding a provider: add its id here, implement `CloudProviderDefinition` in
  * its own file, and register it in `./index.ts`. See docs/cloud-providers.md.
  */
-export const cloudProviderTypes = ["hetzner"] as const;
+export const cloudProviderTypes = [
+	"hetzner",
+	"ovhcloud",
+	"digitalocean",
+	"vultr",
+	"contabo",
+] as const;
 
 export type CloudProviderType = (typeof cloudProviderTypes)[number];
 
@@ -13,6 +19,8 @@ export interface CloudCredentialField {
 	secret: boolean;
 	placeholder?: string;
 	description?: string;
+	/** Renders a select instead of a text input; the first option is the default. */
+	options?: { value: string; label: string }[];
 }
 
 export type CloudCredentials = Record<string, string>;
@@ -31,11 +39,23 @@ export interface CloudServerType {
 	label: string;
 	/** Groups server types into tabs in the UI, e.g. "Shared · x86". */
 	family: string;
-	cores: number;
-	memoryGb: number;
+	/** Null when the provider doesn't say. */
+	cores: number | null;
+	memoryGb: number | null;
 	diskGb: number;
 	architecture: "x86" | "arm";
-	prices: { location: string; hourly: number; monthly: number }[];
+	/**
+	 * One entry per location it's offered in; null prices when the provider
+	 * doesn't publish them. `hourly` and `monthly` are what the provider
+	 * charges (some include VAT); `monthlyNet` is before tax, for comparing
+	 * providers, and defaults to `monthly`.
+	 */
+	prices: {
+		location: string;
+		hourly: number | null;
+		monthly: number | null;
+		monthlyNet?: number | null;
+	}[];
 }
 
 export interface CloudImage {
@@ -57,6 +77,10 @@ export interface CloudServer {
 	status: "starting" | "running" | "error";
 	ipv4: string | null;
 	ipv6: string | null;
+	/** Overrides the definition's `sshUsername` when the login user depends on the image. */
+	sshUsername?: string;
+	/** Why the server isn't starting, e.g. a payment or verification hold. */
+	statusMessage?: string;
 }
 
 export interface CloudMoney {
@@ -118,7 +142,10 @@ export interface CloudProviderClient {
 	deleteSshKey(id: string): Promise<void>;
 	createServer(input: CreateCloudServerInput): Promise<CloudServer>;
 	getServer(id: string): Promise<CloudServer>;
-	/** Must succeed when the server is already gone. */
+	/**
+	 * Must succeed when the server is already gone. For providers with
+	 * `removal: "cancel"` this cancels the contract instead.
+	 */
 	deleteServer(id: string): Promise<void>;
 	/** Optional: providers without pricing data are left out of cost totals. */
 	listServerCosts?(): Promise<CloudCostReport>;
@@ -135,6 +162,14 @@ export interface CloudProviderDefinition {
 	credentialsHelpUrl?: string;
 	/** User Dokploy connects as over SSH on freshly created servers. */
 	sshUsername: string;
+	/**
+	 * "cancel": servers can't be deleted, only cancelled for the end of their
+	 * paid term. A failed provisioning then keeps the server instead of
+	 * throwing away a month that's already billed. Defaults to "delete".
+	 */
+	removal?: "delete" | "cancel";
+	/** How long a new server may take to start. Defaults to five minutes. */
+	bootTimeoutMs?: number;
 	createClient(credentials: CloudCredentials): CloudProviderClient;
 }
 
