@@ -35,6 +35,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { api, type RouterOutputs } from "@/utils/api";
+import { defaultImage } from "./default-image";
 
 type Comparison = RouterOutputs["cloudProvider"]["compare"];
 type Account = Comparison["accounts"][number];
@@ -280,7 +281,12 @@ export const ProvisionWizard = ({
 	const canConvert = !!data?.rates;
 	const unconnected = (providers ?? []).filter(
 		(provider) =>
-			!(data?.accounts ?? []).some((a) => a.providerType === provider.type),
+			!(data?.accounts ?? []).some(
+				(a) => a.providerType === provider.type && a.connected,
+			),
+	);
+	const needsAccount = (providers ?? []).filter((provider) =>
+		data?.needsAccount.some((p) => p.providerType === provider.type),
 	);
 
 	const money = (amount: number, currency: string) =>
@@ -377,8 +383,30 @@ export const ProvisionWizard = ({
 		`${match.account.cloudProviderAccountId}:${match.offer.serverType}`;
 	const selected = regionMatches.find((m) => matchKey(m) === selectedKey);
 
+	// After connecting a previewed provider, move the choice onto the new
+	// account's live copy of the same server type.
+	const [reselect, setReselect] = useState<{
+		accountId: string;
+		serverType: string;
+	} | null>(null);
 	useEffect(() => {
-		if (step === "server" && !selected && regionMatches[0]) {
+		if (!reselect) return;
+		const key = `${reselect.accountId}:${reselect.serverType}`;
+		if (regionMatches.some((m) => matchKey(m) === key)) {
+			setSelectedKey(key);
+			setReselect(null);
+		}
+	}, [reselect, regionMatches]);
+
+	const onAccountConnected = async (accountId: string) => {
+		if (selected) {
+			setReselect({ accountId, serverType: selected.offer.serverType });
+		}
+		await utils.cloudProvider.compare.invalidate();
+	};
+
+	useEffect(() => {
+		if (step === "server" && !selected && !reselect && regionMatches[0]) {
 			setSelectedKey(matchKey(regionMatches[0]));
 		}
 	}, [step, selected, regionMatches]);
@@ -398,7 +426,7 @@ export const ProvisionWizard = ({
 				cloudProviderAccountId: selected?.account.cloudProviderAccountId ?? "",
 			},
 			{
-				enabled: step === "details" && !!selected,
+				enabled: step === "details" && !!selected?.account.connected,
 				staleTime: 5 * 60_000,
 				retry: false,
 			},
@@ -414,8 +442,7 @@ export const ProvisionWizard = ({
 		if (images.length === 0 || images.some((image) => image.id === imageId)) {
 			return;
 		}
-		const ubuntu = images.find((image) => image.osFlavor === "ubuntu");
-		setImageId((ubuntu ?? images[0])?.id ?? "");
+		setImageId(defaultImage(images)?.id ?? "");
 	}, [images, imageId]);
 
 	const provision = api.cloudProvider.provision.useMutation();
@@ -467,7 +494,7 @@ export const ProvisionWizard = ({
 					<HandleCloudProvider
 						key={provider.type}
 						providerType={provider.type}
-						onConnected={() => utils.cloudProvider.compare.invalidate()}
+						onConnected={onAccountConnected}
 					>
 						<Button variant="outline" size="sm" className="h-7 gap-1.5 px-2">
 							<CloudProviderIcon
@@ -494,7 +521,7 @@ export const ProvisionWizard = ({
 		},
 		server: {
 			title: "Choose a server",
-			description: `The cheapest ${size.label.toLowerCase()} server from each of your accounts, ${continent === "any" ? "anywhere" : `in ${continent}`}.`,
+			description: `The cheapest ${size.label.toLowerCase()} server from each provider, ${continent === "any" ? "anywhere" : `in ${continent}`}.`,
 		},
 		details: {
 			title: "Name and create it",
@@ -777,6 +804,9 @@ export const ProvisionWizard = ({
 														{index === 0 && (
 															<Badge variant="green">Lowest price</Badge>
 														)}
+														{!match.account.connected && (
+															<Badge variant="outline">Not connected</Badge>
+														)}
 													</span>
 													<span className="truncate text-xs text-muted-foreground">
 														{match.account.providerLabel} · {match.offer.family}{" "}
@@ -815,7 +845,7 @@ export const ProvisionWizard = ({
 										) : (
 											<span />
 										)}
-										{selected && (
+										{selected?.account.connected && (
 											<button
 												type="button"
 												className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
@@ -833,6 +863,35 @@ export const ProvisionWizard = ({
 											</button>
 										)}
 									</div>
+									{needsAccount.length > 0 && (
+										<div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+											<span className="w-full">
+												{new Intl.ListFormat("en", {
+													type: "conjunction",
+												}).format(needsAccount.map((p) => p.label))}{" "}
+												only list their servers to connected accounts.
+											</span>
+											{needsAccount.map((provider) => (
+												<HandleCloudProvider
+													key={provider.type}
+													providerType={provider.type}
+													onConnected={onAccountConnected}
+												>
+													<Button
+														variant="outline"
+														size="sm"
+														className="h-7 gap-1.5 px-2"
+													>
+														<CloudProviderIcon
+															providerType={provider.type}
+															className="size-4"
+														/>
+														Connect {provider.label}
+													</Button>
+												</HandleCloudProvider>
+											))}
+										</div>
+									)}
 									<p className="text-xs text-muted-foreground">
 										{data?.rates
 											? `Before tax, converted at European Central Bank rates from ${data.rates.date}. Each provider bills in its own currency.`
@@ -840,6 +899,13 @@ export const ProvisionWizard = ({
 									</p>
 								</>
 							)}
+						</div>
+					)}
+
+					{step === "details" && !selected && reselect && (
+						<div className="flex min-h-[20vh] items-center justify-center gap-2 text-sm text-muted-foreground">
+							<Loader2 className="size-4 animate-spin" />
+							Loading your new account's server options…
 						</div>
 					)}
 
@@ -869,79 +935,109 @@ export const ProvisionWizard = ({
 								</span>
 							</div>
 
-							<div className="grid gap-4 sm:grid-cols-2">
-								<div className="grid gap-1.5">
-									<Label htmlFor="provision-name">Server name</Label>
-									<Input
-										id="provision-name"
-										placeholder="web-1"
-										autoComplete="off"
-										value={name}
-										onChange={(e) => setName(e.target.value.toLowerCase())}
-									/>
-									{nameError && (
-										<span className="text-xs text-destructive">
-											{nameError}
+							{!selected.account.connected ? (
+								<div className="flex flex-col gap-3 rounded-lg border border-dashed p-4">
+									<div className="flex flex-col gap-1">
+										<span className="text-sm font-medium">
+											Connect {selected.account.providerLabel} to create this
+											server
 										</span>
-									)}
-								</div>
-								<div className="grid gap-1.5">
-									<Label>Use as</Label>
-									<Tabs
-										value={role}
-										onValueChange={(value) =>
-											setRole(value as "deploy" | "build")
-										}
+										<span className="text-xs text-muted-foreground">
+											Dokploy creates it in your own{" "}
+											{selected.account.providerLabel} account, so it needs API
+											access first. You'll come straight back here.
+											{selected.account.approximateLocations &&
+												" Its exact locations are confirmed once connected."}
+										</span>
+									</div>
+									<HandleCloudProvider
+										providerType={selected.account.providerType}
+										onConnected={onAccountConnected}
 									>
-										<TabsList>
-											<TabsTrigger value="deploy">Deploy server</TabsTrigger>
-											<TabsTrigger value="build">Build server</TabsTrigger>
-										</TabsList>
-									</Tabs>
-								</div>
-								<div className="grid gap-1.5">
-									<Label>Location</Label>
-									<Select value={locationId} onValueChange={setLocationId}>
-										<SelectTrigger className="w-full">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											{selected.placements.map((placement) => (
-												<SelectItem
-													key={placement.location.id}
-													value={placement.location.id}
-												>
-													{flagOf(placement.location.country)}{" "}
-													{placement.location.city}
-													{placement.monthly !== null &&
-														` · ${priceText(placement.monthly, selected.account.currency as string)}`}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</div>
-								<div className="grid gap-1.5">
-									<Label>Operating system</Label>
-									<Select
-										value={imageId}
-										onValueChange={setImageId}
-										disabled={isLoadingImages && images.length === 0}
-									>
-										<SelectTrigger className="w-full">
-											<SelectValue
-												placeholder={isLoadingImages ? "Loading…" : "Select"}
+										<Button className="w-fit gap-2">
+											<CloudProviderIcon
+												providerType={selected.account.providerType}
+												className="size-4"
 											/>
-										</SelectTrigger>
-										<SelectContent>
-											{images.map((image) => (
-												<SelectItem key={image.id} value={image.id}>
-													{image.label}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+											Connect {selected.account.providerLabel}
+										</Button>
+									</HandleCloudProvider>
 								</div>
-							</div>
+							) : (
+								<div className="grid gap-4 sm:grid-cols-2">
+									<div className="grid gap-1.5">
+										<Label htmlFor="provision-name">Server name</Label>
+										<Input
+											id="provision-name"
+											placeholder="web-1"
+											autoComplete="off"
+											value={name}
+											onChange={(e) => setName(e.target.value.toLowerCase())}
+										/>
+										{nameError && (
+											<span className="text-xs text-destructive">
+												{nameError}
+											</span>
+										)}
+									</div>
+									<div className="grid gap-1.5">
+										<Label>Use as</Label>
+										<Tabs
+											value={role}
+											onValueChange={(value) =>
+												setRole(value as "deploy" | "build")
+											}
+										>
+											<TabsList>
+												<TabsTrigger value="deploy">Deploy server</TabsTrigger>
+												<TabsTrigger value="build">Build server</TabsTrigger>
+											</TabsList>
+										</Tabs>
+									</div>
+									<div className="grid gap-1.5">
+										<Label>Location</Label>
+										<Select value={locationId} onValueChange={setLocationId}>
+											<SelectTrigger className="w-full">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												{selected.placements.map((placement) => (
+													<SelectItem
+														key={placement.location.id}
+														value={placement.location.id}
+													>
+														{flagOf(placement.location.country)}{" "}
+														{placement.location.city}
+														{placement.monthly !== null &&
+															` · ${priceText(placement.monthly, selected.account.currency as string)}`}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
+									<div className="grid gap-1.5">
+										<Label>Operating system</Label>
+										<Select
+											value={imageId}
+											onValueChange={setImageId}
+											disabled={isLoadingImages && images.length === 0}
+										>
+											<SelectTrigger className="w-full">
+												<SelectValue
+													placeholder={isLoadingImages ? "Loading…" : "Select"}
+												/>
+											</SelectTrigger>
+											<SelectContent>
+												{images.map((image) => (
+													<SelectItem key={image.id} value={image.id}>
+														{image.label}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
+								</div>
+							)}
 
 							{selected.account.removal === "cancel" && (
 								<AlertBlock type="warning">
@@ -962,7 +1058,13 @@ export const ProvisionWizard = ({
 							<Button
 								onClick={onCreate}
 								isLoading={provision.isPending}
-								disabled={!name || !!nameError || !imageId || !locationId}
+								disabled={
+									!selected?.account.connected ||
+									!name ||
+									!!nameError ||
+									!imageId ||
+									!locationId
+								}
 							>
 								Create server
 							</Button>

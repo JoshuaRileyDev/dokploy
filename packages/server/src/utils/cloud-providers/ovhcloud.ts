@@ -129,9 +129,94 @@ interface OvhCatalog {
 	locale: { currencyCode: string; taxRate: number };
 	addons: {
 		planCode: string;
+		product?: string;
 		pricings: { price: number; intervalUnit: string; interval: number }[];
+		blobs?: {
+			technical?: {
+				name?: string;
+				cpu?: { cores?: number };
+				memory?: { size?: number };
+				os?: { family?: string };
+				storage?: { disks?: { capacity?: number; number?: number }[] };
+			};
+		};
 	}[];
 }
+
+// Region availability needs an account, so the public catalog assumes the
+// main Public Cloud regions, which offer the standard flavors.
+const PUBLIC_REGIONS = [
+	{ id: "GRA11", city: "Gravelines", country: "FR", region: "EU" },
+	{ id: "SBG5", city: "Strasbourg", country: "FR", region: "EU" },
+	{ id: "DE1", city: "Frankfurt", country: "DE", region: "EU" },
+	{ id: "UK1", city: "London", country: "GB", region: "EU" },
+	{ id: "WAW1", city: "Warsaw", country: "PL", region: "EU" },
+	{ id: "BHS5", city: "Beauharnois", country: "CA", region: "NA" },
+	{ id: "SGP1", city: "Singapore", country: "SG", region: "ASIA" },
+	{ id: "SYD1", city: "Sydney", country: "AU", region: "ASIA" },
+];
+
+const PUBLIC_CATALOG_URL = `${OVH_API_ENDPOINTS["ovh-eu"]}/order/catalog/public/cloud?ovhSubsidiary=FR`;
+
+/**
+ * Flavors, specs and hourly prices from the public order catalog, which needs
+ * no credentials. Plan codes with a suffix (".LZ.EU", ".3AZ") are local or
+ * multi-zone variants and are left out.
+ */
+export const parseOvhPublicCatalog = (catalog: OvhCatalog): CloudCatalog => {
+	const vat = catalog.locale.taxRate;
+	const serverTypes: CloudServerType[] = [];
+	for (const addon of catalog.addons) {
+		const match = addon.planCode.match(/^([a-z0-9-]+)\.consumption$/);
+		const technical = addon.blobs?.technical;
+		const name = match?.[1];
+		if (!name || addon.product !== "publiccloud-instance") continue;
+		if (technical?.os?.family !== "linux" || !familyOf(name)) continue;
+		const cores = technical.cpu?.cores;
+		const memory = technical.memory?.size;
+		if (!cores || !memory) continue;
+		const pricing = addon.pricings.find(
+			(p) => p.intervalUnit === "hour" && p.interval === 1,
+		);
+		if (!pricing) continue;
+		const hourlyNet = pricing.price / CATALOG_PRICE_SCALE;
+		const diskGb = (technical.storage?.disks ?? []).reduce(
+			(total, disk) => total + (disk.capacity ?? 0) * (disk.number ?? 1),
+			0,
+		);
+		serverTypes.push({
+			id: name,
+			label: name.toUpperCase(),
+			family: familyOf(name) as string,
+			cores,
+			memoryGb: memory,
+			diskGb,
+			architecture: "x86",
+			prices: PUBLIC_REGIONS.map((region) => ({
+				location: region.id,
+				hourly: hourlyNet * (1 + vat / 100),
+				monthly: hourlyNet * HOURS_PER_MONTH * (1 + vat / 100),
+				monthlyNet: hourlyNet * HOURS_PER_MONTH,
+			})),
+		});
+	}
+	serverTypes.sort(
+		(a, b) =>
+			a.family.localeCompare(b.family) ||
+			(a.cores ?? 0) - (b.cores ?? 0) ||
+			(a.memoryGb ?? 0) - (b.memoryGb ?? 0),
+	);
+	return {
+		currency: catalog.locale.currencyCode,
+		approximateLocations: true,
+		locations: PUBLIC_REGIONS.map((region) => ({
+			...region,
+			availableServerTypes: serverTypes.map((type) => type.id),
+		})),
+		serverTypes,
+		images: [],
+	};
+};
 
 interface PriceList {
 	currency: string;
@@ -685,4 +770,17 @@ export const ovhcloud: CloudProviderDefinition = {
 		"https://help.ovhcloud.com/csm/en-gb-api-getting-started-ovhcloud-api?id=kb_article_view&sysparm_article=KB0042784",
 	sshUsername: "ubuntu",
 	createClient,
+	getPublicCatalog: async () => {
+		const response = await fetch(PUBLIC_CATALOG_URL, {
+			signal: AbortSignal.timeout(30_000),
+		});
+		if (!response.ok) {
+			throw new CloudProviderError(
+				`OVHcloud price catalog request failed (${response.status})`,
+				"unavailable",
+				response.status,
+			);
+		}
+		return parseOvhPublicCatalog((await response.json()) as OvhCatalog);
+	},
 };

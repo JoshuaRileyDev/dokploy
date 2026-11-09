@@ -71,10 +71,14 @@ Provision Server walks through four steps, each narrowing the next, using every 
 
 1. **Size**: presets described by workload (Starter 1 vCPU / 2 GB up to Extra large 16 vCPU / 32 GB) or Custom minimums for vCPU, memory and disk, plus a CPU preference (any, x86, Arm). Each preset shows its lowest price and how many server types fit.
 2. **Region**: a continent or Anywhere, each with its lowest price and option count for the chosen size.
-3. **Server**: the cheapest fitting type from each account, so providers can be compared at a glance, with every option one click away. "Configure manually" opens the full create form with the choice preselected.
-4. **Details**: name, role, exact location (with each city's price) and operating system, then Create.
+3. **Server**: the cheapest fitting type from each provider, so they can be compared at a glance, with every option one click away. "Configure manually" opens the full create form with the choice preselected.
+4. **Details**: name, role, exact location (with each city's price) and operating system, then Create. If the chosen server comes from a provider that isn't connected, this step asks to connect it instead, opening the connect dialog over the flow, and then carries on with the new account's live copy of the same server type.
 
-Prices are compared before tax (`monthlyNet`) and converted with the European Central Bank's daily reference rates, cached for six hours; without rates they're shown in each provider's currency. Types without published specs (Contabo) can't be matched to a size, so they're only reachable through Configure manually. Providers without a connected account can be added from the first step.
+Providers that publish their catalog without credentials (`getPublicCatalog` on the definition) are shown before they're connected, marked "Not connected": Vultr from its public API, OVHcloud from its public order catalog. OVHcloud's region availability needs an account, so its preview assumes the main Public Cloud regions (`approximateLocations`). Providers without a public catalog (Hetzner, DigitalOcean, Contabo) are listed in step 3 with a Connect button. Public catalogs are cached for an hour; one that can't be fetched is just left out.
+
+The operating system defaults to the newest Ubuntu LTS rather than the newest Ubuntu, since providers also offer short-lived interim releases.
+
+Prices are compared before tax (`monthlyNet`) and converted with the European Central Bank's daily reference rates, cached for six hours; without rates they're shown in each provider's currency. Types without published specs (Contabo) can't be matched to a size, so they're only reachable through Configure manually.
 
 ## Contabo
 
@@ -93,4 +97,4 @@ Migrating a server's services (Servers › … › Migrate) can target an existi
 
 ## Screenshots
 
-`docs/screenshots/cloud-providers/` walks through the flow: connecting an account (choose provider, credentials, name), the four-step Provision Server flow (size, region, server, details), creating a server (including Contabo's cancel-only warning), provisioning progress, and migrating an Arm server's services onto a new x86 server with the CPU and manual-step warnings. They were taken against a local Dokploy with provider API responses stubbed: Vultr's catalog and OVHcloud's prices are real, while Hetzner, DigitalOcean and Contabo use sample values.
+`docs/screenshots/cloud-providers/` walks through the flow: connecting an account (choose provider, credentials, name), the four-step Provision Server flow (size, region, server, details, including connecting a provider from the last step), creating a server (including Contabo's cancel-only warning), provisioning progress, and migrating an Arm server's services onto a new x86 server with the CPU and manual-step warnings. They were taken against a local Dokploy with provider API responses stubbed: Vultr's catalog and OVHcloud's prices are real, while Hetzner, DigitalOcean and Contabo use sample values.

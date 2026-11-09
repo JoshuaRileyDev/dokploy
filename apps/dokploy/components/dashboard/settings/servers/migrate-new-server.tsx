@@ -13,6 +13,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/utils/api";
+import { defaultImage } from "./default-image";
 
 export interface NewServerConfig {
 	cloudProviderAccountId: string;
@@ -122,9 +123,7 @@ export const NewServerFields = ({
 			patch.serverType = types[0].id;
 		}
 		if (selectedType && !images.some((image) => image.id === value.image)) {
-			patch.image =
-				(images.find((image) => image.osFlavor === "ubuntu") ?? images[0])
-					?.id ?? "";
+			patch.image = defaultImage(images)?.id ?? "";
 		}
 		const changed = (
 			Object.entries(patch) as [keyof NewServerConfig, string][]

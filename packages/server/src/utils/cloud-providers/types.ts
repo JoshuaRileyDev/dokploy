@@ -67,6 +67,11 @@ export interface CloudImage {
 
 export interface CloudCatalog {
 	currency: string;
+	/**
+	 * Set on a public catalog whose locations are the provider's usual ones
+	 * rather than confirmed availability, which needs an account.
+	 */
+	approximateLocations?: boolean;
 	locations: CloudLocation[];
 	serverTypes: CloudServerType[];
 	images: CloudImage[];
@@ -170,6 +175,11 @@ export interface CloudProviderDefinition {
 	removal?: "delete" | "cancel";
 	/** How long a new server may take to start. Defaults to five minutes. */
 	bootTimeoutMs?: number;
+	/**
+	 * Server types and prices the provider publishes without credentials, so
+	 * they can be browsed before an account is connected. Images may be empty.
+	 */
+	getPublicCatalog?: () => Promise<CloudCatalog>;
 	createClient(credentials: CloudCredentials): CloudProviderClient;
 }
 

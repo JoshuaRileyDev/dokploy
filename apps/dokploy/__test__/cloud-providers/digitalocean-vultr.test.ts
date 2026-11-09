@@ -371,4 +371,22 @@ describe("vultr adapter", () => {
 			label: "web-2",
 		});
 	});
+
+	it("reads the public catalog without an API key", async () => {
+		const fetchSpy = mockApi("/v2", {
+			"GET /regions": () =>
+				json({ regions: [], meta: { links: { next: "" } } }),
+			"GET /plans": () => json({ plans: [], meta: { links: { next: "" } } }),
+			"GET /os": () => json({ os: [], meta: { links: { next: "" } } }),
+		});
+
+		await cloudProviders.vultr.getPublicCatalog?.();
+
+		for (const [, init] of fetchSpy.mock.calls) {
+			expect(
+				(init?.headers as Record<string, string>).Authorization,
+			).toBeUndefined();
+		}
+		expect(fetchSpy).toHaveBeenCalledTimes(3);
+	});
 });

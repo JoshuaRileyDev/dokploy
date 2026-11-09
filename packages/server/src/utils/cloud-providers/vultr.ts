@@ -117,7 +117,9 @@ class VultrClient implements CloudProviderClient {
 			response = await fetch(`${VULTR_API_URL}${path}`, {
 				method: init.method ?? "GET",
 				headers: {
-					Authorization: `Bearer ${this.apiKey}`,
+					// Plans, regions and OS images are public, so the catalog can be
+					// read without a key.
+					...(this.apiKey && { Authorization: `Bearer ${this.apiKey}` }),
 					"Content-Type": "application/json",
 				},
 				...(init.body !== undefined && { body: JSON.stringify(init.body) }),
@@ -380,4 +382,5 @@ export const vultr: CloudProviderDefinition = {
 		"https://docs.vultr.com/platform/other/api/manage-api-keys",
 	sshUsername: "root",
 	createClient: (credentials) => new VultrClient(credentials.apiKey ?? ""),
+	getPublicCatalog: () => new VultrClient("").getCatalog(),
 };

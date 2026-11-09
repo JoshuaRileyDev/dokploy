@@ -1,5 +1,6 @@
 import {
 	type CloudCatalog,
+	cloudProviders,
 	getCloudProviderDefinition,
 } from "@dokploy/server/utils/cloud-providers";
 import {
@@ -119,6 +120,39 @@ const offersFrom = (accountId: string, catalog: CloudCatalog): CloudOffer[] =>
 		}))
 		.filter((offer) => offer.locations.length > 0);
 
+/** Prefix for the stand-in account of a provider shown from its public catalog. */
+export const PREVIEW_ACCOUNT_PREFIX = "preview:";
+
+const PUBLIC_CATALOG_TTL_MS = 60 * 60_000;
+const publicCatalogs = new Map<
+	string,
+	{ catalog: Promise<CloudCatalog | null>; fetchedAt: number }
+>();
+
+const getPublicCatalog = (type: string) => {
+	const load = getCloudProviderDefinition(type).getPublicCatalog;
+	if (!load) return Promise.resolve(null);
+	const cached = publicCatalogs.get(type);
+	if (cached && Date.now() - cached.fetchedAt < PUBLIC_CATALOG_TTL_MS) {
+		return cached.catalog;
+	}
+	// A provider that can't be reached is simply not previewed.
+	const catalog = load().catch(() => {
+		publicCatalogs.delete(type);
+		return null;
+	});
+	publicCatalogs.set(type, { catalog, fetchedAt: Date.now() });
+	return catalog;
+};
+
+const locationsOf = (catalog: CloudCatalog) =>
+	catalog.locations.map((location) => ({
+		id: location.id,
+		city: location.city,
+		country: location.country,
+		continent: continentOf(location.country),
+	}));
+
 /**
  * Every server type across the organization's cloud accounts, with the
  * locations it can be ordered in and its price there, for side-by-side
@@ -138,6 +172,8 @@ export const compareCloudOffers = async (organizationId: string) => {
 				providerType: account.providerType,
 				providerLabel: definition.label,
 				removal: definition.removal ?? "delete",
+				connected: true,
+				approximateLocations: false,
 			};
 			try {
 				const catalog = await getCloudCatalog(account);
@@ -146,12 +182,7 @@ export const compareCloudOffers = async (organizationId: string) => {
 						...summary,
 						currency: catalog.currency,
 						error: null,
-						locations: catalog.locations.map((location) => ({
-							id: location.id,
-							city: location.city,
-							country: location.country,
-							continent: continentOf(location.country),
-						})),
+						locations: locationsOf(catalog),
 					},
 					offers: offersFrom(account.cloudProviderAccountId, catalog),
 				};
@@ -171,9 +202,56 @@ export const compareCloudOffers = async (organizationId: string) => {
 			}
 		}),
 	);
+
+	// Providers without an account are previewed from their public catalog
+	// where they publish one; the rest are listed so they can be connected.
+	const connectedTypes = new Set(accounts.map((a) => a.providerType));
+	const unconnected = Object.values(cloudProviders).filter(
+		(definition) => !connectedTypes.has(definition.type),
+	);
+	const previews = await Promise.all(
+		unconnected.map(async (definition) => {
+			const catalog = await getPublicCatalog(definition.type);
+			if (!catalog) return null;
+			const id = `${PREVIEW_ACCOUNT_PREFIX}${definition.type}`;
+			return {
+				account: {
+					cloudProviderAccountId: id,
+					name: "",
+					providerType: definition.type,
+					providerLabel: definition.label,
+					removal: definition.removal ?? "delete",
+					connected: false,
+					approximateLocations: !!catalog.approximateLocations,
+					currency: catalog.currency,
+					error: null,
+					locations: locationsOf(catalog),
+				},
+				offers: offersFrom(id, catalog),
+			};
+		}),
+	);
+	const previewed = previews.filter((p): p is NonNullable<typeof p> => !!p);
+
 	return {
 		rates,
-		accounts: results.map((result) => result.account),
-		offers: results.flatMap((result) => result.offers),
+		accounts: [
+			...results.map((result) => result.account),
+			...previewed.map((preview) => preview.account),
+		],
+		offers: [
+			...results.flatMap((result) => result.offers),
+			...previewed.flatMap((preview) => preview.offers),
+		],
+		/** Providers that can only be listed once an account is connected. */
+		needsAccount: unconnected
+			.filter(
+				(definition) =>
+					!previewed.some((p) => p.account.providerType === definition.type),
+			)
+			.map((definition) => ({
+				providerType: definition.type,
+				providerLabel: definition.label,
+			})),
 	};
 };

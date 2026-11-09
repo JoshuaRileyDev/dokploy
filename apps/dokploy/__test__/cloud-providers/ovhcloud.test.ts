@@ -2,6 +2,7 @@ import {
 	type CloudProviderError,
 	cloudProviders,
 } from "@dokploy/server/utils/cloud-providers";
+import { parseOvhPublicCatalog } from "@dokploy/server/utils/cloud-providers/ovhcloud";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const json = (body: unknown, status = 200) =>
@@ -252,5 +253,52 @@ describe("ovhcloud adapter", () => {
 	it("treats deleting a missing instance as done", async () => {
 		mockOvh({});
 		await expect(client().deleteServer("gone")).resolves.toBeUndefined();
+	});
+
+	it("reads flavors and prices from the public order catalog", () => {
+		const addon = (
+			planCode: string,
+			technical: Record<string, unknown>,
+			product = "publiccloud-instance",
+		) => ({
+			planCode,
+			product,
+			pricings: [{ price: 4_000_000, intervalUnit: "hour", interval: 1 }],
+			blobs: { technical },
+		});
+		const linux = (cores: number, memory: number, disk: number) => ({
+			cpu: { cores },
+			memory: { size: memory },
+			os: { family: "linux" },
+			storage: { disks: [{ capacity: disk, number: 1 }] },
+		});
+
+		const catalog = parseOvhPublicCatalog({
+			locale: { currencyCode: "EUR", taxRate: 20 },
+			addons: [
+				addon("b3-8.consumption", linux(2, 8, 50)),
+				addon("b3-8.consumption.LZ.EU", linux(2, 8, 50)),
+				addon("win-b3-8.consumption", {
+					...linux(2, 8, 50),
+					os: { family: "windows" },
+				}),
+				addon("l4-90.consumption", linux(22, 90, 400)),
+				addon("db1-7.consumption", linux(2, 7, 50), "publiccloud-databases"),
+			],
+		});
+
+		expect(catalog.approximateLocations).toBe(true);
+		expect(catalog.serverTypes).toHaveLength(1);
+		expect(catalog.serverTypes[0]).toMatchObject({
+			id: "b3-8",
+			family: "General purpose",
+			cores: 2,
+			memoryGb: 8,
+			diskGb: 50,
+		});
+		const [price] = catalog.serverTypes[0]!.prices;
+		expect(price!.monthlyNet).toBeCloseTo(29.2);
+		expect(price!.monthly).toBeCloseTo(35.04);
+		expect(catalog.locations.length).toBeGreaterThan(0);
 	});
 });

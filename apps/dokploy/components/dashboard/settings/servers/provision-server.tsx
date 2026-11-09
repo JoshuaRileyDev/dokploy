@@ -42,6 +42,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { api, type RouterOutputs } from "@/utils/api";
+import { defaultImage } from "./default-image";
 import { ProvisionWizard, type ServerSelection } from "./provision-wizard";
 import {
 	hasOrphanedServer,
@@ -309,8 +310,7 @@ const ConfigureServer = ({
 
 	useEffect(() => {
 		if (images.some((image) => image.id === imageId)) return;
-		const ubuntu = images.find((image) => image.osFlavor === "ubuntu");
-		form.setValue("image", (ubuntu ?? images[0])?.id ?? "");
+		form.setValue("image", defaultImage(images)?.id ?? "");
 	}, [images, imageId, form]);
 
 	const monthlyPrice = selectedType?.prices.find(
