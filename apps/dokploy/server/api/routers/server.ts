@@ -27,6 +27,7 @@ import {
 	updateServerById,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
+import { providerFetch } from "@dokploy/server/services/logs-and-metrics/provider-fetch";
 import {
 	findMemberByUserId,
 	hasPermission,
@@ -719,7 +720,7 @@ export const serverRouter = createTRPCRouter({
 			try {
 				const url = new URL(input.url);
 				url.searchParams.append("limit", input.dataPoints);
-				const response = await fetch(url.toString(), {
+				const response = await providerFetch(url.toString(), {
 					headers: {
 						Authorization: `Bearer ${input.token}`,
 					},
