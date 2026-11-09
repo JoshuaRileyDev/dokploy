@@ -1,6 +1,6 @@
 import type { ServiceType } from "@dokploy/server/db/schema";
-import { ArrowRight, Cloud, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Cloud, Loader2, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { DrawerLogs } from "@/components/shared/drawer-logs";
@@ -32,9 +32,16 @@ import {
 import type { RouterOutputs } from "@/utils/api";
 import { api } from "@/utils/api";
 import { type LogLine, parseLogs } from "../../docker/logs/utils";
+import {
+	EMPTY_NEW_SERVER,
+	isNewServerComplete,
+	type NewServerConfig,
+	NewServerFields,
+} from "./migrate-new-server";
 import { ServiceTypeIcon } from "./server-services";
 
 const LOCAL_SERVER = "dokploy";
+const NEW_SERVER = "__new__";
 
 type Plan = RouterOutputs["transfer"]["planServer"];
 type ServicePlan = Plan["services"][number];
@@ -54,7 +61,15 @@ interface EnvironmentGroup {
 	label: string;
 	services: ServicePlan[];
 	manualDns: number;
+	incompatible: number;
 }
+
+const describeArchitecture = (arch: string | null) =>
+	arch === "amd64"
+		? "x86-64 (amd64)"
+		: arch === "arm64"
+			? "Arm (arm64)"
+			: (arch ?? "unknown");
 
 const groupByEnvironment = (services: ServicePlan[]) => {
 	const groups = new Map<string, EnvironmentGroup>();
@@ -64,9 +79,13 @@ const groupByEnvironment = (services: ServicePlan[]) => {
 			label: `${service.projectName} / ${service.environmentName}`,
 			services: [],
 			manualDns: 0,
+			incompatible: 0,
 		};
 		group.services.push(service);
 		group.manualDns += service.domains.filter(needsManualDns).length;
+		if (service.architecture?.status === "incompatible") {
+			group.incompatible += 1;
+		}
 		groups.set(service.environmentId, group);
 	}
 	return [...groups.values()];
@@ -118,6 +137,40 @@ const DomainRow = ({ domain }: { domain: DomainPlan }) => {
 	);
 };
 
+const ArchitectureBadges = ({ service }: { service: ServicePlan }) => {
+	const check = service.architecture;
+	if (!check) return null;
+	return (
+		<>
+			{check.status !== "ok" && (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<Badge
+							variant={check.status === "incompatible" ? "red" : "yellow"}
+							className="cursor-help"
+						>
+							{check.status === "incompatible" ? "Wrong CPU" : "CPU unchecked"}
+						</Badge>
+					</TooltipTrigger>
+					<TooltipContent className="max-w-xs">{check.message}</TooltipContent>
+				</Tooltip>
+			)}
+			{check.dataWarning && (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<Badge variant="orange" className="cursor-help">
+							Data check
+						</Badge>
+					</TooltipTrigger>
+					<TooltipContent className="max-w-xs">
+						{check.dataWarning}
+					</TooltipContent>
+				</Tooltip>
+			)}
+		</>
+	);
+};
+
 interface Props {
 	serverId: string;
 	serverName: string;
@@ -136,6 +189,9 @@ export const MigrateServer = ({
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data: servers } = api.server.withSSHKey.useQuery();
 	const [target, setTarget] = useState("");
+	const [newServer, setNewServer] = useState<NewServerConfig>(EMPTY_NEW_SERVER);
+	const [acknowledgedArchitecture, setAcknowledgedArchitecture] =
+		useState(false);
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [removeSourceData, setRemoveSourceData] = useState(false);
 	const [updateDns, setUpdateDns] = useState(true);
@@ -147,22 +203,48 @@ export const MigrateServer = ({
 		services: { serviceType: ServiceType; serviceId: string }[];
 		removeSourceData: boolean;
 		updateDns: boolean;
+		provision?: NewServerConfig;
 	} | null>(null);
 
 	const targets = [
 		...(!isCloud ? [{ serverId: LOCAL_SERVER, name: "Dokploy Server" }] : []),
 		...(servers ?? []).filter((server) => server.serverId !== serverId),
 	];
-	const targetServerId = target === LOCAL_SERVER ? null : target;
+	const isNewServer = target === NEW_SERVER;
+	const targetServerId = target === LOCAL_SERVER || isNewServer ? null : target;
+	const onNewServerChange = useCallback(
+		(value: NewServerConfig) => setNewServer(value),
+		[],
+	);
 
 	const {
 		data: plan,
 		isFetching: isPlanning,
 		error: planError,
 	} = api.transfer.planServer.useQuery(
-		{ sourceServerId: serverId, targetServerId },
-		{ enabled: isOpen && target !== "", refetchOnWindowFocus: false },
+		{
+			sourceServerId: serverId,
+			targetServerId,
+			newServer: isNewServer
+				? {
+						cloudProviderAccountId: newServer.cloudProviderAccountId,
+						serverType: newServer.serverType,
+					}
+				: undefined,
+		},
+		{
+			enabled:
+				isOpen &&
+				target !== "" &&
+				(!isNewServer ||
+					(!!newServer.cloudProviderAccountId && !!newServer.serverType)),
+			refetchOnWindowFocus: false,
+		},
 	);
+
+	useEffect(() => {
+		setAcknowledgedArchitecture(false);
+	}, [plan?.architecture.source, plan?.architecture.target]);
 
 	const groups = useMemo(
 		() => groupByEnvironment(plan?.services ?? []),
@@ -170,12 +252,13 @@ export const MigrateServer = ({
 	);
 
 	// Environments whose domains can't all be switched automatically would go
-	// down until someone edits DNS, so they have to be opted into.
+	// down until someone edits DNS, and ones with images built for the wrong
+	// CPU wouldn't start, so both have to be opted into.
 	useEffect(() => {
 		setSelected(
 			new Set(
 				groups
-					.filter((group) => group.manualDns === 0)
+					.filter((group) => group.manualDns === 0 && group.incompatible === 0)
 					.map((group) => group.environmentId),
 			),
 		);
@@ -204,6 +287,7 @@ export const MigrateServer = ({
 			services: request?.services ?? [],
 			removeSourceData: request?.removeSourceData ?? false,
 			updateDns: request?.updateDns ?? true,
+			provision: request?.provision,
 		},
 		{
 			enabled: isMigrating && request !== null,
@@ -249,6 +333,7 @@ export const MigrateServer = ({
 			})),
 			removeSourceData,
 			updateDns,
+			provision: isNewServer ? newServer : undefined,
 		});
 		setLogs([]);
 		setIsDrawerOpen(true);
@@ -259,7 +344,7 @@ export const MigrateServer = ({
 	return (
 		<>
 			<Dialog open={isOpen} onOpenChange={setIsOpen}>
-				<DialogContent className="sm:max-w-2xl">
+				<DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
 					<DialogHeader>
 						<DialogTitle>Migrate services from {serverName}</DialogTitle>
 						<DialogDescription>
@@ -284,10 +369,6 @@ export const MigrateServer = ({
 								View logs
 							</button>
 						</AlertBlock>
-					) : targets.length === 0 ? (
-						<AlertBlock type="info">
-							There are no other deploy servers to migrate to.
-						</AlertBlock>
 					) : (
 						<div className="grid min-w-0 gap-4">
 							<div className="grid gap-2">
@@ -302,9 +383,23 @@ export const MigrateServer = ({
 												{server.name}
 											</SelectItem>
 										))}
+										<SelectItem value={NEW_SERVER}>
+											<span className="flex items-center gap-2">
+												<Plus className="size-4" />
+												Provision a new server
+											</span>
+										</SelectItem>
 									</SelectContent>
 								</Select>
 							</div>
+
+							{isNewServer && (
+								<NewServerFields
+									value={newServer}
+									onChange={onNewServerChange}
+									sourceArchitecture={plan?.architecture.source}
+								/>
+							)}
 
 							{isPlanning && (
 								<div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -322,10 +417,55 @@ export const MigrateServer = ({
 										<span>{plan.source.name}</span>
 										<ArrowRight className="size-3" />
 										<span>
-											{plan.target.name}
+											{isNewServer
+												? newServer.name || "new server"
+												: plan.target.name}
 											{plan.target.ip && ` (${plan.target.ip})`}
 										</span>
 									</div>
+
+									{plan.architecture.mismatch ? (
+										<AlertBlock type="warning">
+											<div className="grid gap-2">
+												<span>
+													{plan.source.name} runs on{" "}
+													{describeArchitecture(plan.architecture.source)} but
+													the target is{" "}
+													{describeArchitecture(plan.architecture.target)}. Apps
+													built from source are rebuilt for the new CPU, but
+													prebuilt images only start if they are published for
+													it, and some data needs checking. Services marked
+													"Wrong CPU" are left unselected.
+												</span>
+												<label
+													htmlFor="migrate-ack-architecture"
+													className="flex cursor-pointer items-center gap-2 font-medium"
+												>
+													<Checkbox
+														id="migrate-ack-architecture"
+														checked={acknowledgedArchitecture}
+														onCheckedChange={(checked) =>
+															setAcknowledgedArchitecture(checked === true)
+														}
+													/>
+													I understand the servers have different CPU
+													architectures
+												</label>
+											</div>
+										</AlertBlock>
+									) : (
+										(!plan.architecture.source ||
+											!plan.architecture.target) && (
+											<AlertBlock type="info">
+												Could not read the CPU architecture of{" "}
+												{!plan.architecture.source
+													? plan.source.name
+													: "the target"}
+												, so it isn't known whether both servers can run the
+												same images.
+											</AlertBlock>
+										)
+									)}
 
 									{plan.services.length === 0 ? (
 										<AlertBlock type="info">
@@ -411,6 +551,26 @@ export const MigrateServer = ({
 																				: "No persistent data, so the old copy keeps serving until DNS has moved to the new one."}
 																		</TooltipContent>
 																	</Tooltip>
+																	<ArchitectureBadges service={service} />
+																	{service.exposedPorts.length > 0 && (
+																		<Tooltip>
+																			<TooltipTrigger asChild>
+																				<Badge
+																					variant="yellow"
+																					className="cursor-help"
+																				>
+																					Port {service.exposedPorts.join(", ")}
+																				</Badge>
+																			</TooltipTrigger>
+																			<TooltipContent className="max-w-xs">
+																				Published directly on {plan.source.name}
+																				. Anything that connects to it by the
+																				old server's IP or hostname has to be
+																				pointed at the new server by hand, and
+																				the port opened in its firewall.
+																			</TooltipContent>
+																		</Tooltip>
+																	)}
 																</div>
 																{service.domains.map((domain) => (
 																	<DomainRow
@@ -477,6 +637,40 @@ export const MigrateServer = ({
 										</div>
 									</div>
 
+									<AlertBlock type="warning">
+										<div className="grid gap-1">
+											<span className="font-medium">
+												Not moved automatically
+											</span>
+											<ul className="list-disc space-y-1 pl-4">
+												{dnsSummary.manual > 0 && (
+													<li>
+														{dnsSummary.manual} domain(s) aren't on a Cloudflare
+														zone Dokploy can edit (or use a CNAME, wildcard or
+														generated domain). Point them at the new server by
+														hand; they're down from cutover until you do.
+													</li>
+												)}
+												{plan.notices.map((notice) => (
+													<li key={notice}>{notice}</li>
+												))}
+												<li>
+													Changes made on {plan.source.name} itself: Traefik's
+													traefik.yml and file middlewares, extra entrypoints,
+													firewall rules, cron jobs and anything installed
+													outside Dokploy.
+												</li>
+												{isNewServer && (
+													<li>
+														The new server is created first and billed by the
+														provider from then on. If the migration fails, it is
+														kept so you can retry or delete it.
+													</li>
+												)}
+											</ul>
+										</div>
+									</AlertBlock>
+
 									<AlertBlock type="info">
 										Services marked "Stops to copy" are offline from the start
 										of their copy until DNS has switched. If anything in an
@@ -495,10 +689,17 @@ export const MigrateServer = ({
 						</Button>
 						{!isMigrating && plan && plan.services.length > 0 && (
 							<Button
-								disabled={selectedServices.length === 0 || isPlanning}
+								disabled={
+									selectedServices.length === 0 ||
+									isPlanning ||
+									(plan.architecture.mismatch && !acknowledgedArchitecture) ||
+									(isNewServer && !isNewServerComplete(newServer))
+								}
 								onClick={onMigrate}
 							>
-								Migrate {selectedServices.length} service(s)
+								{isNewServer
+									? `Create server and migrate ${selectedServices.length} service(s)`
+									: `Migrate ${selectedServices.length} service(s)`}
 							</Button>
 						)}
 					</DialogFooter>

@@ -1,4 +1,5 @@
 import { db } from "@dokploy/server/db";
+import { isUniqueConstraintViolation } from "@dokploy/server/db/errors";
 import {
 	type apiCreateCloudProviderAccount,
 	type apiProvisionCloudServer,
@@ -37,6 +38,14 @@ const IN_PROGRESS_STATUSES: ServerProvisioningStatus[] = [
 // Provisioning runs inside the Dokploy process, so a restart mid-run leaves
 // the row in progress forever. Anything older than this is treated as dead.
 const STALE_AFTER_MS = 45 * 60_000;
+
+const providerRemoval = (type: string) => {
+	try {
+		return getCloudProviderDefinition(type).removal ?? "delete";
+	} catch {
+		return "delete";
+	}
+};
 
 const providerLabel = (type: string) => {
 	try {
@@ -155,8 +164,7 @@ export const resolveTestCredentials = async (
 };
 
 const isUniqueNameViolation = (error: unknown) =>
-	error instanceof Error &&
-	error.message.includes("cloud_provider_account_org_name_idx");
+	isUniqueConstraintViolation(error, "cloud_provider_account_org_name_idx");
 
 const rethrowNameConflict = (error: unknown): never => {
 	if (isUniqueNameViolation(error)) {
@@ -331,6 +339,7 @@ export const findServerProvisionings = async (organizationId: string) => {
 	return rows.map((row) => ({
 		...row,
 		providerLabel: providerLabel(row.providerType),
+		providerRemoval: providerRemoval(row.providerType),
 	}));
 };
 
@@ -342,7 +351,11 @@ export const findProvisioningByServerId = async (serverId: string) => {
 		},
 	});
 	return row
-		? { ...row, providerLabel: providerLabel(row.providerType) }
+		? {
+				...row,
+				providerLabel: providerLabel(row.providerType),
+				providerRemoval: providerRemoval(row.providerType),
+			}
 		: null;
 };
 
@@ -380,7 +393,10 @@ const waitForRunning = async (
 		const current = await client.getServer(id);
 		if (current.status === "running") return current;
 		if (current.status === "error") {
-			throw new Error("The provider reported an error starting the server");
+			throw new Error(
+				current.statusMessage ??
+					"The provider reported an error starting the server",
+			);
 		}
 		await new Promise((resolve) => setTimeout(resolve, 3_000));
 	}
@@ -523,8 +539,14 @@ const runProvisioning = async (
 			message: `Waiting for ${definition.label} to boot the server`,
 		});
 
-		const running = await waitForRunning(client, created.id);
+		const running = await waitForRunning(
+			client,
+			created.id,
+			definition.bootTimeoutMs,
+		);
 		const ipAddress = running.ipv4 ?? created.ipv4;
+		const sshUsername =
+			running.sshUsername ?? created.sshUsername ?? definition.sshUsername;
 		if (!ipAddress) {
 			throw new Error(
 				`${definition.label} did not assign a public IPv4 address`,
@@ -536,16 +558,11 @@ const runProvisioning = async (
 			ipAddress,
 			message: `Waiting for SSH on ${ipAddress}`,
 		});
-		await waitForSsh(
-			ipAddress,
-			definition.sshUsername,
-			keys.privateKey,
-			(elapsed) => {
-				void updateProvisioning(id, {
-					message: `Waiting for SSH on ${ipAddress} (${elapsed}s)`,
-				});
-			},
-		);
+		await waitForSsh(ipAddress, sshUsername, keys.privateKey, (elapsed) => {
+			void updateProvisioning(id, {
+				message: `Waiting for SSH on ${ipAddress} (${elapsed}s)`,
+			});
+		});
 
 		const dokployServer = await createServer(
 			{
@@ -553,7 +570,7 @@ const runProvisioning = async (
 				description: `${definition.label} ${config.serverType} in ${config.location}`,
 				ipAddress,
 				port: 22,
-				username: definition.sshUsername,
+				username: sshUsername,
 				sshKeyId,
 				serverType: config.role,
 				enableDockerCleanup: true,
@@ -611,6 +628,16 @@ const runProvisioning = async (
 			await updateProvisioning(id, {
 				status: "failed",
 				error: `${message}. The server was kept; open it and run Setup Server to retry.`,
+			});
+			return;
+		}
+
+		// The term is billed from creation, so cancelling would only throw away
+		// a paid server the user may still want to register by hand.
+		if (providerServerId && definition.removal === "cancel") {
+			await updateProvisioning(id, {
+				status: "failed",
+				error: `${message}. ${definition.label} servers can't be deleted, only cancelled for the end of their term, so it was kept. Cancel it from here if you don't need it.`,
 			});
 			return;
 		}
@@ -688,4 +715,33 @@ export const destroyProvisionedServer = async (
 	await updateProvisioning(provisioning.serverProvisioningId, {
 		providerServerDeletedAt: new Date().toISOString(),
 	});
+};
+
+/**
+ * Resolves with the Dokploy server ID once provisioning completes, reporting
+ * each progress message, and rejects if it fails.
+ */
+export const waitForServerProvisioning = async (
+	serverProvisioningId: string,
+	onMessage: (message: string) => void,
+	pollMs = 3_000,
+) => {
+	const deadline = Date.now() + STALE_AFTER_MS;
+	let lastMessage: string | null = null;
+	while (Date.now() < deadline) {
+		const row = await db.query.serverProvisioning.findFirst({
+			where: eq(serverProvisioning.serverProvisioningId, serverProvisioningId),
+		});
+		if (!row) throw new Error("The provisioning job was removed");
+		if (row.message && row.message !== lastMessage) {
+			lastMessage = row.message;
+			onMessage(row.message);
+		}
+		if (row.status === "failed") {
+			throw new Error(row.error ?? "Provisioning failed");
+		}
+		if (row.status === "completed" && row.serverId) return row.serverId;
+		await new Promise((resolve) => setTimeout(resolve, pollMs));
+	}
+	throw new Error("Timed out waiting for the server to be provisioned");
 };

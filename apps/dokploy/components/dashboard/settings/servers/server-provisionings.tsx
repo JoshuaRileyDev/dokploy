@@ -49,6 +49,8 @@ const ProvisioningRow = ({ provisioning }: { provisioning: Provisioning }) => {
 			onSuccess: () => utils.cloudProvider.provisionings.invalidate(),
 		});
 	const orphaned = hasOrphanedServer(provisioning);
+	const cancels = provisioning.providerRemoval === "cancel";
+	const removeVerb = cancels ? "Cancel" : "Delete";
 
 	const failed = provisioning.status === "failed";
 	const completed = provisioning.status === "completed";
@@ -100,8 +102,12 @@ const ProvisioningRow = ({ provisioning }: { provisioning: Provisioning }) => {
 				</div>
 				{orphaned ? (
 					<DialogAction
-						title={`Delete ${provisioning.config.name} on ${provisioning.providerLabel}?`}
-						description="This server was never added to Dokploy but still exists on the provider, so it's being billed. Deleting it erases its disk."
+						title={`${removeVerb} ${provisioning.config.name} on ${provisioning.providerLabel}?`}
+						description={
+							cancels
+								? `This server was never added to Dokploy but still exists on ${provisioning.providerLabel}. Cancelling ends its contract at the end of the current term; it keeps running and billing until then.`
+								: "This server was never added to Dokploy but still exists on the provider, so it's being billed. Deleting it erases its disk."
+						}
 						type="destructive"
 						onClick={async () => {
 							await destroyServer({
@@ -109,13 +115,16 @@ const ProvisioningRow = ({ provisioning }: { provisioning: Provisioning }) => {
 							})
 								.then(() =>
 									toast.success(
-										`Deleted ${provisioning.config.name} on ${provisioning.providerLabel}`,
+										`${cancels ? "Cancelled" : "Deleted"} ${provisioning.config.name} on ${provisioning.providerLabel}`,
 									),
 								)
 								.catch((error) =>
-									toast.error("Could not delete the server", {
-										description: `${error.message} Delete it from the ${provisioning.providerLabel} console to stop billing.`,
-									}),
+									toast.error(
+										`Could not ${removeVerb.toLowerCase()} the server`,
+										{
+											description: `${error.message} ${removeVerb} it from the ${provisioning.providerLabel} console to stop billing.`,
+										},
+									),
 								);
 						}}
 					>
@@ -126,7 +135,7 @@ const ProvisioningRow = ({ provisioning }: { provisioning: Provisioning }) => {
 							isLoading={isDestroying}
 						>
 							<Trash2 className="size-3.5" />
-							Delete on {provisioning.providerLabel}
+							{removeVerb} on {provisioning.providerLabel}
 						</Button>
 					</DialogAction>
 				) : (

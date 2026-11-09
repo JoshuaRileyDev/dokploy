@@ -61,6 +61,10 @@ import {
 } from "./postgres";
 import { deployRedis, findRedisById, updateRedisById } from "./redis";
 import { findServerById } from "./server";
+import {
+	checkServicesArchitecture,
+	detectServerArchitecture,
+} from "./server-architecture";
 
 export type TransferServiceInput = z.infer<typeof apiTransferService> & {
 	organizationId: string;
@@ -840,10 +844,59 @@ export const commitTransfer = async (
 	await updateStatus(staged.serviceType, staged.serviceId, "done");
 };
 
+/** Compares source and target CPUs and, if they differ, what that breaks. */
+export const checkTransferArchitecture = async (
+	input: Omit<TransferServiceInput, "removeSourceData">,
+) => {
+	const staged = await prepareTransfer(input);
+	const [source, target] = await Promise.all([
+		detectServerArchitecture(staged.sourceServerId),
+		detectServerArchitecture(staged.targetServerId),
+	]);
+	const mismatch = !!source && !!target && source !== target;
+	const check =
+		mismatch && target
+			? (
+					await checkServicesArchitecture(
+						staged.sourceServerId,
+						[
+							{
+								id: staged.serviceId,
+								type: staged.serviceType,
+								appName: staged.source.appName,
+								stateful: staged.stateful,
+							},
+						],
+						target,
+					)
+				).get(staged.serviceId)
+			: undefined;
+	return {
+		source,
+		target,
+		mismatch,
+		sourceName: staged.sourceName,
+		targetName: staged.targetName,
+		check,
+	};
+};
+
 export const transferService = async (
 	input: TransferServiceInput,
 	log: Logger,
 ) => {
+	const architecture = await checkTransferArchitecture(input).catch(() => null);
+	if (architecture?.mismatch) {
+		log(
+			`Warning: ${architecture.sourceName} is ${architecture.source} but ${architecture.targetName} is ${architecture.target}`,
+		);
+		if (architecture.check && architecture.check.status !== "ok") {
+			log(`Warning: ${architecture.check.message}`);
+		}
+		if (architecture.check?.dataWarning) {
+			log(`Warning: ${architecture.check.dataWarning}`);
+		}
+	}
 	const staged = await prepareTransfer(input);
 	try {
 		await stageTransfer(staged, log);

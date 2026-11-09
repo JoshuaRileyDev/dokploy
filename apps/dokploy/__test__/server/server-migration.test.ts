@@ -17,6 +17,13 @@ const mocks = vi.hoisted(() => ({
 	waitUntilHealthy: vi.fn(),
 	commitTransfer: vi.fn(),
 	rollbackTransfer: vi.fn(),
+	selectRows: vi.fn(),
+	schedules: vi.fn(),
+	certificates: vi.fn(),
+	detectArchitecture: vi.fn(),
+	checkArchitecture: vi.fn(),
+	findAccount: vi.fn(),
+	catalog: vi.fn(),
 	cloudflare: {
 		listZones: vi.fn(),
 		listRecords: vi.fn(),
@@ -32,8 +39,26 @@ vi.mock("@dokploy/server/db", () => ({
 			dnsProvider: { findMany: mocks.providers },
 			domains: { findMany: mocks.domains },
 			mounts: { findMany: mocks.mounts },
+			schedules: { findMany: mocks.schedules },
+			certificates: { findMany: mocks.certificates },
 		},
+		select: () => ({
+			from: (table: unknown) => ({
+				where: async () => mocks.selectRows(table),
+			}),
+		}),
 	},
+}));
+
+vi.mock("@dokploy/server/services/server-architecture", () => ({
+	detectServerArchitecture: mocks.detectArchitecture,
+	checkServicesArchitecture: mocks.checkArchitecture,
+	catalogArchitecture: (value: string) => (value === "arm" ? "arm64" : "amd64"),
+}));
+
+vi.mock("@dokploy/server/services/cloud-provider", () => ({
+	findCloudProviderAccountInOrganization: mocks.findAccount,
+	getCloudCatalog: mocks.catalog,
 }));
 
 vi.mock("node:dns/promises", () => ({
@@ -99,6 +124,7 @@ vi.mock("@dokploy/server/services/web-server-settings", () => ({
 	getWebServerSettings: async () => ({ serverIp: "198.51.100.1" }),
 }));
 
+import { ports, postgres } from "@dokploy/server/db/schema";
 import {
 	migrateServer,
 	planServerMigration,
@@ -215,6 +241,11 @@ beforeEach(() => {
 	mocks.resolveNs.mockRejectedValue(new Error("ENOTFOUND"));
 	mocks.execAsyncRemote.mockResolvedValue({ stdout: "200\nok", stderr: "" });
 	mocks.fetch.mockResolvedValue(response(200));
+	mocks.selectRows.mockResolvedValue([]);
+	mocks.schedules.mockResolvedValue([]);
+	mocks.certificates.mockResolvedValue([]);
+	mocks.detectArchitecture.mockResolvedValue("amd64");
+	mocks.checkArchitecture.mockResolvedValue(new Map());
 	mocks.prepareTransfer.mockImplementation(
 		async (input: { serviceId: string; serviceType: string }) => ({
 			serviceId: input.serviceId,
@@ -254,7 +285,17 @@ describe("planServerMigration", () => {
 
 		const plan = await planServerMigration(base);
 
-		expect(plan.target).toEqual({ name: "New box", ip: "203.0.113.20" });
+		expect(plan.target).toEqual({
+			name: "New box",
+			ip: "203.0.113.20",
+			pending: false,
+		});
+		expect(plan.architecture).toEqual({
+			source: "amd64",
+			target: "amd64",
+			mismatch: false,
+		});
+		expect(mocks.checkArchitecture).not.toHaveBeenCalled();
 		expect(plan.services.map((s) => [s.id, s.stateful])).toEqual([
 			["db", true],
 			["web", false],
@@ -333,6 +374,96 @@ describe("planServerMigration", () => {
 		});
 		expect(unreachable.target.ip).toBeNull();
 		expect(unreachable.services[0]!.domains[0]!.status).toBe("no-target-ip");
+	});
+});
+
+describe("planServerMigration extras", () => {
+	it("checks each service when the target has a different CPU", async () => {
+		mocks.services.mockResolvedValue([
+			service("web", "application"),
+			service("db", "postgres"),
+		]);
+		mocks.detectArchitecture.mockImplementation(async (serverId: string) =>
+			serverId === "src" ? "amd64" : "arm64",
+		);
+		mocks.checkArchitecture.mockResolvedValue(
+			new Map([["db", { status: "incompatible", message: "no arm64 build" }]]),
+		);
+
+		const plan = await planServerMigration(base);
+
+		expect(plan.architecture).toEqual({
+			source: "amd64",
+			target: "arm64",
+			mismatch: true,
+		});
+		const [, services, target] = mocks.checkArchitecture.mock.calls[0]!;
+		expect(target).toBe("arm64");
+		expect(services).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: "db", stateful: true }),
+				expect.objectContaining({ id: "web", stateful: false }),
+			]),
+		);
+		const db = plan.services.find((s) => s.id === "db");
+		expect(db?.architecture?.status).toBe("incompatible");
+	});
+
+	it("plans against a server that will be provisioned", async () => {
+		mocks.services.mockResolvedValue([service("web", "application")]);
+		mocks.domains.mockResolvedValue([domain("www.example.com", "web")]);
+		mocks.cloudflare.listRecords.mockResolvedValue([
+			record("r1", "www.example.com", "192.0.2.10"),
+		]);
+		mocks.findAccount.mockResolvedValue({ cloudProviderAccountId: "acc" });
+		mocks.catalog.mockResolvedValue({
+			serverTypes: [{ id: "cax11", architecture: "arm" }],
+		});
+
+		const plan = await planServerMigration({
+			...base,
+			targetServerId: null,
+			newServer: { cloudProviderAccountId: "acc", serverType: "cax11" },
+		});
+
+		expect(plan.target).toEqual({
+			name: "the new server",
+			ip: null,
+			pending: true,
+		});
+		expect(plan.services[0]!.domains[0]!.status).toBe("auto");
+		expect(plan.architecture).toEqual({
+			source: "amd64",
+			target: "arm64",
+			mismatch: true,
+		});
+		// The Dokploy host must not stand in for a server that doesn't exist yet.
+		expect(mocks.ipCandidates).not.toHaveBeenCalledWith(null);
+	});
+
+	it("lists published ports and server-level leftovers", async () => {
+		mocks.services.mockResolvedValue([
+			service("web", "application"),
+			service("db", "postgres"),
+		]);
+		mocks.selectRows.mockImplementation(async (table: unknown) =>
+			table === ports
+				? [{ id: "web", port: 8080 }]
+				: table === postgres
+					? [{ id: "db", port: 5432 }]
+					: [],
+		);
+		mocks.schedules.mockResolvedValue([{ scheduleId: "s1" }]);
+		mocks.certificates.mockResolvedValue([{ certificateId: "c1" }]);
+
+		const plan = await planServerMigration(base);
+
+		expect(
+			Object.fromEntries(plan.services.map((s) => [s.id, s.exposedPorts])),
+		).toEqual({ web: [8080], db: [5432] });
+		expect(plan.notices).toHaveLength(2);
+		expect(plan.notices.join(" ")).toMatch(/scheduled job/);
+		expect(plan.notices.join(" ")).toMatch(/certificate/);
 	});
 });
 

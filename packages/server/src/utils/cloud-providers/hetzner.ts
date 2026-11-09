@@ -43,7 +43,7 @@ interface HetznerServerType {
 	prices: {
 		location: string;
 		price_hourly: { gross: string };
-		price_monthly: { gross: string };
+		price_monthly: { gross: string; net?: string };
 	}[];
 }
 
@@ -277,6 +277,9 @@ class HetznerClient implements CloudProviderClient {
 						location: price.location,
 						hourly: Number.parseFloat(price.price_hourly.gross),
 						monthly: Number.parseFloat(price.price_monthly.gross),
+						...(price.price_monthly.net && {
+							monthlyNet: Number.parseFloat(price.price_monthly.net),
+						}),
 					})),
 			}))
 			.filter((type) => type.prices.length > 0);

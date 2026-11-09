@@ -1,9 +1,13 @@
+import { contabo } from "./contabo";
+import { digitalocean } from "./digitalocean";
 import { hetzner } from "./hetzner";
+import { ovhcloud } from "./ovhcloud";
 import type {
 	CloudCredentials,
 	CloudProviderDefinition,
 	CloudProviderType,
 } from "./types";
+import { vultr } from "./vultr";
 
 export * from "./types";
 
@@ -12,6 +16,10 @@ export const cloudProviders: Record<
 	CloudProviderDefinition
 > = {
 	hetzner,
+	ovhcloud,
+	digitalocean,
+	vultr,
+	contabo,
 };
 
 export const getCloudProviderDefinition = (type: string) => {

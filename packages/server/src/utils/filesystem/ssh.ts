@@ -1,4 +1,7 @@
-import * as ssh2 from "ssh2";
+// ssh2 is CommonJS and Node's ESM loader only detects some of its exports;
+// `utils` is reachable through the default export alone, which also works
+// when the code is bundled.
+import ssh2 from "ssh2";
 
 export const generateSSHKey = async (type: "rsa" | "ed25519" = "rsa") => {
 	try {

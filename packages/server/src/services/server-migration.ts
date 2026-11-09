@@ -5,10 +5,19 @@ import {
 	type apiMigrateServer,
 	type apiPlanServerMigration,
 	type CloudflareDnsConfig,
+	certificates,
 	dnsProvider,
 	domains,
+	libsql,
+	mariadb,
+	mongo,
 	mounts,
+	mysql,
+	ports,
+	postgres,
+	redis,
 	type ServiceType,
+	schedules,
 } from "@dokploy/server/db/schema";
 import { type DnsRecord, getDnsClient } from "@dokploy/server/utils/dns";
 import {
@@ -20,8 +29,19 @@ import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { quote } from "shell-quote";
 import { Agent, fetch as undiciFetch } from "undici";
 import type { z } from "zod";
+import {
+	findCloudProviderAccountInOrganization,
+	getCloudCatalog,
+} from "./cloud-provider";
 import { getServerIpCandidates } from "./domain";
 import { findServerById } from "./server";
+import {
+	type CpuArchitecture,
+	catalogArchitecture,
+	checkServicesArchitecture,
+	detectServerArchitecture,
+	type ServiceArchitectureCheck,
+} from "./server-architecture";
 import {
 	getServerServices,
 	type ServerServiceSummary,
@@ -85,6 +105,10 @@ export interface MigrationServicePlan {
 	/** Stopped while its data is copied; stateless services keep serving until cutover. */
 	stateful: boolean;
 	domains: DomainDnsPlan[];
+	/** Ports published on the source's IP, which clients reach without DNS. */
+	exposedPorts: number[];
+	/** Set when the target has a different CPU architecture. */
+	architecture?: ServiceArchitectureCheck;
 }
 
 const LOCAL_SERVER_NAME = "Dokploy Server";
@@ -126,10 +150,24 @@ const errorMessage = (error: unknown) =>
 const normalizeHost = (host: string) =>
 	host.trim().toLowerCase().replace(/\.$/, "");
 
+interface ResolvedServer {
+	serverId: string | null;
+	name: string;
+	ipAddress?: string;
+	/** Not created yet, so it has no address to point DNS at. */
+	pending?: boolean;
+}
+
+const NEW_SERVER: ResolvedServer = {
+	serverId: null,
+	name: "the new server",
+	pending: true,
+};
+
 const resolveServer = async (
 	serverId: string | null,
 	organizationId: string,
-) => {
+): Promise<ResolvedServer> => {
 	if (!serverId) return { serverId: null, name: LOCAL_SERVER_NAME };
 	const server = await findServerById(serverId);
 	if (server.organizationId !== organizationId) {
@@ -242,6 +280,7 @@ interface DnsContext {
 	sourceIps: Set<string>;
 	targetIp: string | null;
 	targetName: string;
+	targetPending: boolean;
 }
 
 const analyzeDomain = async (
@@ -341,6 +380,14 @@ const analyzeDomain = async (
 		return plan(
 			"points-elsewhere",
 			`A record points to ${aRecords.map((r) => r.content).join(", ")}, not the source server, left unchanged`,
+			{ ...zoneInfo, proxied },
+		);
+	}
+
+	if (!ctx.targetIp && ctx.targetPending) {
+		return plan(
+			"auto",
+			`${onSource.map((r) => r.content).join(", ")} → the new server's IP once it is created${hasAaaa ? " (AAAA records must be updated manually)" : ""}`,
 			{ ...zoneInfo, proxied },
 		);
 	}
@@ -629,19 +676,20 @@ const applyDnsChange = async (
 
 const createDnsContext = async (
 	organizationId: string,
-	source: Awaited<ReturnType<typeof resolveServer>>,
-	target: Awaited<ReturnType<typeof resolveServer>>,
+	source: ResolvedServer,
+	target: ResolvedServer,
 ): Promise<DnsContext> => {
 	const [cloudflare, sourceCandidates, targetIp] = await Promise.all([
 		createCloudflareLookup(organizationId),
 		getServerIpCandidates(source.serverId),
-		resolveTargetIp(target.serverId, target.ipAddress),
+		target.pending ? null : resolveTargetIp(target.serverId, target.ipAddress),
 	]);
 	return {
 		cloudflare,
 		sourceIps: new Set(sourceCandidates),
 		targetIp,
 		targetName: target.name,
+		targetPending: !!target.pending,
 	};
 };
 
@@ -649,6 +697,12 @@ const validateServers = async (
 	input: z.infer<typeof apiPlanServerMigration>,
 	organizationId: string,
 ) => {
+	if (input.newServer) {
+		return {
+			source: await resolveServer(input.sourceServerId, organizationId),
+			target: NEW_SERVER,
+		};
+	}
 	if (input.sourceServerId === input.targetServerId) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",
@@ -666,6 +720,112 @@ const byMigrationOrder = (a: ServerServiceSummary, b: ServerServiceSummary) =>
 	MIGRATION_ORDER[a.type] - MIGRATION_ORDER[b.type] ||
 	a.name.localeCompare(b.name);
 
+const resolveArchitectures = async (
+	input: z.infer<typeof apiPlanServerMigration> & { organizationId: string },
+) => {
+	const targetArchitecture = async () => {
+		if (!input.newServer) {
+			return detectServerArchitecture(input.targetServerId);
+		}
+		const account = await findCloudProviderAccountInOrganization(
+			input.newServer.cloudProviderAccountId,
+			input.organizationId,
+		);
+		const catalog = await getCloudCatalog(account);
+		const type = catalog.serverTypes.find(
+			(t) => t.id === input.newServer?.serverType,
+		);
+		return type ? catalogArchitecture(type.architecture) : null;
+	};
+	const [source, target] = await Promise.all([
+		detectServerArchitecture(input.sourceServerId),
+		targetArchitecture().catch(() => null),
+	]);
+	return {
+		source,
+		target,
+		mismatch: !!source && !!target && source !== target,
+	};
+};
+
+const findExposedPorts = async (services: ServerServiceSummary[]) => {
+	const exposed = new Map<string, number[]>();
+	const add = (id: string, port: number | null) => {
+		if (!port) return;
+		const list = exposed.get(id) ?? [];
+		if (!list.includes(port)) list.push(port);
+		exposed.set(id, list);
+	};
+	const idsOf = (type: ServiceType) =>
+		services.filter((s) => s.type === type).map((s) => s.id);
+
+	const applicationIds = idsOf("application");
+	const lookups: Promise<void>[] = [];
+	if (applicationIds.length > 0) {
+		lookups.push(
+			db
+				.select({ id: ports.applicationId, port: ports.publishedPort })
+				.from(ports)
+				.where(inArray(ports.applicationId, applicationIds))
+				.then((rows) => {
+					for (const row of rows) add(row.id, row.port);
+				}),
+		);
+	}
+	const databases = [
+		[postgres, postgres.postgresId, "postgres"],
+		[mysql, mysql.mysqlId, "mysql"],
+		[mariadb, mariadb.mariadbId, "mariadb"],
+		[mongo, mongo.mongoId, "mongo"],
+		[redis, redis.redisId, "redis"],
+		[libsql, libsql.libsqlId, "libsql"],
+	] as const;
+	for (const [table, idColumn, type] of databases) {
+		const ids = idsOf(type);
+		if (ids.length === 0) continue;
+		lookups.push(
+			db
+				.select({ id: idColumn, port: table.externalPort })
+				.from(table)
+				.where(inArray(idColumn, ids))
+				.then((rows) => {
+					for (const row of rows) add(row.id, row.port);
+				}),
+		);
+	}
+	await Promise.all(lookups);
+	return exposed;
+};
+
+/** Things tied to the source server itself that a migration leaves behind. */
+const findServerLevelNotices = async (
+	sourceServerId: string,
+	sourceName: string,
+) => {
+	const [serverSchedules, serverCertificates] = await Promise.all([
+		db.query.schedules.findMany({
+			where: eq(schedules.serverId, sourceServerId),
+			columns: { scheduleId: true },
+		}),
+		db.query.certificates.findMany({
+			where: eq(certificates.serverId, sourceServerId),
+			columns: { certificateId: true },
+		}),
+	]);
+	const notices: string[] = [];
+	if (serverSchedules.length > 0) {
+		notices.push(
+			`${serverSchedules.length} scheduled job(s) belong to ${sourceName} itself and stay there. Recreate them on the target if they're still needed.`,
+		);
+	}
+	if (serverCertificates.length > 0) {
+		notices.push(
+			`${serverCertificates.length} custom certificate(s) are installed on ${sourceName}. Add them to the target under Settings › Certificates.`,
+		);
+	}
+	return notices;
+};
+
 export const planServerMigration = async (
 	input: z.infer<typeof apiPlanServerMigration> & { organizationId: string },
 	filterServices: (
@@ -676,11 +836,27 @@ export const planServerMigration = async (
 	const services = await filterServices(
 		await getServerServices([input.sourceServerId]),
 	);
-	const [dns, serviceDomains, stateful] = await Promise.all([
-		createDnsContext(input.organizationId, source, target),
-		findServiceDomains(services),
-		findStatefulServices(input.sourceServerId, services),
-	]);
+	const [dns, serviceDomains, stateful, architecture, exposedPorts, notices] =
+		await Promise.all([
+			createDnsContext(input.organizationId, source, target),
+			findServiceDomains(services),
+			findStatefulServices(input.sourceServerId, services),
+			resolveArchitectures(input),
+			findExposedPorts(services),
+			findServerLevelNotices(input.sourceServerId, source.name),
+		]);
+	const architectureChecks = architecture.mismatch
+		? await checkServicesArchitecture(
+				input.sourceServerId,
+				services.map((service) => ({
+					id: service.id,
+					type: service.type,
+					appName: service.appName,
+					stateful: stateful.has(service.id),
+				})),
+				architecture.target as CpuArchitecture,
+			)
+		: new Map<string, ServiceArchitectureCheck>();
 
 	const plannedServices: MigrationServicePlan[] = await Promise.all(
 		[...services]
@@ -700,6 +876,8 @@ export const planServerMigration = async (
 				environmentName: service.environmentName,
 				status: service.status,
 				stateful: stateful.has(service.id),
+				exposedPorts: exposedPorts.get(service.id) ?? [],
+				architecture: architectureChecks.get(service.id),
 				domains: await Promise.all(
 					(serviceDomains.get(service.id) ?? []).map(
 						async (domain) => (await analyzeDomain(domain.host, dns)).plan,
@@ -710,7 +888,9 @@ export const planServerMigration = async (
 
 	return {
 		source: { name: source.name, ips: [...dns.sourceIps] },
-		target: { name: target.name, ip: dns.targetIp },
+		target: { name: target.name, ip: dns.targetIp, pending: !!target.pending },
+		architecture,
+		notices,
 		cloudflareProviders: dns.cloudflare.providerCount,
 		cloudflareErrors: dns.cloudflare.errors,
 		services: plannedServices,
@@ -851,6 +1031,42 @@ export const migrateServer = async (
 		}
 		const serviceDomains = await findServiceDomains(selected);
 		const groups = groupByEnvironment(selected);
+
+		const architecture = await resolveArchitectures({
+			...input,
+			newServer: undefined,
+		});
+		if (architecture.mismatch) {
+			log(
+				`Warning: ${source.name} is ${architecture.source} but ${target.name} is ${architecture.target}`,
+			);
+			const stateful = await findStatefulServices(
+				input.sourceServerId,
+				selected,
+			);
+			const checks = await checkServicesArchitecture(
+				input.sourceServerId,
+				selected.map((service) => ({
+					id: service.id,
+					type: service.type,
+					appName: service.appName,
+					stateful: stateful.has(service.id),
+				})),
+				architecture.target as CpuArchitecture,
+			);
+			for (const service of selected) {
+				const check = checks.get(service.id);
+				if (!check) continue;
+				if (check.status !== "ok") {
+					log(`  ${service.name}: ${check.message}`);
+				}
+				if (check.dataWarning) {
+					log(`  ${service.name}: ${check.dataWarning}`);
+				}
+			}
+		} else if (!architecture.source || !architecture.target) {
+			log("Warning: could not compare the CPU architecture of the two servers");
+		}
 
 		const migrated: string[] = [];
 		const failed: { name: string; error: string }[] = [];
