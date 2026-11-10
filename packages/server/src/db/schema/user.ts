@@ -237,7 +237,9 @@ export const apiReadStatsLogs = z.object({
 		.optional(),
 });
 
-export const apiUpdateUser = createSchema.partial().extend({
+export const apiUpdateUser = z.object({
+	image: z.string().nullable().optional(),
+	allowImpersonation: z.boolean().optional(),
 	email: z
 		.string()
 		.email("Please enter a valid email address")

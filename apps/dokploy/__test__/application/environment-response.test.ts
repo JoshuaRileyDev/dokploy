@@ -11,6 +11,8 @@ const { findApplication, checkAccess, createApplication, returning } =
 
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkServiceAccess: vi.fn(),
+	checkEnvironmentAccess: vi.fn(),
+	hasPermission: vi.fn(async () => true),
 	addNewService: vi.fn(),
 	checkServicePermissionAndAccess: checkAccess,
 }));
