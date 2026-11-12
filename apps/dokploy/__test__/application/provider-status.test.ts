@@ -13,6 +13,7 @@ vi.mock("@dokploy/server/index", () => ({
 	autoImportWorkflowsForService: vi.fn(async () => undefined),
 	hasValidLicense: vi.fn(async () => false),
 	updateApplication: mockUpdateApplication,
+	assertServiceCredentialAccess: vi.fn(async () => {}),
 	findApplicationById: vi.fn(async () => ({
 		applicationId: "app-1",
 		appName: "example-app",

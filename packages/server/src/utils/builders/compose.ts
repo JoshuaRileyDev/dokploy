@@ -117,13 +117,13 @@ Remote Build: ${prebuilt ? `enabled (${prebuiltServices.length} prebuilt images)
 	const bashCommand = `
 	set -e
 	{
-		echo "${logBox}";
+		echo ${quote([logBox])};
 
 		${newCompose}
 
 		${envCommand}
 
-		cd "${projectPath}";
+		cd ${quote([projectPath])};
 
 		${registryLoginCommand}
 

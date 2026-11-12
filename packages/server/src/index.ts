@@ -71,6 +71,7 @@ export * from "./services/server-migration";
 export * from "./services/server-security";
 export * from "./services/server-services";
 export * from "./services/server-storage";
+export * from "./services/service-credentials";
 export * from "./services/settings";
 export * from "./services/ssh-key";
 export * from "./services/transfer";

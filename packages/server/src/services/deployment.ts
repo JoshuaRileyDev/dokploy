@@ -27,6 +27,7 @@ import { trackDeploymentResult } from "@dokploy/server/utils/tracking/posthog";
 import { TRPCError } from "@trpc/server";
 import { format } from "date-fns";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { quote } from "shell-quote";
 import type { z } from "zod";
 import {
 	type Application,
@@ -485,8 +486,8 @@ export const createDeploymentSchedule = async (
 			const server = await findServerById(serverId);
 
 			const command = `
-				mkdir -p ${SCHEDULES_PATH}/${schedule.appName};
-            	echo "Initializing schedule" >> ${logFilePath};
+				mkdir -p ${quote([path.join(SCHEDULES_PATH, schedule.appName)])};
+            	echo "Initializing schedule" >> ${quote([logFilePath])};
 			`;
 
 			await execAsyncRemote(server.serverId, command);
@@ -567,8 +568,8 @@ export const createDeploymentVolumeBackup = async (
 			const server = await findServerById(serverId);
 
 			const command = `
-				mkdir -p ${VOLUME_BACKUPS_PATH}/${volumeBackup.appName};
-            	echo "Initializing volume backup" >> ${logFilePath};
+				mkdir -p ${quote([path.join(VOLUME_BACKUPS_PATH, volumeBackup.appName)])};
+            	echo "Initializing volume backup" >> ${quote([logFilePath])};
 			`;
 
 			await execAsyncRemote(server.serverId, command);
@@ -637,8 +638,8 @@ export const removeDeployment = async (deploymentId: string) => {
 
 		const logPath = path.join(deployment.logPath);
 		if (logPath && logPath !== ".") {
-			const command = `rm -f ${logPath};`;
-			const logServerId = deployment.buildServerId || deployment.serverId;
+			const command = `rm -f ${quote([logPath])};`;
+			const logServerId = deployment.buildServerId ?? deployment.serverId;
 			if (logServerId) {
 				await execAsyncRemote(logServerId, command);
 			} else {
@@ -692,7 +693,7 @@ export const removeDeployments = async (application: Application) => {
 	const { LOGS_PATH } = paths(!!application.serverId);
 	const logsPath = path.join(LOGS_PATH, appName);
 	if (application.serverId) {
-		await execAsyncRemote(application.serverId, `rm -rf ${logsPath}`);
+		await execAsyncRemote(application.serverId, `rm -rf ${quote([logsPath])}`);
 	} else {
 		await removeDirectoryIfExistsContent(logsPath);
 	}
@@ -724,7 +725,7 @@ const removeLastTenDeployments = async (
 					}
 
 					if (logPath && logPath !== ".") {
-						command += `rm -rf ${logPath};`;
+						command += `rm -rf ${quote([logPath])};`;
 					}
 					await removeDeployment(oldDeployment.deploymentId);
 				} catch (err) {
@@ -773,7 +774,7 @@ export const removeDeploymentsByPreviewDeploymentId = async (
 	const { LOGS_PATH } = paths(!!serverId);
 	const logsPath = path.join(LOGS_PATH, appName);
 	if (serverId) {
-		await execAsyncRemote(serverId, `rm -rf ${logsPath}`);
+		await execAsyncRemote(serverId, `rm -rf ${quote([logsPath])}`);
 	} else {
 		await removeDirectoryIfExistsContent(logsPath);
 	}
@@ -795,7 +796,7 @@ export const removeDeploymentsByComposeId = async (compose: Compose) => {
 	const { LOGS_PATH } = paths(!!logServerId);
 	const logsPath = path.join(LOGS_PATH, appName);
 	if (logServerId) {
-		await execAsyncRemote(logServerId, `rm -rf ${logsPath}`);
+		await execAsyncRemote(logServerId, `rm -rf ${quote([logsPath])}`);
 	} else {
 		await removeDirectoryIfExistsContent(logsPath);
 	}

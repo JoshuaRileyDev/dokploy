@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
 	addDomainToCompose,
+	assertServiceCredentialAccess,
 	autoImportWorkflowsForService,
 	clearOldDeployments,
 	cloneCompose,
@@ -41,6 +42,7 @@ import { canEditDeployGitSource } from "@dokploy/server/services/git-provider";
 import {
 	addNewService,
 	checkEnvironmentAccess,
+	checkPermission,
 	checkServiceAccess,
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
@@ -205,6 +207,7 @@ export const composeRouter = createTRPCRouter({
 			await checkServicePermissionAndAccess(ctx, input.composeId, {
 				service: ["create"],
 			});
+			await assertServiceCredentialAccess(ctx.session, input);
 
 			const compose = await findComposeById(input.composeId);
 			if (
@@ -765,7 +768,10 @@ export const composeRouter = createTRPCRouter({
 
 	templates: protectedProcedure
 		.input(z.object({ baseUrl: z.string().optional() }))
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			if (input.baseUrl) {
+				await checkPermission(ctx, { service: ["create"] });
+			}
 			try {
 				const githubTemplates = await fetchTemplatesList(input.baseUrl);
 
@@ -783,7 +789,10 @@ export const composeRouter = createTRPCRouter({
 
 	getTags: protectedProcedure
 		.input(z.object({ baseUrl: z.string().optional() }))
-		.query(async ({ input }) => {
+		.query(async ({ input, ctx }) => {
+			if (input.baseUrl) {
+				await checkPermission(ctx, { service: ["create"] });
+			}
 			try {
 				const githubTemplates = await fetchTemplatesList(input.baseUrl);
 				const allTags = githubTemplates.flatMap((template) => template.tags);
