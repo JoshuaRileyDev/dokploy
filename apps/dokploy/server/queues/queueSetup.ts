@@ -1,5 +1,11 @@
 import { IS_CLOUD } from "@dokploy/server";
 import {
+	boatBuildPartition,
+	recordBoatBuildFailure,
+	resolveBoatBuildTarget,
+	runOnBoatBuildMachine,
+} from "@dokploy/server/services/boat-builds";
+import {
 	execAsync,
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
@@ -40,14 +46,36 @@ const createNoopQueue = (): DeploymentQueue => ({
 	clearWaiting: () => 0,
 });
 
+/** Jobs queued on the Boat build pool run with a pool machine awake and set as their build server. */
+const processWithBoatBuildPool = async (job: InMemoryJob) => {
+	const boat = job.data.partition
+		? await resolveBoatBuildTarget(job.data).catch(() => null)
+		: null;
+	if (!boat) return processDeploymentJob(job);
+	try {
+		await runOnBoatBuildMachine(boat, () => processDeploymentJob(job));
+	} catch (error) {
+		await recordBoatBuildFailure(boat, job.data, error).catch((failure) =>
+			console.error("Failed to record the Boat build failure", failure),
+		);
+	}
+};
+
 const createInMemoryQueue = (): DeploymentQueue => {
 	const queue = new InMemoryQueue({
 		resolveConcurrency: resolveBuildsConcurrency,
 	});
-	queue.process(processDeploymentJob);
+	queue.process(processWithBoatBuildPool);
 
 	return {
-		add: (_name, data) => queue.add(data),
+		add: async (_name, data) => {
+			const boat = await resolveBoatBuildTarget(data).catch(() => null);
+			return queue.add(
+				boat
+					? { ...data, partition: boatBuildPartition(boat.organizationId) }
+					: data,
+			);
+		},
 		getJobs: (states) => queue.getJobs(states),
 		close: () => queue.close(),
 		on: () => {},

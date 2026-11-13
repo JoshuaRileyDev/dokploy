@@ -42,7 +42,7 @@ type Processor = (job: InMemoryJob) => Promise<void>;
 
 /** Resolve the partition key (serverId) a job belongs to. */
 export const getPartition = (data: DeploymentJob): string =>
-	data.serverId ?? LOCAL_PARTITION;
+	data.partition ?? data.serverId ?? LOCAL_PARTITION;
 
 /** Resolve the FIFO group a job belongs to (the service being deployed). */
 export const getGroup = (data: DeploymentJob): string => {

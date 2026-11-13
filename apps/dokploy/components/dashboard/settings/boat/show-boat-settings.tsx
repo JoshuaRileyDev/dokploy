@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw, Sailboat, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, RotateCcw, Sailboat, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AlertBlock } from "@/components/shared/alert-block";
@@ -157,7 +157,7 @@ const BoatConnection = ({ boat }: { boat: Boat | null }) => {
 						{boat && (
 							<DialogAction
 								title="Disconnect Boat"
-								description="Workflow runs go back to your workflow servers, and Dokploy deletes its snapshots from your Boat account."
+								description="Workflow runs go back to your workflow servers, services on the build pool build on their deploy servers, and Dokploy deletes its snapshots and build machines from your Boat account."
 								type="destructive"
 								onClick={() =>
 									remove
@@ -347,6 +347,206 @@ const BoatWorkflowSettings = ({ boat }: { boat: Boat }) => {
 	);
 };
 
+const MACHINE_STATE_LABELS: Record<string, string> = {
+	archived: "Stopped",
+	archiving: "Stopping",
+	ready: "Running",
+	idle: "Running",
+	running: "Running",
+	provisioning: "Starting",
+	provisioned: "Starting",
+	cloning: "Starting",
+};
+
+const BoatBuildSettings = ({ boat }: { boat: Boat }) => {
+	const utils = api.useUtils();
+	const { data: permissions } = api.user.getPermissions.useQuery();
+	const canRead = !!permissions?.server.read;
+	const canEdit = !!permissions?.server.create;
+	const { data: machines } = api.boat.buildMachines.useQuery(undefined, {
+		enabled: canRead,
+		refetchInterval: 10_000,
+	});
+	const save = api.boat.saveBuildSettings.useMutation();
+	const retry = api.boat.retryBuildMachine.useMutation();
+
+	const [enabled, setEnabled] = useState(boat.buildsEnabled);
+	const [poolSize, setPoolSize] = useState(boat.buildPoolSize);
+	const [machineType, setMachineType] = useState<BoatMachineType>(
+		boat.buildMachineType,
+	);
+	const [idleStopMinutes, setIdleStopMinutes] = useState(
+		boat.buildIdleStopMinutes,
+	);
+	useEffect(() => {
+		setEnabled(boat.buildsEnabled);
+		setPoolSize(boat.buildPoolSize);
+		setMachineType(boat.buildMachineType);
+		setIdleStopMinutes(boat.buildIdleStopMinutes);
+	}, [
+		boat.buildsEnabled,
+		boat.buildPoolSize,
+		boat.buildMachineType,
+		boat.buildIdleStopMinutes,
+	]);
+
+	if (!canRead) return null;
+
+	return (
+		<Section
+			title="Builds"
+			description="A pool of Boat machines that build images for applications and compose services set to the Boat build pool. Each machine builds one service at a time and keeps its Docker cache between builds. Machines are started for a build and stopped once they've been idle, so you only pay while they build."
+		>
+			<div className="grid gap-4 md:grid-cols-2">
+				<div className="flex items-center justify-between gap-4 md:col-span-2">
+					<Label htmlFor="boat-builds-enabled">Use the Boat build pool</Label>
+					<Switch
+						id="boat-builds-enabled"
+						checked={enabled}
+						disabled={!canEdit}
+						onCheckedChange={setEnabled}
+					/>
+				</div>
+				<div className="space-y-1.5">
+					<Label htmlFor="boat-build-pool-size">
+						Machines (builds at once)
+					</Label>
+					<Input
+						id="boat-build-pool-size"
+						type="number"
+						min={1}
+						max={20}
+						value={poolSize}
+						disabled={!canEdit}
+						onChange={(event) =>
+							setPoolSize(
+								Math.min(20, Math.max(1, Number(event.target.value) || 1)),
+							)
+						}
+					/>
+				</div>
+				<div className="space-y-1.5">
+					<Label htmlFor="boat-build-machine">Machine size</Label>
+					<MachineTypeSelect
+						id="boat-build-machine"
+						value={machineType}
+						disabled={!canEdit}
+						onChange={setMachineType}
+					/>
+				</div>
+				<div className="space-y-1.5">
+					<Label htmlFor="boat-build-idle">Stop after idle (minutes)</Label>
+					<Input
+						id="boat-build-idle"
+						type="number"
+						min={1}
+						max={240}
+						value={idleStopMinutes}
+						disabled={!canEdit}
+						onChange={(event) =>
+							setIdleStopMinutes(
+								Math.min(240, Math.max(1, Number(event.target.value) || 1)),
+							)
+						}
+					/>
+				</div>
+				{canEdit && (
+					<div className="flex items-end justify-end">
+						<Button
+							isLoading={save.isPending}
+							onClick={() =>
+								save
+									.mutateAsync({
+										enabled,
+										poolSize,
+										machineType,
+										idleStopMinutes,
+									})
+									.then(() =>
+										toast.success(
+											enabled
+												? "Build pool saved. New machines are set up in the background"
+												: "Build pool saved",
+										),
+									)
+									.catch((error) => toast.error(error.message))
+									.finally(() => {
+										utils.boat.get.invalidate();
+										utils.boat.buildMachines.invalidate();
+									})
+							}
+						>
+							Save
+						</Button>
+					</div>
+				)}
+			</div>
+			<p className="text-xs text-muted-foreground">
+				Then choose <strong>Boat build pool</strong> under a service's Advanced
+				→ Build Server, together with a registry the deploy server can pull
+				from.
+			</p>
+
+			{!!machines?.length && (
+				<div className="flex flex-col divide-y rounded-md border">
+					{machines.map((machine) => (
+						<div
+							key={machine.serverId}
+							className="flex flex-wrap items-center justify-between gap-3 p-3"
+						>
+							<div className="space-y-1">
+								<div className="flex items-center gap-2">
+									<span className="text-sm font-medium">{machine.name}</span>
+									{machine.settingUp || machine.status === "provisioning" ? (
+										<Badge variant="secondary" className="gap-1">
+											<Loader2 className="size-3 animate-spin" />
+											Setting up
+										</Badge>
+									) : machine.status === "failed" ? (
+										<Badge variant="destructive">Failed</Badge>
+									) : machine.building ? (
+										<Badge>Building</Badge>
+									) : (
+										<Badge variant="outline">
+											{MACHINE_STATE_LABELS[machine.state] ?? machine.state}
+										</Badge>
+									)}
+								</div>
+								{machine.error ? (
+									<p className="text-xs text-destructive">{machine.error}</p>
+								) : machine.lastUsedAt ? (
+									<p className="text-xs text-muted-foreground">
+										<DateTooltip date={machine.lastUsedAt}>
+											Last build
+										</DateTooltip>
+									</p>
+								) : null}
+							</div>
+							{canEdit && machine.status === "failed" && !machine.settingUp && (
+								<Button
+									variant="outline"
+									size="sm"
+									isLoading={retry.isPending}
+									onClick={() =>
+										retry
+											.mutateAsync({ serverId: machine.serverId })
+											.then(() => toast.success(`Setting up ${machine.name}`))
+											.catch((error) => toast.error(error.message))
+											.finally(() => utils.boat.buildMachines.invalidate())
+									}
+								>
+									<RotateCcw className="size-4" />
+									Retry setup
+								</Button>
+							)}
+						</div>
+					))}
+				</div>
+			)}
+		</Section>
+	);
+};
+
 /** The Boat connection plus the settings for everything Dokploy runs on it. */
 export const BoatSections = () => {
 	const { data: boat, isPending } = useBoat();
@@ -361,6 +561,7 @@ export const BoatSections = () => {
 		<div className="flex flex-col gap-4">
 			<BoatConnection boat={boat ?? null} />
 			{boat && <BoatWorkflowSettings boat={boat} />}
+			{boat && <BoatBuildSettings boat={boat} />}
 		</div>
 	);
 };
@@ -375,7 +576,7 @@ export const ShowBoatSettings = () => (
 						Boat
 					</CardTitle>
 					<CardDescription>
-						Run workflows on on-demand cloud machines from boat.dev.
+						Run workflows and builds on on-demand cloud machines from boat.dev.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="border-t pt-4">

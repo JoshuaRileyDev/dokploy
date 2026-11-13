@@ -42,6 +42,15 @@ describe("getPartition / getGroup", () => {
 		expect(getPartition(appJob("a", "server-1"))).toBe("server-1");
 	});
 
+	it("prefers an explicit partition, e.g. the Boat build pool", () => {
+		expect(
+			getPartition({
+				...appJob("a", "server-1"),
+				partition: "boat-builds:org",
+			}),
+		).toBe("boat-builds:org");
+	});
+
 	it("groups applications and compose by their id", () => {
 		expect(getGroup(appJob("a"))).toBe("application:a");
 		expect(getGroup(composeJob("c"))).toBe("compose:c");

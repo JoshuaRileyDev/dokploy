@@ -4,6 +4,7 @@ import {
 	createDefaultServerTraefikConfig,
 	createDefaultTraefikConfig,
 	IS_CLOUD,
+	initBoatBuildPools,
 	initCancelDeployments,
 	initCronJobs,
 	initEnterpriseBackupCronJobs,
@@ -81,6 +82,7 @@ void app.prepare().then(async () => {
 			const { startDeploymentWorker } = await import("./queues/queueSetup");
 			await startDeploymentWorker();
 			await initWorkflowRuns();
+			await initBoatBuildPools();
 		}
 	} catch (e) {
 		console.error("Main Server Error", e);
