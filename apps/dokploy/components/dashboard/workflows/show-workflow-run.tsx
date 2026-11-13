@@ -27,9 +27,9 @@ import {
 import { cn } from "@/lib/utils";
 import { api } from "@/utils/api";
 import {
-	formatDuration,
 	formatMs,
 	isFinished,
+	LiveDuration,
 	StatusIcon,
 	statusLabel,
 } from "./status";
@@ -158,7 +158,8 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								)}
 								<DateTooltip date={run.createdAt}>Triggered</DateTooltip>
 								<span>
-									Duration {formatDuration(run.startedAt, run.finishedAt)}
+									Duration{" "}
+									<LiveDuration start={run.startedAt} end={run.finishedAt} />
 								</span>
 							</CardDescription>
 						</div>
@@ -299,9 +300,13 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								<StatusIcon status={job.status} />
 								<span className="flex-1 truncate">{job.name}</span>
 								<span className="text-xs text-muted-foreground">
-									{job.startedAt
-										? formatDuration(job.startedAt, job.finishedAt)
-										: ""}
+									{job.startedAt && (
+										// A job cut off by a cancelled run never gets its own finish time.
+										<LiveDuration
+											start={job.startedAt}
+											end={job.finishedAt ?? run.finishedAt}
+										/>
+									)}
 								</span>
 							</button>
 						))}

@@ -44,7 +44,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/utils/api";
 import { useDebounce } from "@/utils/hooks/use-debounce";
 import { ClearFiltersButton, FilterSelect, SearchInput } from "./list-toolbar";
-import { formatDuration, isFinished, StatusIcon, statusLabel } from "./status";
+import { isFinished, LiveDuration, StatusIcon, statusLabel } from "./status";
 import { TablePagination } from "./table-pagination";
 import { eventLabel } from "./utils";
 
@@ -442,7 +442,10 @@ export const ShowWorkflowRuns = ({ workflowRepositoryId }: Props) => {
 											</div>
 										</TableCell>
 										<TableCell className="text-sm text-muted-foreground">
-											{formatDuration(run.startedAt, run.finishedAt)}
+											<LiveDuration
+												start={run.startedAt}
+												end={run.finishedAt}
+											/>
 										</TableCell>
 										<TableCell>
 											<DateTooltip date={run.createdAt} />
