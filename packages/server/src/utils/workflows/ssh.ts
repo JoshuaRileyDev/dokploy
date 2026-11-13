@@ -5,7 +5,12 @@ export type SshTarget = {
 	port: number;
 	username: string;
 	privateKey: string;
+	/** OpenSSH public host key (`type base64`) to pin instead of trusting the first key offered. */
+	hostKey?: string;
 };
+
+const hostKeyBlob = (hostKey: string) =>
+	Buffer.from(hostKey.trim().split(/\s+/)[1] ?? "", "base64");
 
 const connect = (target: SshTarget) =>
 	new Promise<Client>((resolve, reject) => {
@@ -20,6 +25,12 @@ const connect = (target: SshTarget) =>
 				privateKey: target.privateKey,
 				readyTimeout: 30_000,
 				keepaliveInterval: 15_000,
+				...(target.hostKey
+					? {
+							hostVerifier: (key: Buffer) =>
+								key.equals(hostKeyBlob(target.hostKey!)),
+						}
+					: {}),
 			});
 	});
 

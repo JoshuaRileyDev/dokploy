@@ -150,6 +150,12 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								{run.actor && <span>by {run.actor}</span>}
 								{run.server && <span>on {run.server.name}</span>}
 								{run.runner && <span>on runner {run.runner.name}</span>}
+								{run.runsOnBoat && (
+									<span>
+										on Boat
+										{run.boatSandboxId ? ` (${run.boatSandboxId})` : ""}
+									</span>
+								)}
 								<DateTooltip date={run.createdAt}>Triggered</DateTooltip>
 								<span>
 									Duration {formatDuration(run.startedAt, run.finishedAt)}

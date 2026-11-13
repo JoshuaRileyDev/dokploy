@@ -30,6 +30,7 @@ import {
 	type LucideIcon,
 	Package,
 	Palette,
+	Sailboat,
 	ScrollText,
 	Server,
 	ShieldCheck,
@@ -333,6 +334,14 @@ export const MENU: Menu = {
 			url: "/dashboard/settings/cloud-providers",
 			icon: Cloud,
 			isEnabled: ({ permissions }) => !!permissions?.server.create,
+		},
+		{
+			isSingle: true,
+			title: "Boat",
+			url: "/dashboard/settings/boat",
+			icon: Sailboat,
+			isEnabled: ({ permissions, isCloud }) =>
+				!isCloud && !!(permissions?.workflow.read || permissions?.server.read),
 		},
 		{
 			isSingle: true,

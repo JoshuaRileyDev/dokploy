@@ -233,6 +233,8 @@ export const workflowRuns = pgTable(
 		// Every runs-on label across the workflow's jobs, used to route the run to a runner.
 		runsOn: text("runsOn").array().notNull().default(sql`ARRAY[]::text[]`),
 		requiresRunner: boolean("requiresRunner").notNull().default(false),
+		runsOnBoat: boolean("runsOnBoat").notNull().default(false),
+		boatSandboxId: text("boatSandboxId"),
 		workflowRunnerId: text("workflowRunnerId").references(
 			() => workflowRunners.workflowRunnerId,
 			{ onDelete: "set null" },

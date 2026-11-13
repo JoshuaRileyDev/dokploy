@@ -39,6 +39,7 @@ export const WorkflowRepositorySettings = ({ repository }: Props) => {
 	const utils = api.useUtils();
 	const { workflowRepositoryId } = repository;
 	const { data: workflowServers } = api.server.workflowServers.useQuery();
+	const { data: boat } = api.boat.get.useQuery();
 	const update = api.workflow.updateRepository.useMutation();
 
 	const save = (values: {
@@ -113,7 +114,8 @@ export const WorkflowRepositorySettings = ({ repository }: Props) => {
 							<div className="space-y-1">
 								<Label htmlFor="workflow-server">Workflow server</Label>
 								<p className="text-sm text-muted-foreground">
-									Where this repository's runs execute.
+									Where this repository's runs execute. Jobs that match a
+									runner's labels always go to that runner.
 								</p>
 							</div>
 							<Select
@@ -127,7 +129,7 @@ export const WorkflowRepositorySettings = ({ repository }: Props) => {
 								</SelectTrigger>
 								<SelectContent>
 									<SelectItem value={ANY_SERVER}>
-										Any workflow server
+										{boat?.workflowsEnabled ? "Boat" : "Any workflow server"}
 									</SelectItem>
 									{workflowServers?.map((server) => (
 										<SelectItem key={server.serverId} value={server.serverId}>

@@ -1,5 +1,13 @@
-import { Bell, FolderGit2, History, Laptop, Workflow } from "lucide-react";
+import {
+	Bell,
+	Cloud,
+	FolderGit2,
+	History,
+	Laptop,
+	Workflow,
+} from "lucide-react";
 import { useRouter } from "next/router";
+import { BoatSections } from "@/components/dashboard/settings/boat/show-boat-settings";
 import {
 	Card,
 	CardContent,
@@ -15,7 +23,13 @@ import { ShowWorkflowRepositories } from "./show-workflow-repositories";
 import { ShowWorkflowRunners } from "./show-workflow-runners";
 import { ShowWorkflowRuns } from "./show-workflow-runs";
 
-const TABS = ["runs", "repositories", "runners", "notifications"] as const;
+const TABS = [
+	"runs",
+	"repositories",
+	"boat",
+	"runners",
+	"notifications",
+] as const;
 type Tab = (typeof TABS)[number];
 
 export const ShowWorkflows = () => {
@@ -35,8 +49,8 @@ export const ShowWorkflows = () => {
 							Workflows
 						</CardTitle>
 						<CardDescription>
-							Run GitHub Actions workflows from your repositories on your own
-							workflow servers.
+							Run GitHub Actions workflows from your repositories on Boat or
+							your own workflow servers.
 						</CardDescription>
 					</div>
 					{permissions?.workflow.create && <ImportWorkflowRepository />}
@@ -61,6 +75,10 @@ export const ShowWorkflows = () => {
 								<FolderGit2 />
 								Repositories
 							</TabsTrigger>
+							<TabsTrigger value="boat">
+								<Cloud />
+								Boat
+							</TabsTrigger>
 							<TabsTrigger value="runners">
 								<Laptop />
 								Runners
@@ -75,6 +93,9 @@ export const ShowWorkflows = () => {
 						</TabsContent>
 						<TabsContent value="repositories" className="pt-2">
 							<ShowWorkflowRepositories />
+						</TabsContent>
+						<TabsContent value="boat" className="pt-2">
+							<BoatSections />
 						</TabsContent>
 						<TabsContent value="runners" className="pt-2">
 							<ShowWorkflowRunners />
