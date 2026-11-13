@@ -49,7 +49,11 @@ import {
 	enqueueWorkflowRun,
 } from "../utils/workflows/queue";
 import { workflowLogsDirectory } from "../utils/workflows/run-recorder";
-import { findMatchingTrigger } from "../utils/workflows/triggers";
+import {
+	findMatchingTrigger,
+	MANUAL_RUN_UNSUPPORTED_MESSAGE,
+	manualRunEvent,
+} from "../utils/workflows/triggers";
 import { findBoatSettings } from "./boat";
 import { findGithubById } from "./github";
 import {
@@ -812,7 +816,7 @@ export const queueWorkflowRunsForGithubEvent = async ({
 
 /**
  * Starts a manual run. Workflows without a workflow_dispatch trigger run as a push to the
- * branch, so they can still be started by hand. With jobId, only that job and the jobs it
+ * branch, so they can still be started by hand; workflows with neither can't be. With jobId, only that job and the jobs it
  * needs run, and the workflow's disabled jobs are ignored.
  */
 export const dispatchWorkflowRun = async ({
@@ -892,6 +896,13 @@ export const dispatchWorkflowRun = async ({
 			message: "Every job in this workflow is disabled",
 		});
 	}
+	const event = manualRunEvent(workflow.triggers);
+	if (!event) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: MANUAL_RUN_UNSUPPORTED_MESSAGE,
+		});
+	}
 	const dispatchTrigger = workflow.triggers.find(
 		(trigger) => trigger.event === "workflow_dispatch",
 	);
@@ -916,7 +927,6 @@ export const dispatchWorkflowRun = async ({
 	}
 
 	const ref = `refs/heads/${branch}`;
-	const event = dispatchTrigger ? "workflow_dispatch" : "push";
 	const repositoryPayload = {
 		name: repository.repository,
 		full_name: `${repository.owner}/${repository.repository}`,

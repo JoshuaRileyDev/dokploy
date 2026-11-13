@@ -1,6 +1,7 @@
 import type { WorkflowTrigger } from "@dokploy/server/utils/workflows/parser";
 import {
 	githubPatternToRegExp,
+	manualRunEvent,
 	matchesFilter,
 	matchesTrigger,
 	type WorkflowEvent,
@@ -195,5 +196,25 @@ describe("matchesTrigger: other events", () => {
 				{ name: "release", action: "published" },
 			),
 		).toBe(false);
+	});
+});
+
+describe("manualRunEvent", () => {
+	it("prefers workflow_dispatch over push", () => {
+		expect(
+			manualRunEvent([{ event: "push" }, { event: "workflow_dispatch" }]),
+		).toBe("workflow_dispatch");
+	});
+
+	it("falls back to push", () => {
+		expect(manualRunEvent([{ event: "pull_request" }, { event: "push" }])).toBe(
+			"push",
+		);
+	});
+
+	it("returns null when act would find no jobs to run", () => {
+		expect(
+			manualRunEvent([{ event: "pull_request" }, { event: "schedule" }]),
+		).toBeNull();
 	});
 });

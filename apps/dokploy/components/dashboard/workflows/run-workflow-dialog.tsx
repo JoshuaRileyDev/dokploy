@@ -2,6 +2,10 @@ import type {
 	WorkflowDispatchInput,
 	WorkflowTrigger,
 } from "@dokploy/server/utils/workflows/parser";
+import {
+	MANUAL_RUN_UNSUPPORTED_MESSAGE,
+	manualRunEvent,
+} from "@dokploy/server/utils/workflows/triggers";
 import { Play } from "lucide-react";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
@@ -94,6 +98,24 @@ export const RunWorkflowDialog = ({
 				router.push(`/dashboard/workflows/runs/${run.workflowRunId}`);
 			})
 			.catch((error) => toast.error(error.message));
+
+	if (!manualRunEvent(definition.triggers)) {
+		// Disabled buttons don't receive pointer events, so the span carries the tooltip.
+		return (
+			<span title={MANUAL_RUN_UNSUPPORTED_MESSAGE}>
+				{job ? (
+					<Button variant="ghost" size="icon" disabled>
+						<Play className="size-3.5" />
+					</Button>
+				) : (
+					<Button variant="outline" size="sm" disabled>
+						<Play className="size-3.5" />
+						Run
+					</Button>
+				)}
+			</span>
+		);
+	}
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>

@@ -169,3 +169,18 @@ export const findMatchingTrigger = async (
 	}
 	return undefined;
 };
+
+/**
+ * The event a manual run is sent to act as, or null when there is none. act only plans
+ * jobs from workflows whose `on:` lists the event it's given, even with `-j`.
+ */
+export const manualRunEvent = (triggers: Pick<WorkflowTrigger, "event">[]) => {
+	if (triggers.some((t) => t.event === "workflow_dispatch")) {
+		return "workflow_dispatch" as const;
+	}
+	if (triggers.some((t) => t.event === "push")) return "push" as const;
+	return null;
+};
+
+export const MANUAL_RUN_UNSUPPORTED_MESSAGE =
+	"This workflow can't be run manually. Add workflow_dispatch to its on: triggers.";
