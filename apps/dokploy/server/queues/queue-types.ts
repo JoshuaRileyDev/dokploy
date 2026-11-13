@@ -29,4 +29,5 @@ type DeployJob =
 			serverId?: string;
 	  };
 
-export type DeploymentJob = DeployJob;
+// Fork: `partition` overrides the serverId partition, e.g. to queue builds on the Boat build pool.
+export type DeploymentJob = DeployJob & { partition?: string };

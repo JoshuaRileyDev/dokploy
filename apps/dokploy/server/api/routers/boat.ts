@@ -1,11 +1,15 @@
 import {
 	boatSnapshotName,
+	findBoatBuildMachines,
 	findBoatSettings,
 	getBoatSummary,
 	IS_CLOUD,
 	isBoatSnapshotBuilding,
+	removeBoatBuildPool,
 	removeBoatConnection,
 	requireBoatSettings,
+	retryBoatBuildMachine,
+	saveBoatBuildSettings,
 	saveBoatConnection,
 	saveBoatWorkflowSettings,
 	startBoatSnapshotBuild,
@@ -19,6 +23,8 @@ import {
 } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {
+	apiFindBoatBuildMachine,
+	apiSaveBoatBuildSettings,
 	apiSaveBoatConnection,
 	apiSaveBoatWorkflowSettings,
 } from "@/server/db/schema";
@@ -68,6 +74,8 @@ export const boatRouter = createTRPCRouter({
 	removeConnection: withPermission("organization", "update").mutation(
 		async ({ ctx }) => {
 			assertSelfHosted();
+			const settings = await findBoatSettings(ctx.session.activeOrganizationId);
+			if (settings) await removeBoatBuildPool(settings);
 			await removeBoatConnection(ctx.session.activeOrganizationId);
 			await audit(ctx, {
 				action: "delete",
@@ -102,4 +110,35 @@ export const boatRouter = createTRPCRouter({
 			});
 		},
 	),
+	buildMachines: withPermission("server", "read").query(({ ctx }) => {
+		assertSelfHosted();
+		return findBoatBuildMachines(ctx.session.activeOrganizationId);
+	}),
+	saveBuildSettings: withPermission("server", "create")
+		.input(apiSaveBoatBuildSettings)
+		.mutation(async ({ input, ctx }) => {
+			assertSelfHosted();
+			await saveBoatBuildSettings(input, ctx.session.activeOrganizationId);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "server",
+				resourceId: ctx.session.activeOrganizationId,
+				resourceName: "Boat build pool",
+			});
+		}),
+	retryBuildMachine: withPermission("server", "create")
+		.input(apiFindBoatBuildMachine)
+		.mutation(async ({ input, ctx }) => {
+			assertSelfHosted();
+			await retryBoatBuildMachine(
+				input.serverId,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "server",
+				resourceId: input.serverId,
+				resourceName: "Boat build machine",
+			});
+		}),
 });

@@ -1,5 +1,9 @@
 import { db } from "@dokploy/server/db";
 import { server } from "@dokploy/server/db/schema";
+import {
+	boatBuildConcurrency,
+	boatBuildPartitionOrganization,
+} from "@dokploy/server/services/boat-builds";
 import { getWebServerSettings } from "@dokploy/server/services/web-server-settings";
 import { eq } from "drizzle-orm";
 import { LOCAL_PARTITION } from "./in-memory-queue";
@@ -15,6 +19,10 @@ export const resolveBuildsConcurrency = async (
 	partition: string,
 ): Promise<number> => {
 	try {
+		const boatOrganizationId = boatBuildPartitionOrganization(partition);
+		if (boatOrganizationId) {
+			return await boatBuildConcurrency(boatOrganizationId);
+		}
 		if (partition === LOCAL_PARTITION) {
 			const settings = await getWebServerSettings();
 			return normalize(settings?.buildsConcurrency ?? 1);

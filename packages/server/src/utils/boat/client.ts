@@ -35,7 +35,8 @@ export class BoatApiError extends Error {
 }
 
 const READY_STATES = new Set(["ready", "idle", "running"]);
-const FAILED_STATES = new Set(["error", "cancelled", "archived", "archiving"]);
+const FAILED_STATES = new Set(["error", "cancelled"]);
+export const STOPPED_STATES = new Set(["archived", "archiving"]);
 
 const delay = (ms: number, signal?: AbortSignal) =>
 	new Promise<void>((resolve, reject) => {
@@ -141,16 +142,18 @@ export class BoatClient {
 		return sandbox;
 	}
 
+	/** `resuming` keeps waiting through stopped states, which a just-resumed sandbox can still report. */
 	async waitForSandbox(
 		sandboxId: string,
 		signal?: AbortSignal,
-		timeoutMs = 5 * 60 * 1000,
+		{ resuming = false }: { resuming?: boolean } = {},
 	) {
-		const deadline = Date.now() + timeoutMs;
+		const deadline = Date.now() + 5 * 60 * 1000;
 		while (Date.now() < deadline) {
 			const sandbox = await this.getSandbox(sandboxId, signal);
 			if (READY_STATES.has(sandbox.state)) return sandbox;
-			if (FAILED_STATES.has(sandbox.state)) {
+			const stopped = STOPPED_STATES.has(sandbox.state);
+			if (FAILED_STATES.has(sandbox.state) || (stopped && !resuming)) {
 				throw new Error(
 					`Boat sandbox ${sandboxId} is ${sandbox.state}${sandbox.error ? `: ${sandbox.error}` : ""}`,
 				);
@@ -158,6 +161,22 @@ export class BoatClient {
 			await delay(2000, signal);
 		}
 		throw new Error(`Boat sandbox ${sandboxId} wasn't ready after 5 minutes`);
+	}
+
+	async resumeSandbox(sandboxId: string, type?: BoatMachineType) {
+		await this.request(
+			"POST",
+			`/sandboxes/${encodeURIComponent(sandboxId)}/resume`,
+			{ body: type ? { type } : {} },
+		);
+	}
+
+	async stopSandbox(sandboxId: string) {
+		await this.request(
+			"POST",
+			`/sandboxes/${encodeURIComponent(sandboxId)}/stop`,
+			{ body: {} },
+		);
 	}
 
 	addSshKey(sandboxId: string, publicKey: string, signal?: AbortSignal) {

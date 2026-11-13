@@ -72,6 +72,8 @@ const schema = z
 
 type Schema = z.infer<typeof schema>;
 
+const BOAT_POOL = "boat";
+
 export const ShowBuildServer = (props: Props) => {
 	const isCompose = props.serviceType === "compose";
 	const serviceId = isCompose ? props.composeId : props.applicationId;
@@ -98,6 +100,10 @@ export const ShowBuildServer = (props: Props) => {
 			: composeQuery.refetch;
 
 	const { data: buildServers } = api.server.buildServers.useQuery();
+	const { data: isCloud } = api.settings.isCloud.useQuery();
+	const { data: boat } = api.boat.get.useQuery(undefined, {
+		enabled: isCloud === false,
+	});
 	const { data: registries } = api.registry.all.useQuery();
 
 	const updateApplication = api.application.update.useMutation();
@@ -108,7 +114,9 @@ export const ShowBuildServer = (props: Props) => {
 
 	const form = useForm<Schema>({
 		defaultValues: {
-			buildServerId: data?.buildServerId || "",
+			buildServerId: data?.boatBuildPool
+				? BOAT_POOL
+				: data?.buildServerId || "",
 			buildRegistryId: data?.buildRegistryId || "",
 		},
 		resolver: zodResolver(schema),
@@ -117,15 +125,20 @@ export const ShowBuildServer = (props: Props) => {
 	useEffect(() => {
 		if (data) {
 			form.reset({
-				buildServerId: data?.buildServerId || "",
+				buildServerId: data?.boatBuildPool
+					? BOAT_POOL
+					: data?.buildServerId || "",
 				buildRegistryId: data?.buildRegistryId || "",
 			});
 		}
 	}, [form, form.reset, data]);
 
 	const onSubmit = async (formData: Schema) => {
+		const boatBuildPool = formData?.buildServerId === BOAT_POOL;
 		const buildServerId =
-			formData?.buildServerId === "none" || !formData?.buildServerId
+			formData?.buildServerId === "none" ||
+			!formData?.buildServerId ||
+			boatBuildPool
 				? null
 				: formData?.buildServerId;
 		const buildRegistryId =
@@ -139,12 +152,14 @@ export const ShowBuildServer = (props: Props) => {
 					composeId: serviceId,
 					buildServerId,
 					buildRegistryId,
+					boatBuildPool,
 				});
 			} else {
 				await updateApplication.mutateAsync({
 					applicationId: serviceId,
 					buildServerId,
 					buildRegistryId,
+					boatBuildPool,
 				});
 			}
 			toast.success("Build Server Settings Updated");
@@ -243,6 +258,18 @@ export const ShowBuildServer = (props: Props) => {
 														<span>None</span>
 													</span>
 												</SelectItem>
+												{(boat?.buildsEnabled || field.value === BOAT_POOL) && (
+													<SelectItem value={BOAT_POOL}>
+														<span className="flex w-full items-center justify-between gap-2">
+															<span>Boat build pool</span>
+															<span className="text-xs text-muted-foreground">
+																{boat?.buildsEnabled
+																	? `${boat.buildPoolSize} machines`
+																	: "Off in Settings → Boat"}
+															</span>
+														</span>
+													</SelectItem>
+												)}
 												{buildServers?.map((server) => (
 													<SelectItem
 														key={server.serverId}

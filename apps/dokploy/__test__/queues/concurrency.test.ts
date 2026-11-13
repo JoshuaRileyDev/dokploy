@@ -23,12 +23,33 @@ vi.mock("@dokploy/server/services/web-server-settings", () => ({
 
 vi.mock("drizzle-orm", () => ({ eq: vi.fn() }));
 
+const boatBuildConcurrency = vi.fn();
+vi.mock("@dokploy/server/services/boat-builds", () => ({
+	boatBuildConcurrency: (...args: unknown[]) => boatBuildConcurrency(...args),
+	boatBuildPartitionOrganization: (partition: string) =>
+		partition.startsWith("boat-builds:")
+			? partition.slice("boat-builds:".length)
+			: null,
+}));
+
 import { resolveBuildsConcurrency } from "../../server/queues/concurrency";
 import { LOCAL_PARTITION } from "../../server/queues/in-memory-queue";
 
 describe("resolveBuildsConcurrency", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe("Boat build pool partition", () => {
+		it("runs one build per pool machine", async () => {
+			boatBuildConcurrency.mockResolvedValue(3);
+
+			await expect(resolveBuildsConcurrency("boat-builds:org1")).resolves.toBe(
+				3,
+			);
+			expect(boatBuildConcurrency).toHaveBeenCalledWith("org1");
+			expect(findFirstServer).not.toHaveBeenCalled();
+		});
 	});
 
 	describe("local web server partition", () => {

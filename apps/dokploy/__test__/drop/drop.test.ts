@@ -40,6 +40,7 @@ const baseApp: ApplicationNested = {
 	giteaBranch: "",
 	buildServerId: "",
 	buildRegistryId: "",
+	boatBuildPool: false,
 	buildRegistry: null,
 	args: [],
 	giteaBuildPath: "",

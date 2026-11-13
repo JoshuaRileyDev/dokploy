@@ -137,6 +137,8 @@ export const compose = pgTable("compose", {
 			onDelete: "set null",
 		},
 	),
+	// Fork-only: build on the organization's Boat build pool; buildServerId is then assigned per build.
+	boatBuildPool: boolean("forkBoatBuildPool").notNull().default(false),
 	serviceNetworks: jsonb("serviceNetworks")
 		.$type<
 			Array<{

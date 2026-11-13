@@ -45,6 +45,7 @@ import {
 	eq,
 	getTableColumns,
 	isNotNull,
+	notInArray,
 	sql,
 } from "drizzle-orm";
 import { z } from "zod";
@@ -64,6 +65,7 @@ import {
 	apiUpdateServerBuildsConcurrency,
 	apiUpdateServerMonitoring,
 	applications,
+	boatBuildMachines,
 	compose,
 	describeRoleRemovalBlockers,
 	legacyServerType,
@@ -125,6 +127,13 @@ const findServersWithRole = async (
 			eq(server.organizationId, ctx.session.activeOrganizationId),
 			arrayContains(server.serverRoles, [role]),
 			IS_CLOUD ? eq(server.serverStatus, "active") : undefined,
+			// Boat pool machines sleep between builds and are assigned per build, so they can't be picked directly.
+			notInArray(
+				server.serverId,
+				db
+					.select({ serverId: boatBuildMachines.serverId })
+					.from(boatBuildMachines),
+			),
 		),
 	});
 	return toServerOptions(
