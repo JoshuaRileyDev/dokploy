@@ -143,8 +143,8 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 };
 
 /** Stops a running act process; act cancels its jobs and removes their containers on SIGTERM. */
-export const buildActCancelScript = (runId: string) => {
-	const pidFile = `${runDirectory(runId)}/act.pid`;
+export const buildActCancelScript = (runId: string, baseDir?: string) => {
+	const pidFile = `${runDirectory(runId, baseDir)}/act.pid`;
 	return [
 		`if [ -f ${quote([pidFile])} ]; then`,
 		`  PID=$(cat ${quote([pidFile])})`,
@@ -155,5 +155,5 @@ export const buildActCancelScript = (runId: string) => {
 	].join("\n");
 };
 
-export const buildActCleanupScript = (runId: string) =>
-	`rm -rf ${quote([runDirectory(runId)])}`;
+export const buildActCleanupScript = (runId: string, baseDir?: string) =>
+	`rm -rf ${quote([runDirectory(runId, baseDir)])}`;

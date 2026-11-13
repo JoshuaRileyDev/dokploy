@@ -139,6 +139,18 @@ Machines that can't be reached over SSH, or that need to run jobs on the host (a
 - Output: the CLI masks secrets locally, then posts output batches every second (at least every 5s as a heartbeat). The response carries the cancel flag; cancelling kills the run's process group. Runs whose runner stops reporting for 3 minutes are failed.
 - One run at a time per runner process. Cloud (`IS_CLOUD`) doesn't expose the runner API.
 
+## Boat sandboxes (done)
+
+Runs can execute on [Boat](https://boat.dev) cloud machines instead of workflow servers. Shipped as: migration `drizzle-fork/0010_boat`; `utils/boat/client.ts` (HTTP API client); `services/boat.ts` (the organization's connection, shared with future Boat features); `services/workflow-boat.ts`; router `boat.*`; Settings → Boat page, also shown as the Boat tab on the Workflows page.
+
+- One `boat_settings` row per organization holds the API key and, with prefixed columns, the settings of each feature that uses Boat.
+
+- Scope: workflow runs only. Building app images on Boat may follow later.
+- Routing: a runner with matching labels first; then the repository's pinned workflow server; otherwise Boat when it's enabled for the organization; otherwise the least busy workflow server. Fork pull requests go to Boat like any other run and get no secrets, as on servers.
+- One saved snapshot per organization (one of the plan's 10+ saved snapshot slots) holds act and the `catthehacker/ubuntu` act-latest/24.04/22.04 images. Its name (`dokploy-act-<act version>-<hash>`) changes when act or the image list changes, so the next run rebuilds it and the old one is deleted. It is also rebuilt weekly under the same name, which Boat swaps in only once the new save is ready.
+- Each run creates a sandbox from the snapshot (`noEnv`, `monitoring: false`, `snapshots: false`, 7 hour TTL, label `dokploy-run=<runId>`), authorizes a one-off SSH key with the returned host key pinned, runs the usual act script over SSH (IPv4 `sshEndpoint` when the machine has no IPv4), and deletes the sandbox afterwards. Sandboxes of runs interrupted by a restart are deleted on startup.
+- Boat runs share an organization-wide queue slot pool (`workflowMaxConcurrentRuns`, default 10); concurrency groups still serialize.
+
 ## Phase 5: Scale and providers
 
 - Server side of the Gitea runner protocol so `act_runner` on each workflow server polls for individual jobs: per-job distribution across servers, runners behind NAT.

@@ -1,8 +1,11 @@
 import { executeWorkflowRun } from "./executor";
 
+/** Where a run executes: a workflow server takes one run at a time, Boat takes up to its configured limit. */
+export type QueueTarget = { key: string; capacity: number };
+
 type QueuedRun = {
 	workflowRunId: string;
-	serverId: string;
+	target: QueueTarget;
 	concurrencyKey: string | null;
 };
 
@@ -18,13 +21,18 @@ const globalForQueue = globalThis as unknown as {
 globalForQueue.__dokployWorkflowQueue ??= { waiting: [], active: new Map() };
 const state = globalForQueue.__dokployWorkflowQueue;
 
-const isBlocked = (queued: QueuedRun) =>
-	[...state.active.values()].some(
-		(run) =>
-			run.serverId === queued.serverId ||
-			(queued.concurrencyKey !== null &&
-				run.concurrencyKey === queued.concurrencyKey),
+const isBlocked = (queued: QueuedRun) => {
+	const active = [...state.active.values()];
+	return (
+		active.filter((run) => run.target.key === queued.target.key).length >=
+			queued.target.capacity ||
+		active.some(
+			(run) =>
+				queued.concurrencyKey !== null &&
+				run.concurrencyKey === queued.concurrencyKey,
+		)
 	);
+};
 
 const pump = () => {
 	for (const queued of [...state.waiting]) {
@@ -47,7 +55,7 @@ const pump = () => {
 
 export const enqueueWorkflowRun = (
 	workflowRunId: string,
-	serverId: string,
+	target: QueueTarget,
 	concurrencyKey: string | null = null,
 ) => {
 	if (
@@ -56,7 +64,7 @@ export const enqueueWorkflowRun = (
 	) {
 		return;
 	}
-	state.waiting.push({ workflowRunId, serverId, concurrencyKey });
+	state.waiting.push({ workflowRunId, target, concurrencyKey });
 	pump();
 };
 
@@ -76,7 +84,7 @@ export const cancelQueuedOrActiveRun = (workflowRunId: string) => {
 export const activeWorkflowRunCounts = () => {
 	const counts = new Map<string, number>();
 	for (const run of [...state.active.values(), ...state.waiting]) {
-		counts.set(run.serverId, (counts.get(run.serverId) ?? 0) + 1);
+		counts.set(run.target.key, (counts.get(run.target.key) ?? 0) + 1);
 	}
 	return counts;
 };

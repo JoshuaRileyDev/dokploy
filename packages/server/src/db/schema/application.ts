@@ -240,6 +240,8 @@ export const applications = pgTable("application", {
 			onDelete: "set null",
 		},
 	),
+	// Fork-only: build on the organization's Boat build pool; buildServerId is then assigned per build.
+	boatBuildPool: boolean("forkBoatBuildPool").notNull().default(false),
 	networkIds: text("networkIds").array().default([]),
 	detachDokployNetwork: boolean("detachDokployNetwork")
 		.notNull()

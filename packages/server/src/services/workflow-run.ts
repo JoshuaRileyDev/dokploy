@@ -50,6 +50,7 @@ import {
 } from "../utils/workflows/queue";
 import { workflowLogsDirectory } from "../utils/workflows/run-recorder";
 import { findMatchingTrigger } from "../utils/workflows/triggers";
+import { findBoatSettings } from "./boat";
 import { findGithubById } from "./github";
 import {
 	findWorkflowRepositoriesByGithubRepo,
@@ -57,6 +58,11 @@ import {
 	syncWorkflowRepository,
 	type WorkflowRepository,
 } from "./workflow";
+import {
+	isBoatEnabledForWorkflows,
+	refreshBoatSnapshots,
+	releaseInterruptedBoatRuns,
+} from "./workflow-boat";
 import { failStaleRunnerRuns, hasMatchingRunner } from "./workflow-runner";
 
 export type WorkflowRun = typeof workflowRuns.$inferSelect;
@@ -400,6 +406,42 @@ const concurrencyKey = (
 		? `${run.workflowRepositoryId}:${run.concurrencyGroup}`
 		: null;
 
+/** Queues a run on its workflow server or Boat; returns false if its target is gone. */
+const enqueueRun = async (
+	run: Pick<
+		WorkflowRun,
+		| "workflowRunId"
+		| "workflowRepositoryId"
+		| "concurrencyGroup"
+		| "serverId"
+		| "runsOnBoat"
+	>,
+	organizationId: string,
+) => {
+	if (run.serverId) {
+		enqueueWorkflowRun(
+			run.workflowRunId,
+			{ key: run.serverId, capacity: 1 },
+			concurrencyKey(run),
+		);
+		return true;
+	}
+	if (run.runsOnBoat) {
+		const boat = await findBoatSettings(organizationId);
+		if (!boat) return false;
+		enqueueWorkflowRun(
+			run.workflowRunId,
+			{
+				key: `boat:${organizationId}`,
+				capacity: boat.workflowMaxConcurrentRuns,
+			},
+			concurrencyKey(run),
+		);
+		return true;
+	}
+	return false;
+};
+
 /** GitHub semantics: a new run replaces a pending one in its group, and with cancel-in-progress it also stops the running one. */
 const applyConcurrency = async (run: WorkflowRun) => {
 	if (!run.concurrencyGroup) return;
@@ -427,7 +469,12 @@ const applyConcurrency = async (run: WorkflowRun) => {
 
 type NewRun = Omit<
 	typeof workflowRuns.$inferInsert,
-	"workflowRunId" | "runNumber" | "serverId" | "status"
+	| "workflowRunId"
+	| "runNumber"
+	| "serverId"
+	| "status"
+	| "runsOnBoat"
+	| "boatSandboxId"
 > & { runNumber?: number };
 
 export const createWorkflowRun = async (
@@ -447,9 +494,17 @@ export const createWorkflowRun = async (
 		(requiresRunner && values.trusted === false
 			? "Skipped: runners run jobs directly on their machine, so they only take trusted runs."
 			: undefined);
+	// Boat is the default once it's set up; pinning a workflow server on the repository opts out.
+	const runsOnBoat =
+		!skipReason &&
+		!requiresRunner &&
+		!repository.defaultServerId &&
+		(await isBoatEnabledForWorkflows(repository.organizationId));
 	const serverId =
-		skipReason || requiresRunner ? null : await pickWorkflowServer(repository);
-	const unroutable = !skipReason && !requiresRunner && !serverId;
+		skipReason || requiresRunner || runsOnBoat
+			? null
+			: await pickWorkflowServer(repository);
+	const unroutable = !skipReason && !requiresRunner && !runsOnBoat && !serverId;
 
 	const run = await db.transaction(async (tx) => {
 		// Serializes run numbering per workflow so concurrent deliveries can't share a number.
@@ -478,12 +533,13 @@ export const createWorkflowRun = async (
 				...values,
 				runNumber,
 				serverId,
+				runsOnBoat,
 				requiresRunner: !skipReason && requiresRunner,
 				status: skipReason ? "skipped" : unroutable ? "failure" : "queued",
 				errorMessage:
 					skipReason ??
 					(unroutable
-						? "No workflow server is available. Add a server with the Workflows role, or check the repository's workflow server setting."
+						? "No workflow server is available. Set up Boat, add a server with the Workflows role, or check the repository's workflow server setting."
 						: null),
 				finishedAt: skipReason || unroutable ? now : null,
 			})
@@ -495,9 +551,7 @@ export const createWorkflowRun = async (
 	if (run.status === "queued") {
 		await applyConcurrency(run);
 		// Runner runs wait in the database until a matching runner claims them.
-		if (run.serverId) {
-			enqueueWorkflowRun(run.workflowRunId, run.serverId, concurrencyKey(run));
-		}
+		await enqueueRun(run, repository.organizationId);
 	} else if (run.status === "failure") {
 		sendWorkflowRunNotifications(run.workflowRunId).catch((error) =>
 			console.error("Failed to send workflow notifications", error),
@@ -1024,6 +1078,15 @@ export const initWorkflowRuns = async () => {
 			);
 		},
 	);
+	scheduleJob(
+		"dokploy-workflow-boat-refresh",
+		{ rule: "0 4 * * 0", tz: "Etc/UTC" },
+		() => {
+			refreshBoatSnapshots().catch((error) =>
+				console.error("Failed to refresh Boat snapshots", error),
+			);
+		},
+	);
 	const interrupted = await db
 		.update(workflowRuns)
 		.set({
@@ -1039,6 +1102,9 @@ export const initWorkflowRuns = async () => {
 		)
 		.returning({ workflowRunId: workflowRuns.workflowRunId });
 	for (const run of interrupted) syncWorkflowCheckRun(run.workflowRunId);
+	releaseInterruptedBoatRuns(interrupted.map((run) => run.workflowRunId)).catch(
+		(error) => console.error("Failed to release Boat sandboxes", error),
+	);
 
 	const queued = await db.query.workflowRuns.findMany({
 		where: and(
@@ -1048,21 +1114,22 @@ export const initWorkflowRuns = async () => {
 		columns: {
 			workflowRunId: true,
 			serverId: true,
+			runsOnBoat: true,
 			workflowRepositoryId: true,
 			concurrencyGroup: true,
 		},
+		with: { repository: { columns: { organizationId: true } } },
 		orderBy: (runs, { asc }) => [asc(runs.createdAt)],
 	});
 	for (const run of queued) {
-		if (run.serverId) {
-			enqueueWorkflowRun(run.workflowRunId, run.serverId, concurrencyKey(run));
-			continue;
-		}
+		if (await enqueueRun(run, run.repository.organizationId)) continue;
 		await db
 			.update(workflowRuns)
 			.set({
 				status: "failure",
-				errorMessage: "The workflow server for this run was removed.",
+				errorMessage: run.runsOnBoat
+					? "Boat was disconnected from this organization."
+					: "The workflow server for this run was removed.",
 				finishedAt: new Date().toISOString(),
 			})
 			.where(eq(workflowRuns.workflowRunId, run.workflowRunId));
