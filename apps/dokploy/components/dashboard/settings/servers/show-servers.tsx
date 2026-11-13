@@ -19,7 +19,6 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -565,7 +564,6 @@ export const ShowServers = () => {
 	const router = useRouter();
 	const query = router.query;
 	const { data, isPending } = api.server.all.useQuery();
-	const { data: sshKeys } = api.sshKey.all.useQuery();
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data: permissions } = api.user.getPermissions.useQuery();
 	const { folders, folderByServer } = useServerFolders();
@@ -718,7 +716,8 @@ export const ShowServers = () => {
 								</span>
 							)}
 						</div>
-						{canCreate && servers.length > 0 && (
+						{/* Same tree position with or without servers so an open connect dialog survives the first server appearing. */}
+						{canCreate && (
 							<div className="flex flex-row flex-wrap gap-2">
 								<ProvisionServer />
 								<HandleServers />
@@ -731,32 +730,12 @@ export const ShowServers = () => {
 								<span>Loading...</span>
 								<Loader2 className="animate-spin size-4" />
 							</div>
-						) : sshKeys?.length === 0 && servers.length === 0 ? (
-							<div className="flex flex-col items-center gap-3 min-h-[25vh] justify-center">
-								<KeyIcon className="size-8" />
-								<span className="text-base text-muted-foreground">
-									No SSH Keys found. Add a SSH Key to start adding servers.{" "}
-									<Link
-										href="/dashboard/settings/ssh-keys"
-										className="text-primary"
-									>
-										Add SSH Key
-									</Link>
-								</span>
-								{canCreate && <ProvisionServer />}
-							</div>
 						) : servers.length === 0 ? (
 							<div className="flex flex-col items-center gap-3 min-h-[25vh] justify-center">
 								<ServerIcon className="size-8 self-center text-muted-foreground" />
 								<span className="text-base text-muted-foreground">
 									Start adding servers to deploy your applications remotely.
 								</span>
-								{canCreate && (
-									<div className="flex flex-row gap-2">
-										<ProvisionServer />
-										<HandleServers />
-									</div>
-								)}
 							</div>
 						) : (
 							<TooltipProvider>

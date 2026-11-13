@@ -54,6 +54,8 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/utils/api";
 import { useDebounce } from "@/utils/hooks/use-debounce";
+import { ExportProject } from "../project/export-import/export-project";
+import { ImportProject } from "../project/export-import/import-project";
 import { HandleProject } from "./handle-project";
 import { ProjectEnvironment } from "./project-environment";
 import {
@@ -72,6 +74,7 @@ export const ShowProjects = () => {
 	const { data: isCloud } = api.settings.isCloud.useQuery();
 	const { data, isPending } = api.project.all.useQuery();
 	const { data: auth } = api.user.get.useQuery();
+	const canTransfer = auth?.role === "owner" || auth?.role === "admin";
 	const { data: permissions } = api.user.getPermissions.useQuery();
 	const { mutateAsync } = api.project.remove.useMutation();
 	const { data: availableTags } = api.tag.all.useQuery();
@@ -306,6 +309,7 @@ export const ShowProjects = () => {
 							</CardHeader>
 							{permissions?.project.create && (
 								<div className="flex items-center gap-2">
+									{canTransfer && <ImportProject />}
 									<HandleFolder parentFolderId={currentFolderId} />
 									<HandleProject folderId={currentFolderId} />
 								</div>
@@ -326,6 +330,7 @@ export const ShowProjects = () => {
 												placeholder="Filter projects..."
 												value={searchQuery}
 												onChange={(e) => setSearchQuery(e.target.value)}
+												autoComplete="off"
 												className="pr-10"
 											/>
 
@@ -587,6 +592,18 @@ export const ShowProjects = () => {
 																						/>
 																					</div>
 																				)}
+																				<div
+																					onClick={(e) => e.stopPropagation()}
+																				>
+																					{canTransfer && (
+																						<ExportProject
+																							projectId={project.projectId}
+																							environments={
+																								project.environments
+																							}
+																						/>
+																					)}
+																				</div>
 
 																				<div
 																					onClick={(e) => e.stopPropagation()}

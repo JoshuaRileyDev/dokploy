@@ -36,6 +36,7 @@ import { portRouter } from "./routers/port";
 import { postgresRouter } from "./routers/postgres";
 import { previewDeploymentRouter } from "./routers/preview-deployment";
 import { projectRouter } from "./routers/project";
+import { projectExportImportRouter } from "./routers/project-export-import";
 import { projectFolderRouter } from "./routers/project-folder";
 import { auditLogRouter } from "./routers/proprietary/audit-log";
 import { customRoleRouter } from "./routers/proprietary/custom-role";
@@ -140,6 +141,7 @@ export const appRouter = createTRPCRouter({
 	serverFolder: serverFolderRouter,
 	serverCommand: serverCommandRouter,
 	serverFiles: serverFilesRouter,
+	projectExportImport: projectExportImportRouter,
 });
 
 // export type definition of API
