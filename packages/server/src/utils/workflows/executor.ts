@@ -58,6 +58,29 @@ const workflowServerMachine = async (
 	};
 };
 
+// Boat starts a sandbox's daemons from the base image before laying the snapshot's files over them,
+// so the base image's containerd keeps running and fails to start the snapshot's newer runc shim
+// ("shim was started through the deprecated API but was built against the new API").
+const restartBoatDocker = async (target: SshTarget) => {
+	const output: string[] = [];
+	const collect = (chunk: string) => output.push(chunk);
+	const exitCode = await runRemoteScript({
+		target,
+		script: [
+			"set -eu",
+			"sudo systemctl restart containerd docker",
+			"docker version --format '{{.Server.Version}}' >/dev/null",
+		].join("\n"),
+		onStdout: collect,
+		onStderr: collect,
+	});
+	if (exitCode !== 0) {
+		throw new Error(
+			`Restarting Docker on the Boat sandbox failed with exit code ${exitCode}:\n${output.join("").trim()}`,
+		);
+	}
+};
+
 const boatMachine = async (
 	run: StartedRun,
 	log: (line: string) => void,
@@ -109,6 +132,7 @@ const boatMachine = async (
 			`Starting Boat sandbox ${sandbox.id} (${settings.workflowMachineType})`,
 		);
 		const { target } = await connectToBoatSandbox(client, sandbox.id, signal);
+		await restartBoatDocker(target);
 		return {
 			target,
 			description: `Boat sandbox ${sandbox.id}`,
