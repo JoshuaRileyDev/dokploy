@@ -7,6 +7,7 @@ import {
 	server,
 	type WorkflowRunStatus,
 	workflowDefinitions,
+	workflowJobs,
 	workflowRepositories,
 	workflowRuns,
 } from "@dokploy/server/db/schema";
@@ -336,6 +337,27 @@ export const findWorkflowRunById = async (workflowRunId: string) => {
 		throw new TRPCError({ code: "NOT_FOUND", message: "Run not found" });
 	}
 	return run;
+};
+
+/** The organization owning a run or job log, or null when no workflow run writes to this path. */
+export const findWorkflowLogOrganizationId = async (logPath: string) => {
+	const run = await db.query.workflowRuns.findFirst({
+		where: eq(workflowRuns.logPath, logPath),
+		columns: { workflowRunId: true },
+		with: { repository: { columns: { organizationId: true } } },
+	});
+	if (run) return run.repository.organizationId;
+	const job = await db.query.workflowJobs.findFirst({
+		where: eq(workflowJobs.logPath, logPath),
+		columns: { workflowJobId: true },
+		with: {
+			run: {
+				columns: { workflowRunId: true },
+				with: { repository: { columns: { organizationId: true } } },
+			},
+		},
+	});
+	return job?.run.repository.organizationId ?? null;
 };
 
 /** Picks the repository's server, or the least busy workflow server in the organization. */

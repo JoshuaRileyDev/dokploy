@@ -3,9 +3,11 @@ import type http from "node:http";
 import {
 	findDeploymentByLogPath,
 	findServerById,
+	findWorkflowLogOrganizationId,
 	IS_CLOUD,
 	validateRequest,
 } from "@dokploy/server";
+import { checkPermission } from "@dokploy/server/services/permission";
 import { encodeBase64 } from "@dokploy/server/utils/docker/utils";
 import { readValidDirectory } from "@dokploy/server/wss/utils";
 import { Client } from "ssh2";
@@ -67,11 +69,19 @@ export const setupDeploymentLogsWebSocketServer = (
 				user: { id: user.id },
 				session: { activeOrganizationId: session.activeOrganizationId },
 			} as Parameters<typeof assertDeploymentAccess>[0];
-			await assertDeploymentAccess(
-				ctxLike,
-				await findDeploymentByLogPath(logPath),
-				"read",
-			);
+			const deployment = await findDeploymentByLogPath(logPath);
+			// Workflow run and job logs stream through this socket too but have no deployment row.
+			const workflowOrganizationId = deployment
+				? null
+				: await findWorkflowLogOrganizationId(logPath);
+			if (workflowOrganizationId) {
+				if (workflowOrganizationId !== session.activeOrganizationId) {
+					throw new Error("Not authorized");
+				}
+				await checkPermission(ctxLike, { workflow: ["read"] });
+			} else {
+				await assertDeploymentAccess(ctxLike, deployment, "read");
+			}
 		} catch {
 			ws.close(4003, "Not authorized");
 			return;

@@ -7,6 +7,7 @@ import {
 	CircleX,
 	Loader2,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const STATUS: Record<
@@ -66,6 +67,24 @@ export const formatDuration = (
 	const ms =
 		(end ? new Date(end) : new Date()).getTime() - new Date(start).getTime();
 	return formatMs(ms);
+};
+
+/** A duration that keeps counting up while it has a start and no end. */
+export const LiveDuration = ({
+	start,
+	end,
+}: {
+	start?: string | null;
+	end?: string | null;
+}) => {
+	const [, setTick] = useState(0);
+	const running = !!start && !end;
+	useEffect(() => {
+		if (!running) return;
+		const interval = setInterval(() => setTick((tick) => tick + 1), 1000);
+		return () => clearInterval(interval);
+	}, [running]);
+	return <>{formatDuration(start, end)}</>;
 };
 
 export const formatMs = (ms: number) => {

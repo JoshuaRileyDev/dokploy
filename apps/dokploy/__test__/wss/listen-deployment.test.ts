@@ -53,14 +53,18 @@ const mockValidateRequest = vi.hoisted(() => vi.fn());
 const mockFindServerById = vi.hoisted(() => vi.fn());
 const mockFindDeploymentByLogPath = vi.hoisted(() => vi.fn());
 const mockCheckServiceAccess = vi.hoisted(() => vi.fn());
+const mockFindWorkflowLogOrganizationId = vi.hoisted(() => vi.fn());
+const mockCheckPermission = vi.hoisted(() => vi.fn());
 vi.mock("@dokploy/server", () => ({
 	IS_CLOUD: false,
 	validateRequest: mockValidateRequest,
 	findServerById: mockFindServerById,
 	findDeploymentByLogPath: mockFindDeploymentByLogPath,
+	findWorkflowLogOrganizationId: mockFindWorkflowLogOrganizationId,
 }));
 vi.mock("@dokploy/server/services/permission", () => ({
 	checkServicePermissionAndAccess: mockCheckServiceAccess,
+	checkPermission: mockCheckPermission,
 }));
 vi.mock("@dokploy/server/wss/utils", () => ({
 	readValidDirectory: () => true,
@@ -95,6 +99,8 @@ beforeEach(async () => {
 	// accessible service. Individual tests override as needed.
 	mockFindDeploymentByLogPath.mockResolvedValue({ applicationId: "app-1" });
 	mockCheckServiceAccess.mockResolvedValue(undefined);
+	mockFindWorkflowLogOrganizationId.mockResolvedValue(null);
+	mockCheckPermission.mockResolvedValue(undefined);
 	server = http.createServer();
 	setupDeploymentLogsWebSocketServer(server);
 	await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -175,5 +181,51 @@ describe("deployment logs websocket (#5518)", () => {
 		await closeClient(ws);
 		await new Promise((r) => setTimeout(r, 1100));
 		expect(children[0]!.signals).toEqual(["SIGTERM", "SIGKILL"]);
+	});
+});
+
+describe("workflow logs websocket", () => {
+	const waitForClose = (ws: WebSocket) =>
+		new Promise<number>((r) => ws.once("close", (code) => r(code)));
+
+	beforeEach(() => {
+		mockValidateRequest.mockResolvedValue(AUTH);
+		mockFindDeploymentByLogPath.mockResolvedValue(undefined);
+	});
+
+	it("streams a workflow log in the active organization", async () => {
+		mockFindWorkflowLogOrganizationId.mockResolvedValue("org-1");
+		const ws = await connect();
+		await flush();
+
+		expect(mockCheckPermission).toHaveBeenCalledWith(expect.anything(), {
+			workflow: ["read"],
+		});
+		expect(children).toHaveLength(1);
+		await closeClient(ws);
+	});
+
+	it("rejects a workflow log from another organization", async () => {
+		mockFindWorkflowLogOrganizationId.mockResolvedValue("org-2");
+		const ws = await connect();
+
+		expect(await waitForClose(ws)).toBe(4003);
+		expect(children).toHaveLength(0);
+	});
+
+	it("rejects a workflow log without workflow read permission", async () => {
+		mockFindWorkflowLogOrganizationId.mockResolvedValue("org-1");
+		mockCheckPermission.mockRejectedValue(new Error("Permission denied"));
+		const ws = await connect();
+
+		expect(await waitForClose(ws)).toBe(4003);
+		expect(children).toHaveLength(0);
+	});
+
+	it("rejects a log path that belongs to nothing", async () => {
+		const ws = await connect();
+
+		expect(await waitForClose(ws)).toBe(4003);
+		expect(children).toHaveLength(0);
 	});
 });
