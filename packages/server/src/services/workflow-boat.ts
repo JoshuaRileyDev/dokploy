@@ -38,19 +38,33 @@ const buildSnapshotScript = (keyComment: string) =>
 		`echo "Installing act ${ACT_VERSION}"`,
 		`curl -fsSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin "v${ACT_VERSION}"`,
 		"act --version",
+		// Boat's base image ships Docker 29.7.0, whose archive extraction rejects paths through absolute
+		// symlinks such as /var/run -> /run. act copies every remote action to /var/run/act/actions, so
+		// all `uses:` steps fail there. Fixed in 29.7.1 (moby/moby#53261).
+		'echo "Upgrading Docker"',
+		"sudo apt-get update -qq -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/docker.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0",
+		"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -o Dpkg::Options::=--force-confold --only-upgrade docker-ce docker-ce-cli docker-ce-rootless-extras containerd.io",
+		"sudo systemctl restart docker",
+		"docker version --format 'Docker {{.Server.Version}}'",
 		...SNAPSHOT_IMAGES.map(
 			(image) => `echo "Pulling ${image}" && docker pull -q ${image}`,
 		),
+		'echo "Checking actions can be copied into job containers"',
+		`check=$(docker run -d --rm ${SNAPSHOT_IMAGES[0]} sleep 120)`,
+		"mkdir -p /tmp/act-check/var/run/act/actions/check@v1 && echo ok > /tmp/act-check/var/run/act/actions/check@v1/ok",
+		'tar -C /tmp/act-check -c var/run/act/actions/check@v1 | docker cp - "$check:/"',
+		'docker exec "$check" cat /var/run/act/actions/check@v1/ok',
+		'docker rm -f "$check" >/dev/null && rm -rf /tmp/act-check',
 		`mkdir -p ${BOAT_RUNS_DIR}`,
 		// The build key would otherwise be baked into every sandbox created from the snapshot.
 		`sed -i '/${keyComment}/d' ~/.ssh/authorized_keys`,
 		"sync",
 	].join("\n");
 
-/** Changes whenever act or the preinstalled images change, so stale snapshots get rebuilt. */
+/** Changes whenever the snapshot script changes, so stale snapshots get rebuilt. */
 export const boatSnapshotName = () => {
 	const hash = createHash("sha256")
-		.update(JSON.stringify([ACT_VERSION, SNAPSHOT_IMAGES, BOAT_RUNS_DIR]))
+		.update(buildSnapshotScript(""))
 		.digest("hex")
 		.slice(0, 8);
 	return `dokploy-act-${ACT_VERSION.replaceAll(".", "-")}-${hash}`;
