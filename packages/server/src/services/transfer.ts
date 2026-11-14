@@ -49,6 +49,7 @@ import {
 	stopCompose,
 	updateCompose,
 } from "./compose";
+import { resolveBoatBuildTarget, runOnBoatBuildMachine } from "./boat-builds";
 import { deployLibsql, findLibsqlById, updateLibsqlById } from "./libsql";
 import { deployMariadb, findMariadbById, updateMariadbById } from "./mariadb";
 import { deployMongo, findMongoById, updateMongoById } from "./mongo";
@@ -412,6 +413,32 @@ const cleanupSource = async (
 	}
 };
 
+// A transfer is already a long synchronous operation, so it waits for a busy pool rather than failing.
+const BOAT_BUILD_WAIT_MS = 30 * 60 * 1000;
+
+/**
+ * Transfers deploy directly rather than through the deployment queue, which is
+ * where services set to the Boat build pool get a pool machine attached, so
+ * route those builds through the pool here too.
+ */
+const buildAndDeploy = async (
+	serviceType: "application" | "compose",
+	serviceId: string,
+	deploy: () => Promise<unknown>,
+	log: Logger,
+) => {
+	const boat = await resolveBoatBuildTarget(
+		serviceType === "compose"
+			? { applicationType: "compose", composeId: serviceId }
+			: { applicationType: "application", applicationId: serviceId },
+	);
+	if (!boat) return await deploy();
+	log("Building on the Boat build pool");
+	return await runOnBoatBuildMachine(boat, deploy, {
+		waitMs: BOAT_BUILD_WAIT_MS,
+	});
+};
+
 const deployOnTarget = async (
 	serviceType: ServiceType,
 	serviceId: string,
@@ -427,14 +454,21 @@ const deployOnTarget = async (
 		case "application":
 			log("Follow the Deployments tab for the build log");
 			await updateStatus(serviceType, serviceId, "running");
-			return await deployApplication({
-				applicationId: serviceId,
-				...deployment,
-			});
+			return await buildAndDeploy(
+				serviceType,
+				serviceId,
+				() => deployApplication({ applicationId: serviceId, ...deployment }),
+				log,
+			);
 		case "compose":
 			log("Follow the Deployments tab for the build log");
 			await updateStatus(serviceType, serviceId, "running");
-			return await deployCompose({ composeId: serviceId, ...deployment });
+			return await buildAndDeploy(
+				serviceType,
+				serviceId,
+				() => deployCompose({ composeId: serviceId, ...deployment }),
+				log,
+			);
 		case "postgres":
 			return await deployPostgres(serviceId, log);
 		case "mysql":
@@ -816,11 +850,17 @@ export const rollbackTransfer = async (staged: StagedTransfer, log: Logger) => {
 	if (staged.sourceStopped) {
 		if (isCompose(source) && source.composeType === "stack") {
 			log(`  Redeploying the stack on ${sourceName}`);
-			await deployCompose({
-				composeId: source.composeId,
-				titleLog: "Restore after failed transfer",
-				descriptionLog: `Transfer to ${targetName} was rolled back`,
-			});
+			await buildAndDeploy(
+				"compose",
+				source.composeId,
+				() =>
+					deployCompose({
+						composeId: source.composeId,
+						titleLog: "Restore after failed transfer",
+						descriptionLog: `Transfer to ${targetName} was rolled back`,
+					}),
+				log,
+			);
 		} else {
 			await startOnSource(source, log);
 		}

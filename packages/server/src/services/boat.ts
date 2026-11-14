@@ -13,6 +13,25 @@ export const findBoatSettings = async (organizationId: string) =>
 		where: eq(boatSettings.organizationId, organizationId),
 	})) ?? null;
 
+/**
+ * The deployment queue silently builds a pool service elsewhere when the pool
+ * can't take it, so the deploy log says why instead.
+ */
+export const boatBuildPoolFallbackReason = async (service: {
+	boatBuildPool: boolean;
+	buildServerId: string | null;
+	buildRegistryId: string | null;
+	environment: { project: { organizationId: string } };
+}) => {
+	if (!service.boatBuildPool || service.buildServerId) return null;
+	if (!service.buildRegistryId) return "no build registry is set";
+	const settings = await findBoatSettings(
+		service.environment.project.organizationId,
+	);
+	if (!settings?.buildsEnabled) return "Boat builds are off in Settings → Boat";
+	return "this deployment didn't go through the deployment queue";
+};
+
 export const updateBoatSettings = (
 	organizationId: string,
 	values: Partial<BoatSettings>,

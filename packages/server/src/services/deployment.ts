@@ -35,6 +35,7 @@ import {
 	updateApplicationStatus,
 } from "./application";
 import { findBackupById } from "./backup";
+import { boatBuildPoolFallbackReason } from "./boat";
 import { type Compose, findComposeById, updateCompose } from "./compose";
 import {
 	findPreviewDeploymentById,
@@ -124,6 +125,24 @@ export const findDeploymentByApplicationId = async (applicationId: string) => {
 	return deployment;
 };
 
+const buildLogHeader = async (
+	service: Parameters<typeof boatBuildPoolFallbackReason>[0],
+	buildOn: string | null,
+) => {
+	const name = buildOn
+		? (await findServerById(buildOn)).name
+		: "Dokploy Server";
+	const role = service.buildServerId ? "build server" : "deploy server";
+	const header = ["Initializing deployment", `Building on ${name} (${role})`];
+	const fallback = await boatBuildPoolFallbackReason(service).catch(() => null);
+	if (fallback) {
+		header.push(
+			`⚠️ The Boat build pool is selected but ${fallback}, so this builds on the ${role} instead`,
+		);
+	}
+	return header;
+};
+
 export const createDeployment = async (
 	deployment: Omit<
 		z.infer<typeof apiCreateDeployment>,
@@ -144,21 +163,19 @@ export const createDeployment = async (
 		const fileName = `${application.appName}-${formattedDateTime}.log`;
 		const logFilePath = path.join(LOGS_PATH, application.appName, fileName);
 
+		const header = await buildLogHeader(application, serverId);
 		if (serverId) {
-			const server = await findServerById(serverId);
-
 			const command = `
 				mkdir -p ${LOGS_PATH}/${application.appName};
-            	echo "Initializing deployment" >> ${logFilePath};
-			    echo "Building on ${serverId ? "Build Server" : "Dokploy Server"}" >> ${logFilePath};
+				printf '%s\n' ${quote(header)} >> ${logFilePath};
 			`;
 
-			await execAsyncRemote(server.serverId, command);
+			await execAsyncRemote(serverId, command);
 		} else {
 			await fsPromises.mkdir(path.join(LOGS_PATH, application.appName), {
 				recursive: true,
 			});
-			await fsPromises.writeFile(logFilePath, "Initializing deployment\n");
+			await fsPromises.writeFile(logFilePath, `${header.join("\n")}\n`);
 		}
 
 		const deploymentCreate = await db
@@ -307,21 +324,19 @@ export const createDeploymentCompose = async (
 		const fileName = `${compose.appName}-${formattedDateTime}.log`;
 		const logFilePath = path.join(LOGS_PATH, compose.appName, fileName);
 
+		const header = await buildLogHeader(compose, logServerId);
 		if (logServerId) {
-			const server = await findServerById(logServerId);
-
 			const command = `
 mkdir -p ${LOGS_PATH}/${compose.appName};
-echo "Initializing deployment" >> ${logFilePath};
-echo "Building on ${compose.buildServerId ? "Build Server" : logServerId ? "Deploy Server" : "Dokploy Server"}" >> ${logFilePath};
+printf '%s\n' ${quote(header)} >> ${logFilePath};
 `;
 
-			await execAsyncRemote(server.serverId, command);
+			await execAsyncRemote(logServerId, command);
 		} else {
 			await fsPromises.mkdir(path.join(LOGS_PATH, compose.appName), {
 				recursive: true,
 			});
-			await fsPromises.writeFile(logFilePath, "Initializing deployment\n");
+			await fsPromises.writeFile(logFilePath, `${header.join("\n")}\n`);
 		}
 
 		const deploymentCreate = await db
