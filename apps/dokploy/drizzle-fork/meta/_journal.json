@@ -97,6 +97,14 @@
       "tag": "0011_boat_build_pool",
       "breakpoints": true,
       "upstreamSnapshotId": "4c5cd64c-f0fa-4b62-9a8e-504f2f435212"
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794678849345,
+      "tag": "0012_resource_guard",
+      "breakpoints": true,
+      "upstreamSnapshotId": "4c5cd64c-f0fa-4b62-9a8e-504f2f435212"
     }
   ]
 }

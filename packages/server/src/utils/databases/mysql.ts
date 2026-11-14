@@ -3,6 +3,11 @@ import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
 import { buildDokployLabels } from "../docker/dokploy-labels";
 import {
+	DATABASE_OOM_SCORE_ADJ,
+	getResourceGuardPolicy,
+	guardResources,
+} from "../docker/resource-guard";
+import {
 	calculateResources,
 	generateBindMounts,
 	generateConfigContainer,
@@ -61,12 +66,15 @@ export const buildMysql = async (rawMysql: MysqlNested) => {
 		EndpointSpec,
 		Ulimits,
 	} = generateConfigContainer(mysql);
-	const resources = calculateResources({
-		memoryLimit,
-		memoryReservation,
-		cpuLimit,
-		cpuReservation,
-	});
+	const resources = guardResources(
+		calculateResources({
+			memoryLimit,
+			memoryReservation,
+			cpuLimit,
+			cpuReservation,
+		}),
+		await getResourceGuardPolicy(mysql.serverId),
+	);
 	const envVariables = prepareEnvironmentVariables(
 		defaultMysqlEnv,
 		mysql.environment.project.env,
@@ -82,6 +90,7 @@ export const buildMysql = async (rawMysql: MysqlNested) => {
 		Name: appName,
 		TaskTemplate: {
 			ContainerSpec: {
+				OomScoreAdj: DATABASE_OOM_SCORE_ADJ,
 				HealthCheck,
 				Image: dockerImage,
 				Env: envVariables,

@@ -3,6 +3,11 @@ import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
 import { buildDokployLabels } from "../docker/dokploy-labels";
 import {
+	DATABASE_OOM_SCORE_ADJ,
+	getResourceGuardPolicy,
+	guardResources,
+} from "../docker/resource-guard";
+import {
 	calculateResources,
 	generateBindMounts,
 	generateConfigContainer,
@@ -52,12 +57,15 @@ export const buildRedis = async (rawRedis: RedisNested) => {
 		EndpointSpec,
 		Ulimits,
 	} = generateConfigContainer(redis);
-	const resources = calculateResources({
-		memoryLimit,
-		memoryReservation,
-		cpuLimit,
-		cpuReservation,
-	});
+	const resources = guardResources(
+		calculateResources({
+			memoryLimit,
+			memoryReservation,
+			cpuLimit,
+			cpuReservation,
+		}),
+		await getResourceGuardPolicy(redis.serverId),
+	);
 	const envVariables = prepareEnvironmentVariables(
 		defaultRedisEnv,
 		redis.environment.project.env,
@@ -73,6 +81,7 @@ export const buildRedis = async (rawRedis: RedisNested) => {
 		Name: appName,
 		TaskTemplate: {
 			ContainerSpec: {
+				OomScoreAdj: DATABASE_OOM_SCORE_ADJ,
 				HealthCheck,
 				Image: dockerImage,
 				Env: envVariables,

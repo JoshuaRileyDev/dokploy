@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { formatBytes } from "@/components/dashboard/docker/health/format-bytes";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { Button } from "@/components/ui/button";
 import {
@@ -121,6 +122,11 @@ export const ShowResources = ({ id, type }: Props) => {
 		? queryMap[type]()
 		: api.mongo.one.useQuery({ mongoId: id }, { enabled: !!id });
 
+	const { data: guard } = api.docker.getResourceGuard.useQuery(
+		{ serverId: data?.serverId ?? undefined },
+		{ enabled: !!data, retry: false, refetchOnWindowFocus: false },
+	);
+
 	const mutationMap = {
 		application: () => api.application.update.useMutation(),
 		libsql: () => api.libsql.update.useMutation(),
@@ -204,6 +210,18 @@ export const ShowResources = ({ id, type }: Props) => {
 					Please remember to click Redeploy after modify the resources to apply
 					the changes.
 				</AlertBlock>
+				{guard?.policy && (
+					<AlertBlock type="info">
+						This server's resource guard caps memory at{" "}
+						{formatBytes(guard.policy.allocatableMemoryBytes)} per service. With
+						no memory limit set here, this service gets{" "}
+						{formatBytes(guard.policy.defaultMemoryLimitBytes)}
+						{guard.policy.maxNanoCpus
+							? ` and at most ${(guard.policy.maxNanoCpus / 1e9).toFixed(1)} CPUs`
+							: ""}
+						.
+					</AlertBlock>
+				)}
 				<Form {...form}>
 					<form
 						id="hook-form"

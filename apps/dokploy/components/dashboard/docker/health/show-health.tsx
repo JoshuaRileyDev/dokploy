@@ -30,6 +30,7 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { api } from "@/utils/api";
+import { ResourceGuardCard } from "./resource-guard-card";
 
 interface Props {
 	serverId?: string;
@@ -350,6 +351,8 @@ export const ShowHealth = ({ serverId }: Props) => {
 							)}
 						</div>
 					)}
+
+					<ResourceGuardCard serverId={serverId} />
 
 					{health &&
 						!health.error &&

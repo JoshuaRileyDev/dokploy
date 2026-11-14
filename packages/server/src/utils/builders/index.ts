@@ -9,6 +9,11 @@ import type { CreateServiceOptions } from "dockerode";
 import { getRegistryTag, uploadImageRemoteCommand } from "../cluster/upload";
 import { buildDokployLabels } from "../docker/dokploy-labels";
 import {
+	APP_OOM_SCORE_ADJ,
+	getResourceGuardPolicy,
+	guardResources,
+} from "../docker/resource-guard";
+import {
 	calculateResources,
 	generateBindMounts,
 	generateConfigContainer,
@@ -132,12 +137,15 @@ export const mechanizeDockerContainer = async (
 		ports,
 	} = application;
 
-	const resources = calculateResources({
-		memoryLimit,
-		memoryReservation,
-		cpuLimit,
-		cpuReservation,
-	});
+	const resources = guardResources(
+		calculateResources({
+			memoryLimit,
+			memoryReservation,
+			cpuLimit,
+			cpuReservation,
+		}),
+		await getResourceGuardPolicy(application.serverId),
+	);
 
 	const volumesMount = generateVolumeMounts(mounts);
 
@@ -173,6 +181,7 @@ export const mechanizeDockerContainer = async (
 		Name: appName,
 		TaskTemplate: {
 			ContainerSpec: {
+				OomScoreAdj: APP_OOM_SCORE_ADJ,
 				HealthCheck,
 				Image: image,
 				Env: envVariables,

@@ -27,6 +27,10 @@ export const webServerSettings = pgTable("webServerSettings", {
 	sshPrivateKey: text("sshPrivateKey"),
 	enableDockerCleanup: boolean("enableDockerCleanup").notNull().default(true),
 	logCleanupCron: text("logCleanupCron").default("0 0 * * *"),
+	forkGuardReservedMemoryMb: integer("forkGuardReservedMemoryMb"),
+	forkGuardAppMemoryPercent: integer("forkGuardAppMemoryPercent")
+		.notNull()
+		.default(25),
 	telemetryProviderIds: text("telemetryProviderIds")
 		.array()
 		.notNull()
