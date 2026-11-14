@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
 	deployPostgres: vi.fn(),
 	removeService: vi.fn(),
 	pipeBetweenServers: vi.fn(),
+	resolveBoatBuildTarget: vi.fn(),
+	runOnBoatBuildMachine: vi.fn(),
 }));
 
 vi.mock("@dokploy/server/db", () => ({
@@ -73,6 +75,10 @@ vi.mock("@dokploy/server/services/postgres", () => ({
 	findPostgresById: mocks.findPostgresById,
 	updatePostgresById: mocks.updatePostgresById,
 	deployPostgres: mocks.deployPostgres,
+}));
+vi.mock("@dokploy/server/services/boat-builds", () => ({
+	resolveBoatBuildTarget: mocks.resolveBoatBuildTarget,
+	runOnBoatBuildMachine: mocks.runOnBoatBuildMachine,
 }));
 vi.mock("@dokploy/server/services/libsql", () => ({}));
 vi.mock("@dokploy/server/services/mariadb", () => ({}));
@@ -215,6 +221,7 @@ describe("transferService", () => {
 		vi.clearAllMocks();
 		mocks.pipeBetweenServers.mockResolvedValue(1024);
 		mocks.execAsyncRemote.mockResolvedValue({ stdout: "", stderr: "" });
+		mocks.resolveBoatBuildTarget.mockResolvedValue(null);
 	});
 
 	it("keeps a stateless app running on the source and rolls back when the deploy fails", async () => {
@@ -307,5 +314,52 @@ describe("transferService", () => {
 		expect(mocks.removeService).toHaveBeenCalledWith("web-abc", "old");
 		expect(serverId).toBe("new");
 		vi.useRealTimers();
+	});
+
+	it("builds on the Boat build pool when the app is set to use it", async () => {
+		let serverId = "old";
+		mocks.findApplicationById.mockImplementation(async () =>
+			application(serverId),
+		);
+		mocks.updateApplication.mockImplementation(
+			async (_id, data: { serverId?: string | null }) => {
+				if (data.serverId !== undefined) serverId = data.serverId as string;
+			},
+		);
+		const boat = {
+			organizationId: "org",
+			serviceType: "application",
+			serviceId: "app",
+			deployServerId: "new",
+		};
+		mocks.resolveBoatBuildTarget.mockResolvedValue(boat);
+		let deployedOnBoat = false;
+		mocks.runOnBoatBuildMachine.mockImplementation(
+			async (_target, run: () => Promise<unknown>) => {
+				deployedOnBoat = true;
+				return run();
+			},
+		);
+		mocks.deployApplication.mockImplementation(async () => {
+			if (!deployedOnBoat) throw new Error("built outside the pool");
+			throw new Error("stop after deploy");
+		});
+
+		await expect(
+			transferService(
+				{ ...input, serviceType: "application", serviceId: "app" },
+				vi.fn(),
+			),
+		).rejects.toThrow("stop after deploy");
+
+		expect(mocks.resolveBoatBuildTarget).toHaveBeenCalledWith({
+			applicationType: "application",
+			applicationId: "app",
+		});
+		expect(mocks.runOnBoatBuildMachine).toHaveBeenCalledWith(
+			boat,
+			expect.any(Function),
+			{ waitMs: expect.any(Number) },
+		);
 	});
 });

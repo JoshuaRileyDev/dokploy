@@ -16,6 +16,8 @@ import {
 } from "@dokploy/server/utils/process/execAsync";
 import { eq, inArray } from "drizzle-orm";
 import { quote } from "shell-quote";
+import { findBoatSettings } from "./boat";
+import { findBoatBuildPoolServerId } from "./boat-builds";
 
 /** Docker's names: amd64, arm64, arm, … */
 export type CpuArchitecture = string;
@@ -251,6 +253,14 @@ export const checkServicesArchitecture = async (
 						sourceType: true,
 						dockerImage: true,
 						buildServerId: true,
+						boatBuildPool: true,
+						buildRegistryId: true,
+					},
+					with: {
+						environment: {
+							columns: {},
+							with: { project: { columns: { organizationId: true } } },
+						},
 					},
 				})
 			: [],
@@ -262,16 +272,45 @@ export const checkServicesArchitecture = async (
 	]);
 	const appById = new Map(apps.map((app) => [app.applicationId, app]));
 
+	// Same rule as resolveBoatBuildTarget: the pool only builds services that push to a registry.
+	const poolOrganizationIds = [
+		...new Set(
+			apps
+				.filter((app) => app.boatBuildPool && app.buildRegistryId)
+				.map((app) => app.environment.project.organizationId),
+		),
+	];
+	const poolServerByOrganization = new Map(
+		await Promise.all(
+			poolOrganizationIds.map(async (organizationId) => {
+				const settings = await findBoatSettings(organizationId);
+				return [
+					organizationId,
+					settings?.buildsEnabled
+						? await findBoatBuildPoolServerId(organizationId)
+						: null,
+				] as const;
+			}),
+		),
+	);
+	const buildServerIdFor = (app: (typeof apps)[number]) =>
+		(app.boatBuildPool && app.buildRegistryId
+			? poolServerByOrganization.get(app.environment.project.organizationId)
+			: null) ?? app.buildServerId;
+	const poolServerIds = new Set(poolServerByOrganization.values());
+
 	const buildServerIds = [
-		...new Set(apps.map((app) => app.buildServerId).filter(Boolean)),
+		...new Set(apps.map(buildServerIdFor).filter(Boolean)),
 	] as string[];
 	const buildServers = new Map(
 		await Promise.all(
 			buildServerIds.map(async (id) => {
-				const row = await db.query.server.findFirst({
-					where: eq(server.serverId, id),
-					columns: { name: true },
-				});
+				const row = poolServerIds.has(id)
+					? { name: "the Boat build pool" }
+					: await db.query.server.findFirst({
+							where: eq(server.serverId, id),
+							columns: { name: true },
+						});
 				return [
 					id,
 					{
@@ -309,9 +348,8 @@ export const checkServicesArchitecture = async (
 
 		if (service.type === "application") {
 			const app = appById.get(service.id);
-			const build = app?.buildServerId
-				? buildServers.get(app.buildServerId)
-				: undefined;
+			const buildServerId = app ? buildServerIdFor(app) : null;
+			const build = buildServerId ? buildServers.get(buildServerId) : undefined;
 			if (app?.sourceType === "docker" && app.dockerImage) {
 				check = imageVerdict(
 					app.dockerImage,

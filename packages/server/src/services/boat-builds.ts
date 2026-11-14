@@ -155,6 +155,18 @@ export const resolveBoatBuildTarget = async (job: {
 	};
 };
 
+/** A ready pool machine's server, to read the pool's CPU architecture from. */
+export const findBoatBuildPoolServerId = async (organizationId: string) => {
+	const machine = await db.query.boatBuildMachines.findFirst({
+		where: and(
+			eq(boatBuildMachines.organizationId, organizationId),
+			eq(boatBuildMachines.status, "ready"),
+		),
+		columns: { serverId: true },
+	});
+	return machine?.serverId ?? null;
+};
+
 const ensurePoolSshKey = async (settings: BoatSettings) => {
 	if (settings.buildSshKeyId) {
 		const existing = await db.query.sshKeys.findFirst({
@@ -453,20 +465,28 @@ export const findBoatBuildMachines = async (organizationId: string) => {
 };
 
 /** Prefers the machine that last built this service, since it holds that service's build cache. */
-const acquireMachine = async (target: BoatBuildTarget) => {
-	const machines = (await findMachines(target.organizationId)).filter(
-		(machine) =>
-			machine.status === "ready" &&
-			!pool.busy.has(machine.serverId) &&
-			!pool.provisioning.has(machine.serverId),
-	);
-	const machine =
-		machines.find(
-			(candidate) => candidate.lastServiceId === target.serviceId,
-		) ??
-		machines.sort((a, b) =>
-			(a.lastUsedAt ?? "").localeCompare(b.lastUsedAt ?? ""),
-		)[0];
+const ACQUIRE_POLL_MS = 5_000;
+
+const acquireMachine = async (target: BoatBuildTarget, waitMs: number) => {
+	const deadline = Date.now() + waitMs;
+	let machine: BoatBuildMachine | undefined;
+	while (true) {
+		const ready = (await findMachines(target.organizationId)).filter(
+			(candidate) => candidate.status === "ready",
+		);
+		const free = ready.filter(
+			(candidate) =>
+				!pool.busy.has(candidate.serverId) &&
+				!pool.provisioning.has(candidate.serverId),
+		);
+		machine =
+			free.find((candidate) => candidate.lastServiceId === target.serviceId) ??
+			free.sort((a, b) =>
+				(a.lastUsedAt ?? "").localeCompare(b.lastUsedAt ?? ""),
+			)[0];
+		if (machine || ready.length === 0 || Date.now() >= deadline) break;
+		await new Promise((resolve) => setTimeout(resolve, ACQUIRE_POLL_MS));
+	}
 	if (!machine) {
 		throw new Error(
 			"No Boat build machine is ready. Check the build pool under Settings → Boat.",
@@ -539,13 +559,18 @@ const bringLogsHome = async (
 	}
 };
 
-/** Runs a deployment job with a pool machine awake and set as the service's build server. */
+/**
+ * Runs a build with a pool machine awake and set as the service's build server.
+ * The deployment queue only starts a job once a machine is free; callers that
+ * bypass the queue (transfers) pass waitMs to wait for one instead of failing.
+ */
 export const runOnBoatBuildMachine = async (
 	target: BoatBuildTarget,
-	run: () => Promise<void>,
+	run: () => Promise<unknown>,
+	{ waitMs = 0 }: { waitMs?: number } = {},
 ) => {
 	const settings = await requireBoatSettings(target.organizationId);
-	let machine = await acquireMachine(target);
+	let machine = await acquireMachine(target, waitMs);
 	const startedAt = new Date().toISOString();
 	try {
 		const client = new BoatClient(settings.apiKey);
