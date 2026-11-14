@@ -29,6 +29,8 @@ const baseSettings: WebServerSettings = {
 	vectorAgentOrganizationId: null,
 	buildsConcurrency: 1,
 	logCleanupCron: null,
+	forkGuardReservedMemoryMb: null,
+	forkGuardAppMemoryPercent: 25,
 	metricsConfig: {
 		containers: {
 			refreshRate: 20,

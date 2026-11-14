@@ -3,6 +3,11 @@ import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
 import { buildDokployLabels } from "../docker/dokploy-labels";
 import {
+	DATABASE_OOM_SCORE_ADJ,
+	getResourceGuardPolicy,
+	guardResources,
+} from "../docker/resource-guard";
+import {
 	calculateResources,
 	generateBindMounts,
 	generateConfigContainer,
@@ -54,12 +59,15 @@ export const buildPostgres = async (rawPostgres: PostgresNested) => {
 		EndpointSpec,
 		Ulimits,
 	} = generateConfigContainer(postgres);
-	const resources = calculateResources({
-		memoryLimit,
-		memoryReservation,
-		cpuLimit,
-		cpuReservation,
-	});
+	const resources = guardResources(
+		calculateResources({
+			memoryLimit,
+			memoryReservation,
+			cpuLimit,
+			cpuReservation,
+		}),
+		await getResourceGuardPolicy(postgres.serverId),
+	);
 	const envVariables = prepareEnvironmentVariables(
 		defaultPostgresEnv,
 		postgres.environment.project.env,
@@ -75,6 +83,7 @@ export const buildPostgres = async (rawPostgres: PostgresNested) => {
 		Name: appName,
 		TaskTemplate: {
 			ContainerSpec: {
+				OomScoreAdj: DATABASE_OOM_SCORE_ADJ,
 				HealthCheck,
 				Image: dockerImage,
 				Env: envVariables,

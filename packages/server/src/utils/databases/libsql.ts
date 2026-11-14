@@ -3,6 +3,11 @@ import type { CreateServiceOptions, PortConfig } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
 import { buildDokployLabels } from "../docker/dokploy-labels";
 import {
+	DATABASE_OOM_SCORE_ADJ,
+	getResourceGuardPolicy,
+	guardResources,
+} from "../docker/resource-guard";
+import {
 	calculateResources,
 	generateBindMounts,
 	generateConfigContainer,
@@ -61,12 +66,15 @@ export const buildLibsql = async (rawLibsql: LibsqlNested) => {
 		RollbackConfig,
 		UpdateConfig,
 	} = generateConfigContainer(libsql);
-	const resources = calculateResources({
-		memoryLimit,
-		memoryReservation,
-		cpuLimit,
-		cpuReservation,
-	});
+	const resources = guardResources(
+		calculateResources({
+			memoryLimit,
+			memoryReservation,
+			cpuLimit,
+			cpuReservation,
+		}),
+		await getResourceGuardPolicy(libsql.serverId),
+	);
 	const envVariables = prepareEnvironmentVariables(
 		defaultLibsqlEnv,
 		libsql.environment.project.env,
@@ -89,6 +97,7 @@ export const buildLibsql = async (rawLibsql: LibsqlNested) => {
 		Name: appName,
 		TaskTemplate: {
 			ContainerSpec: {
+				OomScoreAdj: DATABASE_OOM_SCORE_ADJ,
 				HealthCheck,
 				Image: "ghcr.io/tursodatabase/libsql-server:v0.24.32",
 				Env: envVariables,

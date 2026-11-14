@@ -7,16 +7,21 @@ import {
 	containerStop,
 	deleteContainerFile,
 	findServerById,
+	getCapacityEstimate,
 	getConfig,
 	getContainers,
 	getContainersByAppLabel,
 	getContainersByAppNameMatch,
 	getDockerEvents,
+	getResourceGuardPolicy,
+	getResourceGuardSettings,
 	getServerHealth as getServerHealthData,
 	getServiceContainersByAppName,
 	getStackContainersByAppName,
+	IS_CLOUD,
 	listContainerFiles,
 	readContainerFile,
+	updateResourceGuardSettings,
 	uploadFileToContainer,
 	writeContainerFile,
 } from "@dokploy/server";
@@ -25,7 +30,12 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
 import { uploadFileToContainerSchema } from "@/utils/schema";
-import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
+import {
+	adminProcedure,
+	createTRPCRouter,
+	protectedProcedure,
+	withPermission,
+} from "../trpc";
 
 export const containerIdRegex = /^[a-zA-Z0-9.\-_]+$/;
 
@@ -78,6 +88,90 @@ export const dockerRouter = createTRPCRouter({
 				input.serverId,
 				input.sinceHours,
 			);
+		}),
+
+	getResourceGuard: protectedProcedure
+		.input(z.object({ serverId: z.string().optional() }))
+		.query(async ({ input, ctx }) => {
+			if (IS_CLOUD && !input.serverId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Server is required",
+				});
+			}
+			await assertServerAccess(ctx.session, input.serverId ?? null);
+			await checkPermission(ctx, { docker: ["read"], server: ["read"] });
+			if (input.serverId) {
+				const server = await findServerById(input.serverId);
+				if (server.organizationId !== ctx.session?.activeOrganizationId) {
+					throw new TRPCError({ code: "UNAUTHORIZED" });
+				}
+			}
+			const [settings, policy] = await Promise.all([
+				getResourceGuardSettings(input.serverId),
+				getResourceGuardPolicy(input.serverId),
+			]);
+			return { settings, policy };
+		}),
+
+	// Separate from getResourceGuard because it runs `docker stats`, which takes a few seconds.
+	getCapacityEstimate: protectedProcedure
+		.input(z.object({ serverId: z.string().optional() }))
+		.query(async ({ input, ctx }) => {
+			if (IS_CLOUD && !input.serverId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Server is required",
+				});
+			}
+			await assertServerAccess(ctx.session, input.serverId ?? null);
+			await checkPermission(ctx, { docker: ["read"], server: ["read"] });
+			if (input.serverId) {
+				const server = await findServerById(input.serverId);
+				if (server.organizationId !== ctx.session?.activeOrganizationId) {
+					throw new TRPCError({ code: "UNAUTHORIZED" });
+				}
+			}
+			const policy = await getResourceGuardPolicy(input.serverId);
+			if (!policy) return null;
+			return getCapacityEstimate(input.serverId, policy);
+		}),
+
+	// The Dokploy server's settings are instance-wide, hence admin-only for both cases.
+	updateResourceGuard: adminProcedure
+		.input(
+			z.object({
+				serverId: z.string().optional(),
+				reservedMemoryMb: z.number().int().min(0).max(1_048_576).nullable(),
+				appMemoryPercent: z.number().int().min(1).max(100),
+			}),
+		)
+		.mutation(async ({ input, ctx }) => {
+			if (IS_CLOUD && !input.serverId) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "Server is required",
+				});
+			}
+			let resourceName = "Dokploy server";
+			if (input.serverId) {
+				const server = await findServerById(input.serverId);
+				if (server.organizationId !== ctx.session.activeOrganizationId) {
+					throw new TRPCError({ code: "UNAUTHORIZED" });
+				}
+				resourceName = server.name;
+			}
+			await updateResourceGuardSettings(input.serverId, {
+				reservedMemoryMb: input.reservedMemoryMb,
+				appMemoryPercent: input.appMemoryPercent,
+			});
+			await audit(ctx, {
+				action: "update",
+				resourceType: input.serverId ? "server" : "settings",
+				resourceId: input.serverId,
+				resourceName,
+			});
+			return getResourceGuardPolicy(input.serverId);
 		}),
 
 	restartContainer: withPermission("docker", "read")

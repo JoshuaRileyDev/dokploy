@@ -9,6 +9,11 @@ import {
 } from "../db/schema";
 import { getRegistryTag } from "../utils/cluster/upload";
 import {
+	APP_OOM_SCORE_ADJ,
+	getResourceGuardPolicy,
+	guardResources,
+} from "../utils/docker/resource-guard";
+import {
 	calculateResources,
 	generateBindMounts,
 	generateConfigContainer,
@@ -229,12 +234,15 @@ const rollbackApplication = async (
 		ports,
 	} = resolvedContext;
 
-	const resources = calculateResources({
-		memoryLimit,
-		memoryReservation,
-		cpuLimit,
-		cpuReservation,
-	});
+	const resources = guardResources(
+		calculateResources({
+			memoryLimit,
+			memoryReservation,
+			cpuLimit,
+			cpuReservation,
+		}),
+		await getResourceGuardPolicy(serverId),
+	);
 
 	const volumesMount = generateVolumeMounts(mounts);
 
@@ -276,6 +284,7 @@ const rollbackApplication = async (
 		Name: appName,
 		TaskTemplate: {
 			ContainerSpec: {
+				OomScoreAdj: APP_OOM_SCORE_ADJ,
 				HealthCheck,
 				Image: rollbackImage,
 				Env: envVariables,

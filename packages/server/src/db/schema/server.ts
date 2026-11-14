@@ -50,6 +50,10 @@ export const server = pgTable("server", {
 		.notNull()
 		.default(sql`ARRAY[]::text[]`),
 	buildsConcurrency: integer("buildsConcurrency").notNull().default(1),
+	forkGuardReservedMemoryMb: integer("forkGuardReservedMemoryMb"),
+	forkGuardAppMemoryPercent: integer("forkGuardAppMemoryPercent")
+		.notNull()
+		.default(25),
 	createdAt: text("createdAt").notNull(),
 	organizationId: text("organizationId")
 		.notNull()

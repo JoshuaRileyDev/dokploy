@@ -15,6 +15,11 @@ import {
 	hasBuildableServices,
 	writeDomainsToCompose,
 } from "../docker/domain";
+import {
+	applyResourceGuardToCompose,
+	formatGuardMemory,
+	getResourceGuardPolicy,
+} from "../docker/resource-guard";
 import type { ComposeSpecification } from "../docker/types";
 import {
 	encodeBase64,
@@ -88,11 +93,15 @@ export const getBuildComposeCommand = async (
 			? `env -i PATH="$PATH" HOME="$HOME" docker ${getComposeBaseArgs(compose, projectDirectory)} pull ${quote(prebuiltServices)} 2>&1 || { echo "Error: ❌ Pulling prebuilt images failed"; exit 1; }`
 			: "";
 
+	const guardPolicy = await getResourceGuardPolicy(targetServerId);
 	const newCompose = await writeDomainsToCompose(compose, domains, {
 		loadServerId: targetServerId,
-		transform: prebuilt
-			? (spec) => applyPrebuiltImages(spec, prebuilt.images)
-			: undefined,
+		transform: (spec) =>
+			applyResourceGuardToCompose(
+				prebuilt ? applyPrebuiltImages(spec, prebuilt.images) : spec,
+				guardPolicy,
+				composeType,
+			),
 	});
 
 	const logContent = `
@@ -102,7 +111,8 @@ Detected: ${mounts.length} mounts 📂
 Command: docker ${command}
 Source Type: docker ${sourceType} ✅
 Compose Type: ${composeType} ✅
-Remote Build: ${prebuilt ? `enabled (${prebuiltServices.length} prebuilt images)` : "disabled"}`;
+Remote Build: ${prebuilt ? `enabled (${prebuiltServices.length} prebuilt images)` : "disabled"}
+Resource Guard: ${guardPolicy ? `default ${formatGuardMemory(guardPolicy.defaultMemoryLimitBytes)} per service, max ${formatGuardMemory(guardPolicy.allocatableMemoryBytes)}` : "unavailable (server capacity unreadable)"}`;
 
 	const logBox = boxen(logContent, {
 		padding: {

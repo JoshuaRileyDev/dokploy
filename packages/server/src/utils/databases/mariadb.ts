@@ -3,6 +3,11 @@ import type { CreateServiceOptions } from "dockerode";
 import { resolveServiceNetworks } from "../../services/network";
 import { buildDokployLabels } from "../docker/dokploy-labels";
 import {
+	DATABASE_OOM_SCORE_ADJ,
+	getResourceGuardPolicy,
+	guardResources,
+} from "../docker/resource-guard";
+import {
 	calculateResources,
 	generateBindMounts,
 	generateConfigContainer,
@@ -55,12 +60,15 @@ export const buildMariadb = async (rawMariadb: MariadbNested) => {
 		EndpointSpec,
 		Ulimits,
 	} = generateConfigContainer(mariadb);
-	const resources = calculateResources({
-		memoryLimit,
-		memoryReservation,
-		cpuLimit,
-		cpuReservation,
-	});
+	const resources = guardResources(
+		calculateResources({
+			memoryLimit,
+			memoryReservation,
+			cpuLimit,
+			cpuReservation,
+		}),
+		await getResourceGuardPolicy(mariadb.serverId),
+	);
 	const envVariables = prepareEnvironmentVariables(
 		defaultMariadbEnv,
 		mariadb.environment.project.env,
@@ -76,6 +84,7 @@ export const buildMariadb = async (rawMariadb: MariadbNested) => {
 		Name: appName,
 		TaskTemplate: {
 			ContainerSpec: {
+				OomScoreAdj: DATABASE_OOM_SCORE_ADJ,
 				HealthCheck,
 				Image: dockerImage,
 				Env: envVariables,
