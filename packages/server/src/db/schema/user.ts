@@ -78,6 +78,13 @@ export const user = pgTable("user", {
 		.array()
 		.notNull()
 		.default(sql`ARRAY[]::text[]`),
+	onboardingStep: text("onboardingStep"),
+	onboardingReturnEmails: integer("onboardingReturnEmails")
+		.notNull()
+		.default(0),
+	trialPlanPromptSubscriptionId: text("trialPlanPromptSubscriptionId"),
+	serverSetupFailedEmailAt: timestamp("serverSetupFailedEmailAt"),
+	serverConnectFailure: text("serverConnectFailure"),
 });
 
 export const usersRelations = relations(user, ({ one, many }) => ({
@@ -104,6 +111,11 @@ const createSchema = createInsertSchema(user, {
 	isEnterpriseCloud: true,
 	onboardingCompletedAt: true,
 	hiddenSidebarItems: true,
+	onboardingStep: true,
+	onboardingReturnEmails: true,
+	trialPlanPromptSubscriptionId: true,
+	serverSetupFailedEmailAt: true,
+	serverConnectFailure: true,
 });
 
 export const apiCreateUserInvitation = createSchema.pick({}).extend({
