@@ -740,7 +740,8 @@ export const removeCompose = async (
 			const command = `
 			docker network disconnect ${compose.appName} dokploy-traefik;
 			docker stack rm ${compose.appName};
-			rm -rf ${projectPath}`;
+			rm -rf ${projectPath};
+			${compose.serverId ? removeComposeBudgetScript(compose.appName) : ""}`;
 
 			if (compose.serverId) {
 				await execAsyncRemote(compose.serverId, command);

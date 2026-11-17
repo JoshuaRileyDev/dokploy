@@ -86,16 +86,15 @@ describe("applyComposeSlice", () => {
 });
 
 describe("composeBudgetScript", () => {
-	it("writes the slice with CPU and memory, and applies them to a running one", () => {
+	it("writes the slice with CPU and memory, and stops before OK if any step fails", () => {
 		const script = composeBudgetScript("dokploy_x.slice", {
 			nanoCpus: 2e9,
 			memoryBytes: 3 * GIB,
 		});
 		expect(script).toContain("[Slice]\nCPUQuota=200%\nMemoryMax=3072M");
 		expect(script).toContain("> /etc/systemd/system/dokploy_x.slice");
-		expect(script).toContain(
-			"systemctl set-property --runtime dokploy_x.slice CPUQuota=200% MemoryMax=3072M",
-		);
+		expect(script).not.toContain("set-property");
+		expect(script).toContain("set -e\nprintf");
 		expect(script).toContain('"$driver" != "systemd 2"');
 	});
 

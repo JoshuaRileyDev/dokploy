@@ -227,7 +227,7 @@ const createSchema = createInsertSchema(compose, {
 	composeFile: z.string().optional(),
 	environmentId: z.string(),
 	customGitSSHKeyId: z.string().optional(),
-	cpuBudget: z.number().positive().max(1024).nullable().optional(),
+	cpuBudget: z.number().min(0.01).max(1024).nullable().optional(),
 	memoryBudgetMb: z.number().int().min(64).max(1_048_576).nullable().optional(),
 	command: z.string().optional(),
 	createEnvFile: z.boolean().optional(),

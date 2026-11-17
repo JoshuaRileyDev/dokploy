@@ -65,7 +65,8 @@ export const formatComposeBudget = (budget: ComposeBudget) =>
 	`${budget.nanoCpus ? `${(budget.nanoCpus / NANO_CPUS_PER_CORE).toFixed(2)} CPUs` : "unlimited CPU"}, ${formatGuardMemory(budget.memoryBytes)}`;
 
 /**
- * Creates or updates the slice on the server. Prints OK when the stack can use it, or SKIP and why: Docker has to
+ * Creates or updates the slice on the server; daemon-reload applies a change to a running slice, a CPU limit removed
+ * included. Prints OK when the stack can use it, or SKIP and why: Docker has to
  * manage cgroups through systemd (cgroup v2), and writing the unit needs root.
  */
 export const composeBudgetScript = (slice: string, budget: ComposeBudget) => {
@@ -82,10 +83,10 @@ export const composeBudgetScript = (slice: string, budget: ComposeBudget) => {
 driver="$(docker info --format '{{.CgroupDriver}} {{.CgroupVersion}}' 2>/dev/null || true)"
 if [ "$driver" != "systemd 2" ]; then echo "SKIP: Docker's cgroup driver is '\${driver:-unknown}', and a shared budget needs systemd on cgroup v2"; exit 0; fi
 if [ "$(id -u)" != "0" ] || ! command -v systemctl >/dev/null 2>&1; then echo "SKIP: setting a budget needs root and systemctl"; exit 0; fi
+set -e
 printf '%s' ${quote([unit])} > /etc/systemd/system/${slice}
 systemctl daemon-reload
 systemctl start ${slice}
-systemctl set-property --runtime ${slice} ${properties.join(" ")}
 echo OK
 `;
 };
