@@ -64,9 +64,14 @@ describe("computeComposeBudget", () => {
 
 describe("composeSliceName", () => {
 	it("makes a top-level slice, since a hyphen would nest it", () => {
-		expect(composeSliceName("tmcrm-acme-a1b2")).toBe(
-			"dokploy_tmcrm_acme_a1b2.slice",
+		expect(composeSliceName("tmcrm-acme-a1b2")).toMatch(
+			/^dokploy_tmcrm_acme_a1b2_[0-9a-f]{8}\.slice$/,
 		);
+	});
+
+	it("keeps names apart that differ only in punctuation", () => {
+		expect(composeSliceName("shop-api")).not.toBe(composeSliceName("shop_api"));
+		expect(composeSliceName("shop-api")).toBe(composeSliceName("shop-api"));
 	});
 });
 
@@ -110,10 +115,9 @@ describe("composeBudgetScript", () => {
 describe("removeComposeBudgetScript", () => {
 	it("stops and deletes the stack's slice if there is one", () => {
 		const script = removeComposeBudgetScript("tmcrm-acme");
-		expect(script).toContain("systemctl stop dokploy_tmcrm_acme.slice");
-		expect(script).toContain(
-			"rm -f /etc/systemd/system/dokploy_tmcrm_acme.slice",
-		);
+		const slice = composeSliceName("tmcrm-acme");
+		expect(script).toContain(`systemctl stop ${slice}`);
+		expect(script).toContain(`rm -f /etc/systemd/system/${slice}`);
 	});
 });
 
@@ -132,7 +136,7 @@ describe("prepareComposeBudget", () => {
 	it("uses the slice when the server set it up", async () => {
 		execAsyncRemote.mockResolvedValue({ stdout: "OK\n", stderr: "" });
 		const result = await prepareComposeBudget(base);
-		expect(result.slice).toBe("dokploy_tmcrm_acme.slice");
+		expect(result.slice).toBe(composeSliceName("tmcrm-acme"));
 		expect(result.log).toContain("2.00 CPUs");
 	});
 

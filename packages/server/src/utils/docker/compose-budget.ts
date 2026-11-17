@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { quote } from "shell-quote";
 import { execAsyncRemote } from "../process/execAsync";
 import { formatGuardMemory, type ResourceGuardPolicy } from "./resource-guard";
@@ -56,10 +57,11 @@ export const computeComposeBudget = (
 
 /**
  * The systemd slice a compose stack's containers share. A hyphen in a slice name means nesting (`a-b.slice` lives
- * inside `a.slice`), so everything but letters, digits and underscores becomes an underscore.
+ * inside `a.slice`), so everything but letters, digits and underscores becomes an underscore, and a short hash of the
+ * real name keeps `shop-api` and `shop_api` apart.
  */
 export const composeSliceName = (appName: string) =>
-	`dokploy_${appName.replace(/[^a-zA-Z0-9_]/g, "_")}.slice`;
+	`dokploy_${appName.replace(/[^a-zA-Z0-9_]/g, "_")}_${createHash("sha256").update(appName).digest("hex").slice(0, 8)}.slice`;
 
 export const formatComposeBudget = (budget: ComposeBudget) =>
 	`${budget.nanoCpus ? `${(budget.nanoCpus / NANO_CPUS_PER_CORE).toFixed(2)} CPUs` : "unlimited CPU"}, ${formatGuardMemory(budget.memoryBytes)}`;
