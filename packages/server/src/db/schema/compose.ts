@@ -6,6 +6,7 @@ import {
 	jsonb,
 	pgEnum,
 	pgTable,
+	real,
 	text,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -139,6 +140,9 @@ export const compose = pgTable("compose", {
 	),
 	// Fork-only: build on the organization's Boat build pool; buildServerId is then assigned per build.
 	boatBuildPool: boolean("forkBoatBuildPool").notNull().default(false),
+	// Fork-only: what the whole stack may use between its services (CPUs, MB). Null takes a share of the server.
+	cpuBudget: real("forkCpuBudget"),
+	memoryBudgetMb: integer("forkMemoryBudgetMb"),
 	serviceNetworks: jsonb("serviceNetworks")
 		.$type<
 			Array<{
@@ -223,6 +227,8 @@ const createSchema = createInsertSchema(compose, {
 	composeFile: z.string().optional(),
 	environmentId: z.string(),
 	customGitSSHKeyId: z.string().optional(),
+	cpuBudget: z.number().min(0.01).max(1024).nullable().optional(),
+	memoryBudgetMb: z.number().int().min(64).max(1_048_576).nullable().optional(),
 	command: z.string().optional(),
 	createEnvFile: z.boolean().optional(),
 	composePath: z

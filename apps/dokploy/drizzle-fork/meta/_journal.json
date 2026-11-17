@@ -105,6 +105,14 @@
       "tag": "0012_resource_guard",
       "breakpoints": true,
       "upstreamSnapshotId": "4c5cd64c-f0fa-4b62-9a8e-504f2f435212"
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794919427738,
+      "tag": "0013_compose_budget",
+      "breakpoints": true,
+      "upstreamSnapshotId": "e494a350-8af6-4a4f-a2aa-2d0cca48f9d6"
     }
   ]
 }

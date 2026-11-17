@@ -137,6 +137,7 @@ export * from "./utils/docker/compose/network";
 export * from "./utils/docker/compose/secrets";
 export * from "./utils/docker/compose/service";
 export * from "./utils/docker/compose/volume";
+export * from "./utils/docker/compose-budget";
 export * from "./utils/docker/domain";
 export * from "./utils/docker/resource-guard";
 export * from "./utils/docker/types";

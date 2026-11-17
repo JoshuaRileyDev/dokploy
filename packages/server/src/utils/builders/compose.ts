@@ -9,6 +9,10 @@ import boxen from "boxen";
 import { quote } from "shell-quote";
 import { getRegistryTag } from "../cluster/upload";
 import {
+	applyComposeSlice,
+	prepareComposeBudget,
+} from "../docker/compose-budget";
+import {
 	addDomainToCompose,
 	applyBuildPlatform,
 	applyPrebuiltImages,
@@ -94,14 +98,23 @@ export const getBuildComposeCommand = async (
 			: "";
 
 	const guardPolicy = await getResourceGuardPolicy(targetServerId);
+	const budget = await prepareComposeBudget({
+		appName,
+		composeType,
+		serverId: targetServerId,
+		policy: guardPolicy,
+		overrides: { cpus: compose.cpuBudget, memoryMb: compose.memoryBudgetMb },
+	});
 	const newCompose = await writeDomainsToCompose(compose, domains, {
 		loadServerId: targetServerId,
-		transform: (spec) =>
-			applyResourceGuardToCompose(
+		transform: (spec) => {
+			const guarded = applyResourceGuardToCompose(
 				prebuilt ? applyPrebuiltImages(spec, prebuilt.images) : spec,
 				guardPolicy,
 				composeType,
-			),
+			);
+			return budget.slice ? applyComposeSlice(guarded, budget.slice) : guarded;
+		},
 	});
 
 	const logContent = `
@@ -112,7 +125,8 @@ Command: docker ${command}
 Source Type: docker ${sourceType} ✅
 Compose Type: ${composeType} ✅
 Remote Build: ${prebuilt ? `enabled (${prebuiltServices.length} prebuilt images)` : "disabled"}
-Resource Guard: ${guardPolicy ? `default ${formatGuardMemory(guardPolicy.defaultMemoryLimitBytes)} per service, max ${formatGuardMemory(guardPolicy.allocatableMemoryBytes)}` : "unavailable (server capacity unreadable)"}`;
+Resource Guard: ${guardPolicy ? `default ${formatGuardMemory(guardPolicy.defaultMemoryLimitBytes)} per service, max ${formatGuardMemory(guardPolicy.allocatableMemoryBytes)}` : "unavailable (server capacity unreadable)"}
+Stack Budget: ${budget.log}`;
 
 	const logBox = boxen(logContent, {
 		padding: {

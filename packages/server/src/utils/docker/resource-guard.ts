@@ -455,6 +455,7 @@ export const estimateCapacity = (
 };
 
 // Containers are grouped the way Dokploy deploys them: a compose project or a Swarm service.
+// Under systemd a container's cgroup is in system.slice, or its stack's own slice (compose-budget.ts).
 // memory.peak needs cgroup v2 and access to the host's cgroups; it's missing from inside the
 // Dokploy container on its own host, so peaks there fall back to current usage.
 const MEMORY_USAGE_SCRIPT = `
@@ -464,7 +465,7 @@ echo "==stats"
 docker stats --no-stream --no-trunc --format '{{.ID}}|{{.MemUsage}}' 2>/dev/null
 echo "==peaks"
 for id in $(docker ps -q --no-trunc 2>/dev/null); do
-  for f in /sys/fs/cgroup/system.slice/docker-$id.scope/memory.peak /sys/fs/cgroup/docker/$id/memory.peak; do
+  for f in /sys/fs/cgroup/*.slice/docker-$id.scope/memory.peak /sys/fs/cgroup/docker/$id/memory.peak; do
     if [ -r "$f" ]; then echo "$id|$(cat "$f")"; break; fi
   done
 done
