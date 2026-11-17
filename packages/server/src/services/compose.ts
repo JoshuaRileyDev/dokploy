@@ -49,6 +49,7 @@ import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { quote } from "shell-quote";
 import type { z } from "zod";
+import { removeComposeBudgetScript } from "../utils/docker/compose-budget";
 import { getDokployUrl } from "./admin";
 import {
 	createDeploymentCompose,
@@ -752,7 +753,8 @@ export const removeCompose = async (
 			env -i PATH="$PATH" docker compose -p ${compose.appName} down ${
 				deleteVolumes ? "--volumes" : ""
 			};
-			rm -rf ${projectPath}`;
+			rm -rf ${projectPath};
+			${compose.serverId ? removeComposeBudgetScript(compose.appName) : ""}`;
 
 			if (compose.serverId) {
 				await execAsyncRemote(compose.serverId, command);
