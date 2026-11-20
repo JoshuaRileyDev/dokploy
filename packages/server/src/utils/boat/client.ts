@@ -149,7 +149,8 @@ export class BoatClient {
 		{ resuming = false }: { resuming?: boolean } = {},
 	) {
 		const deadline = Date.now() + 5 * 60 * 1000;
-		while (Date.now() < deadline) {
+		// Sandboxes from a snapshot are usually ready within seconds, so poll often at first.
+		for (let interval = 250; Date.now() < deadline; ) {
 			const sandbox = await this.getSandbox(sandboxId, signal);
 			if (READY_STATES.has(sandbox.state)) return sandbox;
 			const stopped = STOPPED_STATES.has(sandbox.state);
@@ -158,7 +159,8 @@ export class BoatClient {
 					`Boat sandbox ${sandboxId} is ${sandbox.state}${sandbox.error ? `: ${sandbox.error}` : ""}`,
 				);
 			}
-			await delay(2000, signal);
+			await delay(interval, signal);
+			interval = Math.min(interval * 1.5, 2000);
 		}
 		throw new Error(`Boat sandbox ${sandboxId} wasn't ready after 5 minutes`);
 	}

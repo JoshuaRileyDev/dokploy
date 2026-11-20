@@ -1,7 +1,11 @@
+import { execFileSync } from "node:child_process";
 import {
 	type ActRunScriptInput,
 	buildActArgs,
 	buildActRunScript,
+	buildRefreshRunnerCacheScript,
+	buildSeedActionsScript,
+	buildWarmActionCacheScript,
 	toDotenv,
 } from "@dokploy/server/utils/workflows/act";
 import { createSecretMasker } from "@dokploy/server/utils/workflows/run-recorder";
@@ -145,5 +149,65 @@ describe("createSecretMasker", () => {
 		expect(mask("token ghs_secret_long and ghs_secret, ab")).toBe(
 			"token *** and ***, ab",
 		);
+	});
+});
+
+describe("managed caches", () => {
+	it("skips act's image and action freshness checks only on managed machines", () => {
+		const managed = buildActArgs({ ...input, managedCache: true }, "/d");
+		expect(managed).toContain("--pull=false");
+		expect(managed).toContain("--action-offline-mode");
+		const unmanaged = buildActArgs(input, "/d");
+		expect(unmanaged).not.toContain("--pull=false");
+		expect(unmanaged).not.toContain("--action-offline-mode");
+	});
+
+	it("prepares the machine while fetching and waits for it before act starts", () => {
+		const script = buildActRunScript({
+			...input,
+			prepareScript: "sudo systemctl restart docker",
+		});
+		const prepare = script.indexOf("sudo systemctl restart docker");
+		const fetch = script.indexOf("git fetch");
+		const waitForPrepare = script.indexOf("wait $BACKGROUND_0");
+		const act = script.indexOf("act push");
+		expect(prepare).toBeLessThan(fetch);
+		expect(fetch).toBeLessThan(waitForPrepare);
+		expect(waitForPrepare).toBeLessThan(act);
+		expect(() => execFileSync("bash", ["-n"], { input: script })).not.toThrow();
+	});
+
+	it("seeds each action into the directory act names after the full `uses:`", () => {
+		const script = buildSeedActionsScript([
+			"github/codeql-action/init@v3",
+			"actions/setup-node@v6",
+			"actions/setup-node@v6",
+		]);
+		expect(script).toContain(
+			"seed_action github-codeql-action-init\\@v3 v3 https\\://github.com/github/codeql-action github/codeql-action/init\\@v3 &",
+		);
+		expect(script.match(/seed_action actions-setup-node/g)).toHaveLength(1);
+		expect(() => execFileSync("bash", ["-n"], { input: script })).not.toThrow();
+		expect(() =>
+			execFileSync("bash", ["-n"], { input: buildWarmActionCacheScript() }),
+		).not.toThrow();
+		expect(() =>
+			execFileSync("bash", ["-n"], { input: buildRefreshRunnerCacheScript() }),
+		).not.toThrow();
+	});
+
+	it("seeds the workflow's actions only on managed machines", () => {
+		const seeded = { ...input, seedActions: ["actions/cache@v5"] };
+		expect(buildActRunScript({ ...seeded, managedCache: true })).toContain(
+			"seed_action actions-cache",
+		);
+		expect(buildActRunScript(seeded)).not.toContain("seed_action");
+		expect(
+			buildActRunScript({
+				...seeded,
+				managedCache: true,
+				githubInstance: "github.example.com",
+			}),
+		).not.toContain("seed_action");
 	});
 });

@@ -21,6 +21,7 @@ import {
 } from "@dokploy/server/setup/traefik-setup";
 import {
 	ACT_VERSION,
+	buildWarmActionCacheScript,
 	DEFAULT_PLATFORM_IMAGES,
 	WORKFLOW_RUNS_PATH,
 } from "@dokploy/server/utils/workflows/act";
@@ -843,6 +844,8 @@ const installAct = () => `
 	fi
 	echo "Pulling the default runner image (${DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]}), this can take a while"
 	docker pull ${DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]}
+	echo "Caching common actions"
+	${buildWarmActionCacheScript()}
 	echo "Workflow runner ready ✅"
 `;
 

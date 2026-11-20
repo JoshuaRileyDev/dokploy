@@ -8,7 +8,11 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import type { z } from "zod";
 import { BoatClient } from "../utils/boat/client";
-import { ACT_VERSION, DEFAULT_PLATFORM_IMAGES } from "../utils/workflows/act";
+import {
+	ACT_VERSION,
+	buildWarmActionCacheScript,
+	DEFAULT_PLATFORM_IMAGES,
+} from "../utils/workflows/act";
 import { runRemoteScript } from "../utils/workflows/ssh";
 import {
 	type BoatSettings,
@@ -23,6 +27,23 @@ export const BOAT_RUNS_DIR = "/home/user/dokploy-runs";
 export const BOAT_RUN_LABEL = "dokploy-run";
 // Outlives the 6 hour run limit, so a sandbox Dokploy loses track of still stops on its own.
 export const BOAT_RUN_TTL_SECONDS = 7 * 60 * 60;
+
+// Boat starts a sandbox's daemons from the base image before laying the snapshot's files over them,
+// so the base image's containerd can keep running and fail to start the snapshot's newer runc shim
+// ("shim was started through the deprecated API but was built against the new API"). Restarting
+// costs seconds, so it only happens when the running daemons differ from the installed ones.
+export const BOAT_PREPARE_DOCKER_SCRIPT = [
+	"set -eu",
+	`running_docker=$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)`,
+	`installed_docker=$(dockerd --version | sed -E 's/^Docker version ([^,]+),.*/\\1/')`,
+	`running_containerd=$(sudo ctr version 2>/dev/null | awk '/^Server:/ { server = 1 } server && /Version:/ { print $2; exit }')`,
+	`installed_containerd=$(containerd --version | awk '{ print $3 }')`,
+	'if [ "$running_docker" != "$installed_docker" ] || [ "$running_containerd" != "$installed_containerd" ]; then',
+	'  echo "Restarting Docker (running ${running_docker:-none}, installed $installed_docker)"',
+	"  sudo systemctl restart containerd docker",
+	"fi",
+	"docker version --format '{{.Server.Version}}' >/dev/null",
+].join("\n");
 
 const SNAPSHOT_IMAGES = [
 	...new Set([
@@ -55,6 +76,8 @@ const buildSnapshotScript = (keyComment: string) =>
 		'tar -C /tmp/act-check -c var/run/act/actions/check@v1 | docker cp - "$check:/"',
 		'docker exec "$check" cat /var/run/act/actions/check@v1/ok',
 		'docker rm -f "$check" >/dev/null && rm -rf /tmp/act-check',
+		'echo "Caching common actions"',
+		buildWarmActionCacheScript(),
 		`mkdir -p ${BOAT_RUNS_DIR}`,
 		// The build key would otherwise be baked into every sandbox created from the snapshot.
 		`sed -i '/${keyComment}/d' ~/.ssh/authorized_keys`,

@@ -296,6 +296,34 @@ const parseConcurrency = (value: unknown): ParsedWorkflow["concurrency"] => {
 	return undefined;
 };
 
+// The form act clones from GitHub: owner/repo[/path]@ref.
+const REMOTE_ACTION = /^[\w.-]+\/[\w.-]+(\/[^@\s]*)?@[\w./-]+$/;
+
+/** The remote actions the workflow's steps use; empty when the workflow can't be read. */
+export const workflowRemoteActions = (content: string) => {
+	let doc: unknown;
+	try {
+		doc = parse(content);
+	} catch {
+		return [];
+	}
+	if (!isRecord(doc) || !isRecord(doc.jobs)) return [];
+	const actions = new Set<string>();
+	for (const job of Object.values(doc.jobs)) {
+		if (!isRecord(job) || !Array.isArray(job.steps)) continue;
+		for (const step of job.steps) {
+			if (
+				isRecord(step) &&
+				typeof step.uses === "string" &&
+				REMOTE_ACTION.test(step.uses)
+			) {
+				actions.add(step.uses);
+			}
+		}
+	}
+	return [...actions];
+};
+
 /** Parses the parts of a GitHub Actions workflow Dokploy needs server-side; act handles the rest at run time. */
 export const parseWorkflow = (
 	content: string,
