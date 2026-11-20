@@ -49,7 +49,9 @@ import {
 	cancelQueuedOrActiveRun,
 	enqueueWorkflowRun,
 } from "../utils/workflows/queue";
+import { buildRefreshRunnerCacheScript } from "../utils/workflows/act";
 import { workflowLogsDirectory } from "../utils/workflows/run-recorder";
+import { runRemoteScript } from "../utils/workflows/ssh";
 import {
 	findMatchingTrigger,
 	MANUAL_RUN_UNSUPPORTED_MESSAGE,
@@ -57,6 +59,7 @@ import {
 } from "../utils/workflows/triggers";
 import { findBoatSettings } from "./boat";
 import { findGithubById } from "./github";
+import { findServerById } from "./server";
 import {
 	findWorkflowRepositoriesByGithubRepo,
 	importWorkflowRepository,
@@ -388,6 +391,38 @@ export const pickWorkflowServer = async (
 			? candidate
 			: best,
 	).serverId;
+};
+
+/** Weekly, while each server is idle: `managedCache` runs rely on this to pick up new runner images and action tags. */
+export const refreshWorkflowServerCaches = async () => {
+	const servers = await db.query.server.findMany({
+		where: and(
+			arrayContains(server.serverRoles, ["workflow"]),
+			isNotNull(server.sshKeyId),
+			eq(server.serverStatus, "active"),
+		),
+		columns: { serverId: true, name: true },
+	});
+	const load = activeWorkflowRunCounts();
+	for (const { serverId, name } of servers) {
+		if (load.get(serverId)) continue;
+		try {
+			const { ipAddress, port, username, sshKey } =
+				await findServerById(serverId);
+			if (!sshKey?.privateKey) continue;
+			const exitCode = await runRemoteScript({
+				target: { ipAddress, port, username, privateKey: sshKey.privateKey },
+				script: buildRefreshRunnerCacheScript(),
+			});
+			if (exitCode !== 0) {
+				console.error(
+					`Refreshing the workflow cache on ${name} exited with ${exitCode}`,
+				);
+			}
+		} catch (error) {
+			console.error(`Failed to refresh the workflow cache on ${name}`, error);
+		}
+	}
 };
 
 /** Resolves a workflow's `concurrency` block for a run; unsupported expressions keep the raw group text. */
@@ -1123,6 +1158,15 @@ export const initWorkflowRuns = async () => {
 		() => {
 			cleanupOldWorkflowRuns().catch((error) =>
 				console.error("Failed to clean up old workflow runs", error),
+			);
+		},
+	);
+	scheduleJob(
+		"dokploy-workflow-server-cache-refresh",
+		{ rule: "30 4 * * 0", tz: "Etc/UTC" },
+		() => {
+			refreshWorkflowServerCaches().catch((error) =>
+				console.error("Failed to refresh workflow server caches", error),
 			);
 		},
 	);
