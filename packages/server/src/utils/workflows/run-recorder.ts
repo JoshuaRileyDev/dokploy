@@ -21,7 +21,7 @@ import { ActLogProcessor, jobDisplayName, LineBuffer } from "./act-log";
 import { syncWorkflowCheckRun } from "./check-runs";
 import { readWorkflowFile } from "./github";
 import { sendWorkflowRunNotifications } from "./notifications";
-import { disableWorkflowJobs } from "./parser";
+import { disableWorkflowJobs, workflowRemoteActions } from "./parser";
 
 export const workflowLogsDirectory = (workflowRunId: string) =>
 	path.join(paths().LOGS_PATH, "workflows", workflowRunId);
@@ -43,33 +43,41 @@ const loadRun = (workflowRunId: string) =>
 type LoadedRun = NonNullable<Awaited<ReturnType<typeof loadRun>>>;
 
 /** Everything a machine needs to run this workflow with act, plus the values to mask in its output. */
-export const prepareRunInputs = async (run: LoadedRun) => {
+export const prepareRunInputs = async (
+	run: LoadedRun,
+	{ seedActions = false }: { seedActions?: boolean } = {},
+) => {
 	const github = run.repository.github;
 	if (!github) throw new Error("The repository's GitHub provider was removed");
 
 	const octokit = authGithub(github);
-	const token = await getGithubToken(octokit);
 	const base = new URL(normalizeGithubUrl(github.githubUrl));
-	const configured = run.trusted
-		? await resolveWorkflowEnv(run.workflowRepositoryId)
-		: { secrets: {}, variables: {} };
+	const { owner, repository } = run.repository;
+	const skippedJobs = run.targetJob ? [] : run.skippedJobs;
+	const [token, configured, workflowContent] = await Promise.all([
+		getGithubToken(octokit),
+		run.trusted
+			? resolveWorkflowEnv(run.workflowRepositoryId)
+			: { secrets: {}, variables: {} },
+		skippedJobs.length > 0 || seedActions
+			? readWorkflowFile(
+					octokit,
+					owner,
+					repository,
+					run.workflowPath,
+					run.sha,
+				).catch((error) => {
+					if (skippedJobs.length > 0) throw error;
+					return null;
+				})
+			: null,
+	]);
 	const secrets: Record<string, string> = run.trusted
 		? { ...configured.secrets, GITHUB_TOKEN: token }
 		: {};
-	const { owner, repository } = run.repository;
-	const skippedJobs = run.targetJob ? [] : run.skippedJobs;
 	const workflowOverride =
-		skippedJobs.length > 0
-			? disableWorkflowJobs(
-					await readWorkflowFile(
-						octokit,
-						owner,
-						repository,
-						run.workflowPath,
-						run.sha,
-					),
-					skippedJobs,
-				)
+		skippedJobs.length > 0 && workflowContent !== null
+			? disableWorkflowJobs(workflowContent, skippedJobs)
 			: undefined;
 
 	const scriptInput: Omit<ActRunScriptInput, "baseDir" | "platformImages"> = {
@@ -91,6 +99,9 @@ export const prepareRunInputs = async (run: LoadedRun) => {
 		variables: configured.variables,
 		inputs: run.inputs ?? {},
 		trusted: run.trusted,
+		seedActions: workflowContent
+			? workflowRemoteActions(workflowContent)
+			: undefined,
 	};
 	return { scriptInput, maskValues: [token, ...Object.values(secrets)] };
 };
@@ -261,6 +272,13 @@ export class RunRecorder {
 			}
 			if (event.type === "job_started") {
 				const position = this.jobs.size;
+				if (position === 0 && this.run.startedAt) {
+					const seconds = (Date.now() - Date.parse(this.run.startedAt)) / 1000;
+					this.write(
+						this.runLog,
+						`First job started ${seconds.toFixed(1)}s after the run started`,
+					);
+				}
 				const jobLogPath = path.join(this.logsDir, `job-${position}.log`);
 				const [row] = await db
 					.insert(workflowJobs)
