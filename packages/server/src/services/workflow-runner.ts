@@ -459,8 +459,27 @@ const releaseEphemeralRunnerInBackground = (workflowRunId: string) =>
 const claimEphemeralRun = async (runner: WorkflowRunner) => {
 	const workflowRunId = runner.ephemeralRunId!;
 	const pending = ephemeralRuns.get(workflowRunId);
-	// Without the executor (e.g. Dokploy restarted before the claim), startup has already failed the run.
-	if (!pending) return null;
+	if (!pending) {
+		// Dokploy restarted and lost the prepared script. A one-run runner only claims while idle, so a
+		// run assigned to it never started; startup has already failed runs that weren't assigned.
+		const run = await db.query.workflowRuns.findFirst({
+			where: eq(workflowRuns.workflowRunId, workflowRunId),
+			columns: { status: true, workflowRunnerId: true },
+		});
+		if (
+			run?.status === "in_progress" &&
+			run.workflowRunnerId === runner.workflowRunnerId
+		) {
+			await finishEphemeralRun(workflowRunId, {
+				exitCode: 1,
+				cancelled: false,
+				errorMessage:
+					"Dokploy restarted before the run's script reached its Boat sandbox. Re-run it.",
+			});
+			releaseEphemeralRunnerInBackground(workflowRunId);
+		}
+		return null;
+	}
 	// The same runner may claim again, e.g. when the first claim's response never reached it.
 	const [claimed] = await db
 		.update(workflowRuns)
