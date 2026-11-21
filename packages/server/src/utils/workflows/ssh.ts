@@ -113,6 +113,8 @@ export const openSshSession = async (
 	const client = await connectWithRetry(target, retryForMs, signal);
 	return {
 		run: async ({ script, onStdout, onStderr, signal, onAbortScript }) => {
+			// The abort event has already fired for a signal aborted before this call.
+			signal?.throwIfAborted();
 			const abort = () => {
 				if (onAbortScript) {
 					execOnClient(client, onAbortScript).catch(() => {});

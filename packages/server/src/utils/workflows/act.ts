@@ -101,7 +101,9 @@ export const buildActArgs = (input: ActRunScriptInput, dir: string) => {
 		"--rm",
 	];
 	if (input.managedCache) {
-		args.push("--pull=false", "--action-offline-mode");
+		args.push("--pull=false");
+		// Actions from a GitHub Enterprise instance aren't seeded, so act keeps fetching them itself.
+		if (!input.githubInstance) args.push("--action-offline-mode");
 	}
 	if (input.targetJob) {
 		args.push("-j", input.targetJob);
@@ -172,6 +174,7 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 		writeFile(`${dir}/secrets.env`, toDotenv(input.secrets)),
 		writeFile(`${dir}/vars.env`, toDotenv(input.variables)),
 		writeFile(`${dir}/inputs.env`, toDotenv(input.inputs)),
+		`if [ -f ${quote([`${dir}/cancelled`])} ]; then echo "The run was cancelled before act started" >&2; exit 130; fi`,
 		"set +e",
 		setupTiming("act_started"),
 		`${quote(buildActArgs(input, dir))} &`,
@@ -186,8 +189,11 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 
 /** Stops a running act process; act cancels its jobs and removes their containers on SIGTERM. */
 export const buildActCancelScript = (runId: string, baseDir?: string) => {
-	const pidFile = `${runDirectory(runId, baseDir)}/act.pid`;
+	const dir = runDirectory(runId, baseDir);
+	const pidFile = `${dir}/act.pid`;
 	return [
+		// Stops a run that is still preparing; the run script checks for it before starting act.
+		`[ -d ${quote([dir])} ] && touch ${quote([`${dir}/cancelled`])}`,
 		`if [ -f ${quote([pidFile])} ]; then`,
 		`  PID=$(cat ${quote([pidFile])})`,
 		"  kill -TERM $PID 2>/dev/null || true",
@@ -254,9 +260,9 @@ export const buildSeedActionsScript = (actions: string[]) => {
 		'  tmp="$dir.seeding.$$"',
 		'  rm -rf "$tmp"',
 		'  if printf "%s" "$2" | grep -Eq "^[0-9a-f]{40}$"; then',
-		'    git init -q "$tmp" && git -C "$tmp" remote add origin "$3" && git -C "$tmp" fetch -q --depth 1 origin "$2" && git -C "$tmp" -c advice.detachedHead=false checkout -q FETCH_HEAD',
+		'    git init -q "$tmp" && git -C "$tmp" remote add origin "$3" && timeout 120 git -C "$tmp" fetch -q --depth 1 origin "$2" && git -C "$tmp" -c advice.detachedHead=false checkout -q FETCH_HEAD',
 		"  else",
-		'    git clone -q -c advice.detachedHead=false --depth 1 --branch "$2" "$3" "$tmp"',
+		'    timeout 120 git clone -q -c advice.detachedHead=false --depth 1 --branch "$2" "$3" "$tmp"',
 		// -T refuses to move the clone inside a directory another run created in the meantime.
 		'  fi >/dev/null 2>&1 && { [ "$5" != refresh ] || rm -rf "$dir"; } && mv -T "$tmp" "$dir" 2>/dev/null && return 0',
 		'  rm -rf "$tmp"',
@@ -288,7 +294,7 @@ export const buildRefreshRunnerCacheScript = () =>
 		"set -u",
 		"for image in $(docker images catthehacker/ubuntu --format '{{.Repository}}:{{.Tag}}' | grep -v '<none>'); do",
 		`  old=$(docker image inspect --format '{{.Id}}' "$image")`,
-		'  docker pull -q "$image" >/dev/null || { echo "Couldn\'t pull $image"; continue; }',
+		'  timeout 900 docker pull -q "$image" >/dev/null || { echo "Couldn\'t pull $image"; continue; }',
 		// The old image would otherwise stay on disk untagged, gigabytes a week.
 		`  [ "$old" = "$(docker image inspect --format '{{.Id}}' "$image")" ] || docker rmi "$old" >/dev/null 2>&1 || true`,
 		"done",

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
 	type ActRunScriptInput,
 	buildActArgs,
+	buildActCancelScript,
 	buildActRunScript,
 	buildRefreshRunnerCacheScript,
 	buildSeedActionsScript,
@@ -220,6 +221,26 @@ describe("managed caches", () => {
 		expect(script).toMatch(/seed_action acme-deploy\\@main .* refresh &/);
 		expect(script).toMatch(/seed_action acme-build\\@v2\.1 .* keep &/);
 		expect(script).toMatch(/seed_action acme-test\\@a{40} .* keep &/);
+	});
+
+	it("lets act fetch GitHub Enterprise actions, which aren't seeded", () => {
+		const args = buildActArgs(
+			{ ...input, managedCache: true, githubInstance: "github.example.com" },
+			"/d",
+		);
+		expect(args).toContain("--pull=false");
+		expect(args).not.toContain("--action-offline-mode");
+	});
+
+	it("doesn't start act once the run was cancelled while preparing", () => {
+		const script = buildActRunScript({ ...input, prepareScript: "true" });
+		expect(script.indexOf("/cancelled ]")).toBeGreaterThan(
+			script.indexOf("wait $BACKGROUND_0"),
+		);
+		expect(script.indexOf("/cancelled ]")).toBeLessThan(
+			script.indexOf("act push"),
+		);
+		expect(buildActCancelScript(input.runId)).toContain("/cancelled");
 	});
 
 	it("seeds the workflow's actions only on managed machines", () => {

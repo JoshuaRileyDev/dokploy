@@ -1,6 +1,6 @@
 import { db } from "@dokploy/server/db";
 import { workflowRuns } from "@dokploy/server/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDokployUrl } from "../../services/admin";
 import { findBoatSettings } from "../../services/boat";
 import { findServerById } from "../../services/server";
@@ -126,15 +126,19 @@ const startBoatRunSandbox = async (
 			0,
 			120,
 		);
-	const [{ runner, token }, url] = await Promise.all([
-		createEphemeralRunner({
-			organizationId,
-			workflowRunId: run.workflowRunId,
-			name: `Boat: ${name}`,
-			labels: run.runsOn,
-		}),
-		getDokployUrl(),
-	]);
+	const url = await getDokployUrl();
+	// The runner fetches the run's script, secrets included, from this address over the internet.
+	if (!url.startsWith("https://")) {
+		throw new Error(
+			`Boat runs need Dokploy on HTTPS, because the sandbox fetches the run's secrets from it, and Dokploy is at ${url}. Set a domain with HTTPS in Settings → Web Server.`,
+		);
+	}
+	const { runner, token } = await createEphemeralRunner({
+		organizationId,
+		workflowRunId: run.workflowRunId,
+		name: `Boat: ${name}`,
+		labels: run.runsOn,
+	});
 	const sandbox = await client.createSandbox(
 		{
 			type: settings.workflowMachineType,
@@ -178,10 +182,20 @@ const waitForBoatRunner = async (
 	const stop = AbortSignal.any([signal, timeout]);
 	let giveUpAt: number | null = null;
 	for (;;) {
-		const current = await db.query.workflowRuns.findFirst({
-			where: eq(workflowRuns.workflowRunId, workflowRunId),
-			columns: { status: true, cancelRequested: true },
-		});
+		// A failed query must not end the wait: the caller then deletes a sandbox that is still running.
+		const current = await db.query.workflowRuns
+			.findFirst({
+				where: eq(workflowRuns.workflowRunId, workflowRunId),
+				columns: { status: true, cancelRequested: true },
+			})
+			.catch((error) => {
+				console.error(`Failed to check Boat run ${workflowRunId}`, error);
+				return "unknown" as const;
+			});
+		if (current === "unknown") {
+			await sleep(FINISH_POLL_MS);
+			continue;
+		}
 		if (current?.status !== "in_progress") return;
 		// A cancel from the UI is stored on the run for the runner, without aborting this executor.
 		if (current.cancelRequested && giveUpAt === null && !stop.aborted) {
@@ -194,7 +208,12 @@ const waitForBoatRunner = async (
 					cancelRequested: true,
 					...(timeout.aborted ? { errorMessage: RUN_LIMIT_MESSAGE } : {}),
 				})
-				.where(eq(workflowRuns.workflowRunId, workflowRunId));
+				.where(
+					and(
+						eq(workflowRuns.workflowRunId, workflowRunId),
+						eq(workflowRuns.status, "in_progress"),
+					),
+				);
 			giveUpAt = Date.now() + CANCEL_GRACE_MS;
 		}
 		if (giveUpAt !== null && Date.now() > giveUpAt) {
@@ -222,13 +241,9 @@ const executeBoatRun = async (
 ) => {
 	const { run } = recorder;
 	const stop = AbortSignal.any([signal, timeout]);
-	let claimed = false;
 	let onClaim!: () => void;
 	const claim = new Promise<void>((resolve) => {
-		onClaim = () => {
-			claimed = true;
-			resolve();
-		};
+		onClaim = resolve;
 	});
 	const prepared: Promise<PreparedRunnerScript> = prepareRunInputs(run, {
 		seedActions: true,
@@ -256,12 +271,13 @@ const executeBoatRun = async (
 		try {
 			const { url, ready } = await startBoatRunSandbox(run, recorder, stop);
 			let sandboxReady = false;
+			// Startup lasts until the runner has claimed the run and its script is ready to hand over.
+			const started = Promise.all([claim, prepared]);
 			await Promise.race([
-				claim,
-				prepared.then(() => claim),
+				started,
 				ready.then(() => {
 					sandboxReady = true;
-					return claim;
+					return started;
 				}),
 				new Promise<never>((_, reject) =>
 					setTimeout(
@@ -279,20 +295,19 @@ const executeBoatRun = async (
 				untilAborted(stop, "Cancelled while starting the Boat sandbox"),
 			]);
 		} catch (error) {
-			if (!claimed) {
-				await recorder.finish({
-					exitCode: 1,
-					cancelled: signal.aborted,
-					errorMessage: timeout.aborted
-						? RUN_LIMIT_MESSAGE
-						: signal.aborted
-							? null
-							: error instanceof Error
-								? error.message
-								: String(error),
-				});
-				return;
-			}
+			// Also after a claim whose script never became ready; the claim then hands over nothing.
+			await recorder.finish({
+				exitCode: 1,
+				cancelled: signal.aborted,
+				errorMessage: timeout.aborted
+					? RUN_LIMIT_MESSAGE
+					: signal.aborted
+						? null
+						: error instanceof Error
+							? error.message
+							: String(error),
+			});
+			return;
 		}
 		await waitForBoatRunner(run.workflowRunId, signal, timeout);
 	} finally {

@@ -335,6 +335,11 @@ describe("workflowUsesServices", () => {
 				"on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
 			),
 		).toBe(false);
+		expect(
+			workflowUsesServices(
+				"on: push\njobs:\n  call:\n    uses: ./.github/workflows/test.yml\n",
+			),
+		).toBe(true);
 		expect(workflowUsesServices("jobs: [")).toBe(false);
 	});
 });

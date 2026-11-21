@@ -179,6 +179,7 @@ export class RunRecorder {
 	private aborting = false;
 	// Completion, a forced stop and the stale check can all try to finish a run; only the first does.
 	private finishing = false;
+	private flushed = false;
 
 	private constructor(
 		readonly run: LoadedRun,
@@ -261,7 +262,8 @@ export class RunRecorder {
 
 	/** Records when a setup step finished, for the run page's setup breakdown. */
 	async mark(step: WorkflowSetupStep, at = new Date()) {
-		if (this.finishing) return;
+		// Lines already received are drained by finish() first, so their timings are still kept.
+		if (this.flushed) return;
 		const since = Date.parse(this.run.createdAt);
 		const label =
 			step === "connected" && this.run.runsOnBoat
@@ -419,6 +421,7 @@ export class RunRecorder {
 		if (this.finishing) return null;
 		this.finishing = true;
 		await this.flush();
+		this.flushed = true;
 		const stopped = cancelled || this.aborting;
 		let errorMessage = providedError ? this.mask(providedError) : null;
 		if (!errorMessage && exitCode !== 0 && this.jobs.size === 0 && !stopped) {

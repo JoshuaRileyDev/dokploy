@@ -324,7 +324,7 @@ export const workflowRemoteActions = (content: string) => {
 	return [...actions];
 };
 
-/** Whether any job starts service containers; act only starts them for jobs that run in a container. */
+/** Whether any job may start service containers; act only starts them for jobs that run in a container. */
 export const workflowUsesServices = (content: string) => {
 	let doc: unknown;
 	try {
@@ -333,8 +333,10 @@ export const workflowUsesServices = (content: string) => {
 		return false;
 	}
 	if (!isRecord(doc) || !isRecord(doc.jobs)) return false;
+	// A called reusable workflow's jobs aren't visible here, so assume they may use services.
 	return Object.values(doc.jobs).some(
-		(job) => isRecord(job) && job.services !== undefined,
+		(job) =>
+			isRecord(job) && (job.services !== undefined || job.uses !== undefined),
 	);
 };
 

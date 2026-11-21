@@ -89,4 +89,18 @@ describe("buildSetupTimeline", () => {
 			"job",
 		]);
 	});
+
+	it("doesn't count a failed job setup as ready", () => {
+		const run = boatRun({ status: "failure" });
+		run.jobs[0]!.steps = [
+			{
+				key: "a",
+				name: "Set up job",
+				status: "failure",
+				startedAt: at(8.3),
+				durationMs: 200,
+			},
+		];
+		expect(buildSetupTimeline(run).ready).toBeNull();
+	});
 });

@@ -515,6 +515,12 @@ const claimEphemeralRun = async (runner: WorkflowRunner) => {
 		});
 		return null;
 	}
+	// The run may have been cancelled or failed while its inputs were being prepared.
+	const current = await db.query.workflowRuns.findFirst({
+		where: eq(workflowRuns.workflowRunId, workflowRunId),
+		columns: { status: true, cancelRequested: true },
+	});
+	if (current?.status !== "in_progress" || current.cancelRequested) return null;
 	return {
 		workflowRunId,
 		workflowName: recorder.run.workflowName,
@@ -676,6 +682,7 @@ export const failStaleRunnerRuns = async () => {
 	const stale = await db
 		.select({
 			workflowRunId: workflowRuns.workflowRunId,
+			workflowRunnerId: workflowRuns.workflowRunnerId,
 			runnerName: workflowRunners.name,
 		})
 		.from(workflowRuns)
@@ -690,7 +697,13 @@ export const failStaleRunnerRuns = async () => {
 				lt(workflowRunners.lastSeenAt, cutoff),
 			),
 		);
-	for (const { workflowRunId, runnerName } of stale) {
+	for (const { workflowRunId, runnerName, workflowRunnerId } of stale) {
+		// Finishing earlier stale runs takes time, during which this runner may have reported in.
+		const runner = await db.query.workflowRunners.findFirst({
+			where: eq(workflowRunners.workflowRunnerId, workflowRunnerId!),
+			columns: { lastSeenAt: true },
+		});
+		if (runner?.lastSeenAt && runner.lastSeenAt >= cutoff) continue;
 		const recording = await recordingFor(workflowRunId);
 		recorders.delete(workflowRunId);
 		await recording?.recorder.finish({

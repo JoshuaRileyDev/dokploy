@@ -57,7 +57,9 @@ const firstJobStart = (run: SetupRun) => {
 	);
 	const setupStep = job.steps.find((step) => step.name === ACT_SETUP_STEP);
 	const setupEnd =
-		setupStep?.startedAt && setupStep.durationMs !== undefined
+		setupStep?.status === "success" &&
+		setupStep.startedAt &&
+		setupStep.durationMs !== undefined
 			? time(setupStep.startedAt)! + setupStep.durationMs
 			: undefined;
 	return {
@@ -206,8 +208,9 @@ export const WorkflowSetupTimeline = ({ run }: { run: SetupRun }) => {
 	const timeline = buildSetupTimeline(run);
 	const live = timeline.ready === null && !isFinished(run.status);
 	const now = useNow(live);
+	// A run that ended before a job started spans only its recorded phases, not until now.
 	const end = Math.max(
-		timeline.ready ?? now,
+		timeline.ready ?? (live ? now : timeline.start),
 		...timeline.phases.map((phase) => phase.end ?? now),
 		timeline.start + 1,
 	);
