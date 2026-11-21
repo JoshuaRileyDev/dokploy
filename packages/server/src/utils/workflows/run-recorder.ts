@@ -5,18 +5,20 @@ import { db } from "@dokploy/server/db";
 import {
 	type WorkflowJobStatus,
 	type WorkflowRunStatus,
+	type WorkflowSetupStep,
 	type WorkflowStepState,
 	workflowJobs,
 	workflowRuns,
+	workflowSetupSteps,
 } from "@dokploy/server/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { resolveWorkflowEnv } from "../../services/workflow";
 import {
 	authGithub,
 	getGithubToken,
 	normalizeGithubUrl,
 } from "../providers/github";
-import type { ActRunScriptInput } from "./act";
+import { type ActRunScriptInput, SETUP_TIMING_PREFIX } from "./act";
 import { ActLogProcessor, jobDisplayName, LineBuffer } from "./act-log";
 import { syncWorkflowCheckRun } from "./check-runs";
 import { readWorkflowFile } from "./github";
@@ -112,6 +114,34 @@ type JobState = {
 	status: WorkflowJobStatus;
 	steps: WorkflowStepState[];
 	log: WriteStream;
+};
+
+const SETUP_STEP_LABELS: Record<WorkflowSetupStep, string> = {
+	sandbox_ready: "Boat sandbox ready",
+	connected: "Connected over SSH",
+	inputs_ready: "Secrets and workflow file loaded",
+	repository_ready: "Repository checked out",
+	machine_prepared: "Machine prepared",
+	act_started: "act started",
+};
+
+// A timestamp from the machine's clock is used when it's plausible: runner output reaches Dokploy
+// in batches, so the time a line arrives can be a second late.
+const CLOCK_SKEW_MS = 60_000;
+
+const parseSetupTiming = (line: string) => {
+	if (!line.startsWith(SETUP_TIMING_PREFIX)) return null;
+	const [step, seconds] = line
+		.slice(SETUP_TIMING_PREFIX.length)
+		.trim()
+		.split(" ");
+	if (!workflowSetupSteps.includes(step as WorkflowSetupStep)) return null;
+	const reported = Number(seconds) * 1000;
+	const at =
+		Number.isFinite(reported) && Math.abs(reported - Date.now()) < CLOCK_SKEW_MS
+			? new Date(reported)
+			: new Date();
+	return { step: step as WorkflowSetupStep, at };
 };
 
 const finalRunStatus = (
@@ -216,6 +246,23 @@ export class RunRecorder {
 		this.write(this.runLog, line);
 	}
 
+	/** Records when a setup step finished, for the run page's setup breakdown. */
+	async mark(step: WorkflowSetupStep, at = new Date()) {
+		const since = Date.parse(this.run.createdAt);
+		this.log(
+			`${SETUP_STEP_LABELS[step]} ${((at.getTime() - since) / 1000).toFixed(1)}s after the run was triggered`,
+		);
+		await db
+			.update(workflowRuns)
+			.set({
+				setupTimings: sql`${workflowRuns.setupTimings} || ${JSON.stringify([{ step, at: at.toISOString() }])}::jsonb`,
+			})
+			.where(eq(workflowRuns.workflowRunId, this.run.workflowRunId))
+			.catch((error) =>
+				console.error("Failed to record a workflow setup timing", error),
+			);
+	}
+
 	/** Accepts raw output chunks, which may split lines. */
 	pushChunk(stream: "stdout" | "stderr", chunk: string) {
 		this.pushLines(
@@ -264,6 +311,11 @@ export class RunRecorder {
 	}
 
 	private async handleLine(line: string) {
+		const timing = parseSetupTiming(line.trim());
+		if (timing) {
+			await this.mark(timing.step, timing.at);
+			return;
+		}
 		for (const event of this.processor.process(line)) {
 			if (event.type === "log") {
 				const job = event.key ? this.jobs.get(event.key) : undefined;
@@ -272,11 +324,10 @@ export class RunRecorder {
 			}
 			if (event.type === "job_started") {
 				const position = this.jobs.size;
-				if (position === 0 && this.run.startedAt) {
-					const seconds = (Date.now() - Date.parse(this.run.startedAt)) / 1000;
-					this.write(
-						this.runLog,
-						`First job started ${seconds.toFixed(1)}s after the run started`,
+				if (position === 0) {
+					const seconds = (Date.now() - Date.parse(this.run.createdAt)) / 1000;
+					this.log(
+						`First job started ${seconds.toFixed(1)}s after the run was triggered`,
 					);
 				}
 				const jobLogPath = path.join(this.logsDir, `job-${position}.log`);

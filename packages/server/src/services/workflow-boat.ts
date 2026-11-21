@@ -11,7 +11,6 @@ import { BoatClient } from "../utils/boat/client";
 import {
 	ACT_VERSION,
 	buildWarmActionCacheScript,
-	DEFAULT_PLATFORM_IMAGES,
 } from "../utils/workflows/act";
 import { runRemoteScript } from "../utils/workflows/ssh";
 import {
@@ -45,13 +44,18 @@ export const BOAT_PREPARE_DOCKER_SCRIPT = [
 	"docker version --format '{{.Server.Version}}' >/dev/null",
 ].join("\n");
 
-const SNAPSHOT_IMAGES = [
-	...new Set([
-		DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]!,
-		DEFAULT_PLATFORM_IMAGES["ubuntu-24.04"]!,
-		DEFAULT_PLATFORM_IMAGES["ubuntu-22.04"]!,
-	]),
-];
+// Boat restores a snapshot's Docker images with `docker load` after the sandbox reports ready, about
+// 16s per runner image, and starting a container there takes seconds more. So the snapshot carries no
+// runner images, and trusted jobs run on the sandbox itself, which is a throwaway Ubuntu 24.04 VM like
+// a GitHub-hosted runner. Untrusted runs keep a container without the Docker socket.
+const SANDBOX_LABELS = ["ubuntu-latest", "ubuntu-24.04", "self-hosted"];
+
+export const boatPlatformImages = (trusted: boolean) =>
+	trusted
+		? Object.fromEntries(SANDBOX_LABELS.map((label) => [label, "-self-hosted"]))
+		: undefined;
+
+const DOCKER_CHECK_IMAGE = "ubuntu:24.04";
 
 const buildSnapshotScript = (keyComment: string) =>
 	[
@@ -67,15 +71,13 @@ const buildSnapshotScript = (keyComment: string) =>
 		"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -o Dpkg::Options::=--force-confold --only-upgrade docker-ce docker-ce-cli docker-ce-rootless-extras containerd.io",
 		"sudo systemctl restart docker",
 		"docker version --format 'Docker {{.Server.Version}}'",
-		...SNAPSHOT_IMAGES.map(
-			(image) => `echo "Pulling ${image}" && docker pull -q ${image}`,
-		),
 		'echo "Checking actions can be copied into job containers"',
-		`check=$(docker run -d --rm ${SNAPSHOT_IMAGES[0]} sleep 120)`,
+		`check=$(docker run -d --rm ${DOCKER_CHECK_IMAGE} sleep 120)`,
 		"mkdir -p /tmp/act-check/var/run/act/actions/check@v1 && echo ok > /tmp/act-check/var/run/act/actions/check@v1/ok",
 		'tar -C /tmp/act-check -c var/run/act/actions/check@v1 | docker cp - "$check:/"',
 		'docker exec "$check" cat /var/run/act/actions/check@v1/ok',
 		'docker rm -f "$check" >/dev/null && rm -rf /tmp/act-check',
+		`docker rmi -f ${DOCKER_CHECK_IMAGE} >/dev/null`,
 		'echo "Caching common actions"',
 		buildWarmActionCacheScript(),
 		`mkdir -p ${BOAT_RUNS_DIR}`,
@@ -226,7 +228,7 @@ export const startBoatSnapshotBuild = (
 	);
 };
 
-/** Weekly, so `act-latest` style image tags don't drift far from upstream. */
+/** Weekly, so Docker, act and the cached actions don't drift far from upstream. */
 export const refreshBoatSnapshots = async () => {
 	const all = await db.query.boatSettings.findMany({
 		where: eq(boatSettings.workflowsEnabled, true),
