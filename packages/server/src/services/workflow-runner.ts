@@ -470,7 +470,7 @@ const claimEphemeralRun = async (runner: WorkflowRunner) => {
 			run?.status === "in_progress" &&
 			run.workflowRunnerId === runner.workflowRunnerId
 		) {
-			await finishEphemeralRun(workflowRunId, {
+			await finishRunnerRun(workflowRunId, {
 				exitCode: 1,
 				cancelled: false,
 				errorMessage:
@@ -508,7 +508,7 @@ const claimEphemeralRun = async (runner: WorkflowRunner) => {
 	try {
 		prepared = await pending.prepared;
 	} catch (error) {
-		await finishEphemeralRun(workflowRunId, {
+		await finishRunnerRun(workflowRunId, {
 			exitCode: 1,
 			cancelled: false,
 			errorMessage: error instanceof Error ? error.message : String(error),
@@ -530,14 +530,18 @@ const claimEphemeralRun = async (runner: WorkflowRunner) => {
 	};
 };
 
-/** Records a Boat run's result when its runner can't, e.g. because it never started or ignored a cancel. */
-export const finishEphemeralRun = async (
+/** Records a run's result through its shared recorder: from the runner, or for it when it can't report. */
+export const finishRunnerRun = async (
 	workflowRunId: string,
 	result: { exitCode: number; cancelled: boolean; errorMessage: string | null },
 ) => {
+	// Overlapping finishers share the cached recorder, whose finish() runs once, so it's dropped only afterwards.
 	const recording = await recordingFor(workflowRunId);
-	recorders.delete(workflowRunId);
-	await recording?.recorder.finish(result);
+	try {
+		await recording?.recorder.finish(result);
+	} finally {
+		recorders.delete(workflowRunId);
+	}
 };
 
 /** Atomically assigns the oldest queued run this runner can take, and returns the script to run it. */
@@ -663,10 +667,7 @@ export const completeRunnerRun = async (
 ) => {
 	const run = await findRunnerRun(runner, workflowRunId);
 	if (run.status !== "in_progress") return;
-	const recording = await recordingFor(workflowRunId);
-	recorders.delete(workflowRunId);
-	if (!recording) return;
-	await recording.recorder.finish({
+	await finishRunnerRun(workflowRunId, {
 		exitCode,
 		cancelled: run.cancelRequested,
 		errorMessage,
@@ -704,9 +705,7 @@ export const failStaleRunnerRuns = async () => {
 			columns: { lastSeenAt: true },
 		});
 		if (runner?.lastSeenAt && runner.lastSeenAt >= cutoff) continue;
-		const recording = await recordingFor(workflowRunId);
-		recorders.delete(workflowRunId);
-		await recording?.recorder.finish({
+		await finishRunnerRun(workflowRunId, {
 			exitCode: 1,
 			cancelled: false,
 			errorMessage: `Runner ${runnerName} stopped responding.`,

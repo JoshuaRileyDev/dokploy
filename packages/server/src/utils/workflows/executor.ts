@@ -15,7 +15,7 @@ import {
 } from "../../services/workflow-boat";
 import {
 	createEphemeralRunner,
-	finishEphemeralRun,
+	finishRunnerRun,
 	type PreparedRunnerScript,
 	registerEphemeralRun,
 	releaseEphemeralRunner,
@@ -217,7 +217,7 @@ const waitForBoatRunner = async (
 			giveUpAt = Date.now() + CANCEL_GRACE_MS;
 		}
 		if (giveUpAt !== null && Date.now() > giveUpAt) {
-			await finishEphemeralRun(workflowRunId, {
+			await finishRunnerRun(workflowRunId, {
 				exitCode: 1,
 				cancelled: !timeout.aborted,
 				errorMessage: timeout.aborted
