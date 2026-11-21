@@ -23,7 +23,11 @@ import { ActLogProcessor, jobDisplayName, LineBuffer } from "./act-log";
 import { syncWorkflowCheckRun } from "./check-runs";
 import { readWorkflowFile } from "./github";
 import { sendWorkflowRunNotifications } from "./notifications";
-import { disableWorkflowJobs, workflowRemoteActions } from "./parser";
+import {
+	disableWorkflowJobs,
+	workflowRemoteActions,
+	workflowUsesServices,
+} from "./parser";
 
 export const workflowLogsDirectory = (workflowRunId: string) =>
 	path.join(paths().LOGS_PATH, "workflows", workflowRunId);
@@ -105,7 +109,14 @@ export const prepareRunInputs = async (
 			? workflowRemoteActions(workflowContent)
 			: undefined,
 	};
-	return { scriptInput, maskValues: [token, ...Object.values(secrets)] };
+	return {
+		scriptInput,
+		maskValues: [token, ...Object.values(secrets)],
+		// Unknown when the file couldn't be read, so assume services to keep them working.
+		usesServices: workflowContent
+			? workflowUsesServices(workflowContent)
+			: true,
+	};
 };
 
 type JobState = {

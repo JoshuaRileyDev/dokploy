@@ -199,7 +199,7 @@ describe("managed caches", () => {
 			"actions/setup-node@v6",
 		]);
 		expect(script).toContain(
-			"seed_action github-codeql-action-init\\@v3 v3 https\\://github.com/github/codeql-action github/codeql-action/init\\@v3 &",
+			"seed_action github-codeql-action-init\\@v3 v3 https\\://github.com/github/codeql-action github/codeql-action/init\\@v3 keep &",
 		);
 		expect(script.match(/seed_action actions-setup-node/g)).toHaveLength(1);
 		expect(() => execFileSync("bash", ["-n"], { input: script })).not.toThrow();
@@ -209,6 +209,17 @@ describe("managed caches", () => {
 		expect(() =>
 			execFileSync("bash", ["-n"], { input: buildRefreshRunnerCacheScript() }),
 		).not.toThrow();
+	});
+
+	it("re-clones actions that follow a branch on every run, and keeps tags and commits", () => {
+		const script = buildSeedActionsScript([
+			"acme/deploy@main",
+			"acme/build@v2.1",
+			`acme/test@${"a".repeat(40)}`,
+		]);
+		expect(script).toMatch(/seed_action acme-deploy\\@main .* refresh &/);
+		expect(script).toMatch(/seed_action acme-build\\@v2\.1 .* keep &/);
+		expect(script).toMatch(/seed_action acme-test\\@a{40} .* keep &/);
 	});
 
 	it("seeds the workflow's actions only on managed machines", () => {

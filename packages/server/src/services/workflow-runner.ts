@@ -18,6 +18,7 @@ import {
 	isNotNull,
 	isNull,
 	lt,
+	or,
 	sql,
 } from "drizzle-orm";
 import type { z } from "zod";
@@ -358,6 +359,7 @@ type EphemeralRun = {
 	recorder: RunRecorder;
 	prepared: Promise<PreparedRunnerScript>;
 	onClaim: () => void;
+	claimed?: boolean;
 };
 
 // The executor that created a Boat run's sandbox hands its recorder and prepared script to the claim.
@@ -396,24 +398,29 @@ export const createEphemeralRunner = async (values: {
 	return { runner: runner!, token };
 };
 
-/** Removes a Boat run's one-run runner and deletes its sandbox. Safe to call more than once. */
+/** Deletes a Boat run's sandbox, then its one-run runner. Safe to call more than once. */
 export const releaseEphemeralRunner = async (workflowRunId: string) => {
-	const [runner] = await db
-		.delete(workflowRunners)
-		.where(eq(workflowRunners.ephemeralRunId, workflowRunId))
-		.returning({ organizationId: workflowRunners.organizationId });
+	const runner = await db.query.workflowRunners.findFirst({
+		where: eq(workflowRunners.ephemeralRunId, workflowRunId),
+		columns: { workflowRunnerId: true, organizationId: true },
+	});
 	if (!runner) return;
 	const run = await db.query.workflowRuns.findFirst({
 		where: eq(workflowRuns.workflowRunId, workflowRunId),
 		columns: { boatSandboxId: true },
 	});
 	const settings = await findBoatSettings(runner.organizationId);
-	if (!settings) return;
-	await releaseBoatRunSandbox(
-		new BoatClient(settings.apiKey),
-		workflowRunId,
-		run?.boatSandboxId ?? null,
-	);
+	// The runner row is what the cleanup sweep finds, so it goes only once the sandbox is gone.
+	if (settings) {
+		await releaseBoatRunSandbox(
+			new BoatClient(settings.apiKey),
+			workflowRunId,
+			run?.boatSandboxId ?? null,
+		);
+	}
+	await db
+		.delete(workflowRunners)
+		.where(eq(workflowRunners.workflowRunnerId, runner.workflowRunnerId));
 };
 
 /** Releases one-run runners whose run is over, e.g. because Dokploy stopped before cleaning up after it. */
@@ -454,6 +461,7 @@ const claimEphemeralRun = async (runner: WorkflowRunner) => {
 	const pending = ephemeralRuns.get(workflowRunId);
 	// Without the executor (e.g. Dokploy restarted before the claim), startup has already failed the run.
 	if (!pending) return null;
+	// The same runner may claim again, e.g. when the first claim's response never reached it.
 	const [claimed] = await db
 		.update(workflowRuns)
 		.set({ workflowRunnerId: runner.workflowRunnerId })
@@ -461,16 +469,22 @@ const claimEphemeralRun = async (runner: WorkflowRunner) => {
 			and(
 				eq(workflowRuns.workflowRunId, workflowRunId),
 				eq(workflowRuns.status, "in_progress"),
-				isNull(workflowRuns.workflowRunnerId),
+				or(
+					isNull(workflowRuns.workflowRunnerId),
+					eq(workflowRuns.workflowRunnerId, runner.workflowRunnerId),
+				),
 			),
 		)
 		.returning({ workflowRunId: workflowRuns.workflowRunId });
 	if (!claimed) return null;
 
 	const { recorder } = pending;
-	recorders.set(workflowRunId, Promise.resolve({ recorder }));
-	await recorder.mark("connected");
-	pending.onClaim();
+	if (!pending.claimed) {
+		pending.claimed = true;
+		recorders.set(workflowRunId, Promise.resolve({ recorder }));
+		await recorder.mark("connected");
+		pending.onClaim();
+	}
 	let prepared: PreparedRunnerScript;
 	try {
 		prepared = await pending.prepared;

@@ -69,9 +69,13 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 
 	useEffect(() => {
 		if (!run) return;
-		if (selected === SETUP && showingSetupUntilJobs.current && run.jobs[0]) {
-			showingSetupUntilJobs.current = false;
-			setSelected(run.jobs[0].workflowJobId);
+		if (selected === SETUP && showingSetupUntilJobs.current) {
+			const next =
+				run.jobs[0]?.workflowJobId ?? (isFinished(run.status) ? RUN_LOG : null);
+			if (next) {
+				showingSetupUntilJobs.current = false;
+				setSelected(next);
+			}
 			return;
 		}
 		if (selected) return;

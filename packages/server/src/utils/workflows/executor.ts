@@ -91,11 +91,6 @@ const untilAborted = (signal: AbortSignal, message: string) =>
 		});
 	});
 
-const rejectAfter = (ms: number, message: string) =>
-	new Promise<never>((_, reject) =>
-		setTimeout(() => reject(new Error(message)), ms).unref(),
-	);
-
 const sleep = (ms: number, signal?: AbortSignal) =>
 	new Promise<void>((resolve) => {
 		const timer = setTimeout(resolve, ms);
@@ -235,7 +230,7 @@ const executeBoatRun = async (
 	});
 	const prepared: Promise<PreparedRunnerScript> = prepareRunInputs(run, {
 		seedActions: true,
-	}).then(async ({ scriptInput, maskValues }) => {
+	}).then(async ({ scriptInput, maskValues, usesServices }) => {
 		recorder.setMaskValues(maskValues);
 		await recorder.mark("inputs_ready");
 		recorder.log(
@@ -246,7 +241,7 @@ const executeBoatRun = async (
 				...scriptInput,
 				baseDir: BOAT_RUNS_DIR,
 				prepareScript: BOAT_PREPARE_DOCKER_SCRIPT,
-				platformImages: boatPlatformImages(run.trusted),
+				platformImages: boatPlatformImages(run.trusted && !usesServices),
 				managedCache: true,
 			}),
 			maskValues,
@@ -258,13 +253,26 @@ const executeBoatRun = async (
 	try {
 		try {
 			const { url, ready } = await startBoatRunSandbox(run, recorder, stop);
+			let sandboxReady = false;
 			await Promise.race([
 				claim,
 				prepared.then(() => claim),
-				ready.then(() => claim),
-				rejectAfter(
-					RUNNER_START_TIMEOUT_MS,
-					`The runner in the Boat sandbox didn't reach Dokploy at ${url} within 2 minutes. Boat sandboxes must be able to reach Dokploy at that address (Settings → Web Server).`,
+				ready.then(() => {
+					sandboxReady = true;
+					return claim;
+				}),
+				new Promise<never>((_, reject) =>
+					setTimeout(
+						() =>
+							reject(
+								new Error(
+									sandboxReady
+										? `The runner in the Boat sandbox didn't reach Dokploy at ${url} within 2 minutes. Boat sandboxes must be able to reach Dokploy at that address (Settings → Web Server).`
+										: "The Boat sandbox wasn't ready within 2 minutes.",
+								),
+							),
+						RUNNER_START_TIMEOUT_MS,
+					).unref(),
 				),
 				untilAborted(stop, "Cancelled while starting the Boat sandbox"),
 			]);

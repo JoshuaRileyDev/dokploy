@@ -118,7 +118,7 @@ export const buildSetupTimeline = (run: SetupRun): SetupTimeline => {
 		},
 		{
 			key: "inputs",
-			label: "Loading secrets and the workflow file",
+			label: "Loading secrets",
 			start: picked,
 			end: mark("inputs_ready"),
 			open: true,
@@ -132,7 +132,7 @@ export const buildSetupTimeline = (run: SetupRun): SetupTimeline => {
 		},
 		{
 			key: "prepare",
-			label: "Preparing Docker and the action cache",
+			label: "Preparing Docker and actions",
 			start: scriptStart,
 			end: mark("machine_prepared"),
 			open: run.runsOnBoat && mark("repository_ready") !== undefined,

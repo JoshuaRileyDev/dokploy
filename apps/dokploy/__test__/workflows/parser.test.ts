@@ -7,6 +7,7 @@ import {
 	WorkflowParseError,
 	workflowRemoteActions,
 	workflowRunsOn,
+	workflowUsesServices,
 } from "@dokploy/server/utils/workflows/parser";
 import { describe, expect, it } from "vitest";
 
@@ -319,5 +320,21 @@ jobs:
 
 	it("returns nothing for a workflow it can't read", () => {
 		expect(workflowRemoteActions("jobs: [")).toEqual([]);
+	});
+});
+
+describe("workflowUsesServices", () => {
+	it("finds jobs with service containers", () => {
+		expect(
+			workflowUsesServices(
+				"on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    services:\n      db:\n        image: postgres:16\n    steps:\n      - run: true\n",
+			),
+		).toBe(true);
+		expect(
+			workflowUsesServices(
+				"on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
+			),
+		).toBe(false);
+		expect(workflowUsesServices("jobs: [")).toBe(false);
 	});
 });

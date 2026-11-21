@@ -239,21 +239,28 @@ const actionCacheDirName = (uses: string) => uses.replace(/[<>:"/\\|?*]/g, "-");
  * reuses a clone whose origin is exactly https://github.com/owner/repo, and resolves a ref as a
  * tag, then a remote branch, then a commit, which is what `clone --branch` and a fetch by SHA leave.
  */
+// act in offline mode never fetches a cached action again, so actions that follow a branch are
+// re-cloned on every run. Version tags are refreshed with the weekly cache refresh.
+const isBranchRef = (ref: string) =>
+	!/^[0-9a-f]{40}$/.test(ref) && !/^v?\d+(\.\d+)*$/.test(ref);
+
 export const buildSeedActionsScript = (actions: string[]) => {
 	const lines = [
 		'ACT_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/act"',
 		'mkdir -p "$ACT_CACHE"',
 		"seed_action() {",
 		'  dir="$ACT_CACHE/$1"',
-		'  [ -e "$dir" ] && return 0',
+		'  [ -e "$dir" ] && [ "$5" != refresh ] && return 0',
 		'  tmp="$dir.seeding.$$"',
 		'  rm -rf "$tmp"',
 		'  if printf "%s" "$2" | grep -Eq "^[0-9a-f]{40}$"; then',
 		'    git init -q "$tmp" && git -C "$tmp" remote add origin "$3" && git -C "$tmp" fetch -q --depth 1 origin "$2" && git -C "$tmp" -c advice.detachedHead=false checkout -q FETCH_HEAD',
 		"  else",
 		'    git clone -q -c advice.detachedHead=false --depth 1 --branch "$2" "$3" "$tmp"',
-		'  fi >/dev/null 2>&1 && mv "$tmp" "$dir" && return 0',
+		// -T refuses to move the clone inside a directory another run created in the meantime.
+		'  fi >/dev/null 2>&1 && { [ "$5" != refresh ] || rm -rf "$dir"; } && mv -T "$tmp" "$dir" 2>/dev/null && return 0',
 		'  rm -rf "$tmp"',
+		'  [ -e "$dir" ] && return 0',
 		'  echo "Couldn\'t cache $4"',
 		"}",
 	];
@@ -262,7 +269,7 @@ export const buildSeedActionsScript = (actions: string[]) => {
 		if (!match) continue;
 		const [, owner, repository, ref] = match;
 		lines.push(
-			`seed_action ${quote([actionCacheDirName(uses), ref!, `https://github.com/${owner}/${repository}`, uses])} &`,
+			`seed_action ${quote([actionCacheDirName(uses), ref!, `https://github.com/${owner}/${repository}`, uses, isBranchRef(ref!) ? "refresh" : "keep"])} &`,
 		);
 	}
 	lines.push("wait");

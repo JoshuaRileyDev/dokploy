@@ -51,11 +51,12 @@ export const BOAT_PREPARE_DOCKER_SCRIPT = [
 // Boat restores a snapshot's Docker images with `docker load` after the sandbox reports ready, about
 // 16s per runner image, and starting a container there takes seconds more. So the snapshot carries no
 // runner images, and trusted jobs run on the sandbox itself, which is a throwaway Ubuntu 24.04 VM like
-// a GitHub-hosted runner. Untrusted runs keep a container without the Docker socket.
+// a GitHub-hosted runner. Untrusted runs keep a container without the Docker socket, and so do
+// workflows with `services:`, which act only starts for jobs that run in a container.
 const SANDBOX_LABELS = ["ubuntu-latest", "ubuntu-24.04", "self-hosted"];
 
-export const boatPlatformImages = (trusted: boolean) =>
-	trusted
+export const boatPlatformImages = (onSandbox: boolean) =>
+	onSandbox
 		? Object.fromEntries(SANDBOX_LABELS.map((label) => [label, "-self-hosted"]))
 		: undefined;
 
@@ -105,6 +106,15 @@ export const boatSnapshotName = () => {
 		snapshotName = `dokploy-act-${ACT_VERSION.replaceAll(".", "-")}-${hash}`;
 	}
 	return snapshotName;
+};
+
+/** For display: a build without the runner bundle can't name a snapshot, and only building one should fail. */
+export const isCurrentBoatSnapshotName = (name: string | null) => {
+	try {
+		return name === boatSnapshotName();
+	} catch {
+		return false;
+	}
 };
 
 const RUN_RUNNER_CONFIG = "/home/user/.dokploy-run/runner.json";

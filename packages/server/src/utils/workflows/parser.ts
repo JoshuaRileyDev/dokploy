@@ -324,6 +324,20 @@ export const workflowRemoteActions = (content: string) => {
 	return [...actions];
 };
 
+/** Whether any job starts service containers; act only starts them for jobs that run in a container. */
+export const workflowUsesServices = (content: string) => {
+	let doc: unknown;
+	try {
+		doc = parse(content);
+	} catch {
+		return false;
+	}
+	if (!isRecord(doc) || !isRecord(doc.jobs)) return false;
+	return Object.values(doc.jobs).some(
+		(job) => isRecord(job) && job.services !== undefined,
+	);
+};
+
 /** Parses the parts of a GitHub Actions workflow Dokploy needs server-side; act handles the rest at run time. */
 export const parseWorkflow = (
 	content: string,
