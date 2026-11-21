@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, platform } from "node:os";
+import { homedir, platform, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
 const LAUNCHD_LABEL = "dev.joshuariley.dokploy-runner";
@@ -135,6 +135,14 @@ WantedBy=default.target
 		) {
 			throw new Error(
 				`Wrote ${unitPath}, but couldn't start it with systemctl --user.`,
+			);
+		}
+		// Without lingering, systemd stops user services at logout and never
+		// starts them at boot, so a headless runner would die with its SSH session.
+		const { username } = userInfo();
+		if (!run("loginctl", ["enable-linger", username])) {
+			console.warn(
+				`Couldn't enable lingering, so the runner stops when you log out. Run: sudo loginctl enable-linger ${username}`,
 			);
 		}
 		console.log(
