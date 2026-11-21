@@ -88,7 +88,7 @@ export const findWorkflowRunners = async (organizationId: string) => {
 	}));
 };
 
-const findOwnedRunner = async (
+export const findOwnedRunner = async (
 	workflowRunnerId: string,
 	organizationId: string,
 ) => {
@@ -184,10 +184,11 @@ export const removeWorkflowRunner = async (
 	workflowRunnerId: string,
 	organizationId: string,
 ) => {
-	await findOwnedRunner(workflowRunnerId, organizationId);
+	const runner = await findOwnedRunner(workflowRunnerId, organizationId);
 	await db
 		.delete(workflowRunners)
 		.where(eq(workflowRunners.workflowRunnerId, workflowRunnerId));
+	return runner;
 };
 
 /** Swaps a one-time registration token for the runner's long-lived credential. */

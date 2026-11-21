@@ -85,6 +85,7 @@ export * from "./services/volume-backups";
 export * from "./services/web-server-settings";
 export * from "./services/workflow";
 export * from "./services/workflow-boat";
+export * from "./services/workflow-boat-runner";
 export * from "./services/workflow-env-import";
 export * from "./services/workflow-run";
 export * from "./services/workflow-runner";

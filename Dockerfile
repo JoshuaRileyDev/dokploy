@@ -21,6 +21,8 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 ENV NODE_ENV=production
 RUN pnpm --filter=@dokploy/server build
 RUN pnpm --filter=./apps/dokploy run build
+# Dokploy installs this on the Boat machines it hosts runners on.
+RUN pnpm --filter=./apps/runner run build
 
 RUN if [ "$TARGETARCH" = "amd64" ]; then \
 	node -e 'const fs = require("fs"); const p = "node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/package.json"; const pkg = JSON.parse(fs.readFileSync(p, "utf8")); pkg.scripts.postinstall = "true"; fs.writeFileSync(p, JSON.stringify(pkg, null, 2));'; \
@@ -50,6 +52,8 @@ COPY --from=build /prod/dokploy/drizzle-fork ./drizzle-fork
 COPY .env.production ./.env
 COPY --from=build /prod/dokploy/components.json ./components.json
 COPY --from=build /prod/dokploy/node_modules ./node_modules
+COPY --from=build /usr/src/app/apps/runner/package.json ./runner/package.json
+COPY --from=build /usr/src/app/apps/runner/dist ./runner/dist
 
 
 # Install docker

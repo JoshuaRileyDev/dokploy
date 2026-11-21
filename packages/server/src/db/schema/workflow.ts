@@ -181,6 +181,13 @@ export const workflowRunners = pgTable("workflow_runner", {
 	version: text("version"),
 	os: text("os"),
 	arch: text("arch"),
+	// Set when Dokploy hosts the runner on a Boat machine that it wakes for queued runs and stops when idle.
+	boatSandboxId: text("boatSandboxId"),
+	boatStatus: text("boatStatus", {
+		enum: ["provisioning", "ready", "failed"],
+	}),
+	boatError: text("boatError"),
+	boatLastActiveAt: text("boatLastActiveAt"),
 	createdAt: text("createdAt")
 		.notNull()
 		.$defaultFn(() => new Date().toISOString()),
@@ -530,11 +537,14 @@ export const apiCreateWorkflowRunner = z.object({
 	name: z.string().min(1).max(100),
 	labels: z.array(z.string().min(1)).min(1),
 	allowedRepositoryIds: z.array(z.string()).default([]),
+	hostOnBoat: z.boolean().default(false),
 });
 
-export const apiUpdateWorkflowRunner = apiCreateWorkflowRunner.extend({
-	workflowRunnerId: z.string().min(1),
-});
+export const apiUpdateWorkflowRunner = apiCreateWorkflowRunner
+	.omit({ hostOnBoat: true })
+	.extend({
+		workflowRunnerId: z.string().min(1),
+	});
 
 export const apiFindOneWorkflowRunner = z.object({
 	workflowRunnerId: z.string().min(1),

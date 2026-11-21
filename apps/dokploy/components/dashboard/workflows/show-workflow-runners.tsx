@@ -6,6 +6,7 @@ import {
 	Loader2,
 	Pencil,
 	PlusIcon,
+	RotateCcw,
 	Server,
 	Trash2,
 } from "lucide-react";
@@ -189,6 +190,8 @@ const AddRunner = () => {
 	const utils = api.useUtils();
 	const [open, setOpen] = useState(false);
 	const [token, setToken] = useState<string | null>(null);
+	const [hostOnBoat, setHostOnBoat] = useState(false);
+	const { data: boat } = api.boat.get.useQuery();
 	const [values, setValues] = useState<RunnerFormValues>({
 		name: "",
 		labels: "macos-latest",
@@ -203,6 +206,7 @@ const AddRunner = () => {
 				setOpen(next);
 				if (!next) {
 					setToken(null);
+					setHostOnBoat(false);
 					setValues({
 						name: "",
 						labels: "macos-latest",
@@ -231,7 +235,30 @@ const AddRunner = () => {
 				{token ? (
 					<RegistrationInstructions token={token} />
 				) : (
-					<RunnerForm values={values} onChange={setValues} />
+					<>
+						<RunnerForm values={values} onChange={setValues} />
+						{boat && (
+							<label
+								htmlFor="runner-host-on-boat"
+								className="flex cursor-pointer items-start gap-2 rounded-md border p-3"
+							>
+								<Checkbox
+									id="runner-host-on-boat"
+									checked={hostOnBoat}
+									onCheckedChange={(checked) => setHostOnBoat(!!checked)}
+								/>
+								<div className="space-y-1">
+									<p className="text-sm font-medium">Host on Boat</p>
+									<p className="text-sm text-muted-foreground">
+										Dokploy creates a Linux machine on Boat for this runner. It
+										starts when a matching run is queued and stops after 10 idle
+										minutes, keeping its disk and Docker cache. Runs keep going
+										while Dokploy restarts.
+									</p>
+								</div>
+							</label>
+						)}
+					</>
 				)}
 				<DialogFooter>
 					{token ? (
@@ -246,9 +273,15 @@ const AddRunner = () => {
 										name: values.name,
 										labels: parseLabels(values.labels),
 										allowedRepositoryIds: values.allowedRepositoryIds,
+										hostOnBoat,
 									})
 									.then((created) => {
-										setToken(created.registrationToken);
+										if (created.registrationToken) {
+											setToken(created.registrationToken);
+										} else {
+											toast.success("Setting up the runner on Boat");
+											setOpen(false);
+										}
 										return utils.workflow.runners.invalidate();
 									})
 									.catch((error) => toast.error(error.message))
@@ -331,6 +364,49 @@ const EditRunner = ({
 			</DialogContent>
 		</Dialog>
 	);
+};
+
+const RebuildBoatRunner = ({
+	workflowRunnerId,
+}: {
+	workflowRunnerId: string;
+}) => {
+	const utils = api.useUtils();
+	const rebuild = api.workflow.rebuildBoatRunner.useMutation();
+	return (
+		<DialogAction
+			title="Rebuild the Boat machine"
+			description="Deletes the runner's Boat machine, including its Docker cache, and sets up a new one."
+			onClick={() =>
+				rebuild
+					.mutateAsync({ workflowRunnerId })
+					.then(() => utils.workflow.runners.invalidate())
+					.catch((error) => toast.error(error.message))
+			}
+		>
+			<Button
+				variant="ghost"
+				size="icon"
+				title="Rebuild Boat machine"
+				isLoading={rebuild.isPending}
+			>
+				<RotateCcw className="size-4" />
+			</Button>
+		</DialogAction>
+	);
+};
+
+const runnerStatus = (runner: {
+	registered: boolean;
+	online: boolean;
+	boatSandboxId: string | null;
+	boatStatus: string | null;
+}) => {
+	if (runner.boatStatus === "provisioning") return "Setting up on Boat";
+	if (runner.boatStatus === "failed") return "Boat setup failed";
+	if (!runner.registered) return "Waiting for registration";
+	if (runner.online) return "Online";
+	return runner.boatSandboxId ? "Stopped on Boat, starts for runs" : "Offline";
 };
 
 const RegenerateToken = ({
@@ -426,12 +502,14 @@ export const ShowWorkflowRunners = () => {
 										/>
 										<span className="font-medium">{runner.name}</span>
 									</div>
-									<span className="text-xs text-muted-foreground">
-										{!runner.registered
-											? "Waiting for registration"
-											: runner.online
-												? "Online"
-												: "Offline"}
+									<span
+										className={cn(
+											"text-xs text-muted-foreground",
+											runner.boatStatus === "failed" && "text-destructive",
+										)}
+										title={runner.boatError ?? undefined}
+									>
+										{runnerStatus(runner)}
 									</span>
 								</TableCell>
 								<TableCell>
@@ -467,13 +545,23 @@ export const ShowWorkflowRunners = () => {
 									{canEdit && (
 										<div className="flex justify-end gap-1">
 											<EditRunner runner={runner} />
-											<RegenerateToken
-												workflowRunnerId={runner.workflowRunnerId}
-											/>
+											{runner.boatSandboxId || runner.boatStatus ? (
+												<RebuildBoatRunner
+													workflowRunnerId={runner.workflowRunnerId}
+												/>
+											) : (
+												<RegenerateToken
+													workflowRunnerId={runner.workflowRunnerId}
+												/>
+											)}
 											{permissions?.workflow.delete && (
 												<DialogAction
 													title={`Remove ${runner.name}`}
-													description="The machine can no longer take runs. Queued runs that only it could take will wait for another matching runner."
+													description={
+														runner.boatSandboxId
+															? "Deletes the runner and its Boat machine. Queued runs that only it could take will wait for another matching runner."
+															: "The machine can no longer take runs. Queued runs that only it could take will wait for another matching runner."
+													}
 													type="destructive"
 													onClick={() =>
 														remove

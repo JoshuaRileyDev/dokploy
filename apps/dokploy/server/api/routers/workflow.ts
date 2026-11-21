@@ -3,6 +3,7 @@ import {
 	cancelWorkflowRun,
 	createWorkflowNotificationRule,
 	createWorkflowRunner,
+	deleteBoatRunnerMachine,
 	dispatchWorkflowRun,
 	findGithubById,
 	findNotificationChannels,
@@ -29,12 +30,14 @@ import {
 	removeWorkflowRepository,
 	removeWorkflowRunner,
 	removeWorkflowRuns,
+	requireBoatSettings,
 	rerunWorkflowRun,
 	searchWorkflowRuns,
 	setWorkflowDefinitionEnabled,
 	setWorkflowEnv,
 	setWorkflowJobEnabled,
 	setWorkflowRunsArchived,
+	startBoatRunnerProvisioning,
 	syncWorkflowRepository,
 	syncWorkflowSchedules,
 	updateWorkflowRepository,
@@ -624,6 +627,9 @@ export const workflowRouter = createTRPCRouter({
 	createRunner: workflowProcedure("create")
 		.input(apiCreateWorkflowRunner)
 		.mutation(async ({ input, ctx }) => {
+			if (input.hostOnBoat) {
+				await requireBoatSettings(ctx.session.activeOrganizationId);
+			}
 			const created = await createWorkflowRunner(
 				input,
 				ctx.session.activeOrganizationId,
@@ -634,6 +640,13 @@ export const workflowRouter = createTRPCRouter({
 				resourceId: created.workflowRunnerId,
 				resourceName: `Runner ${input.name}`,
 			});
+			if (input.hostOnBoat) {
+				await startBoatRunnerProvisioning(
+					created.workflowRunnerId,
+					ctx.session.activeOrganizationId,
+				);
+				return { ...created, registrationToken: null };
+			}
 			return created;
 		}),
 	updateRunner: workflowProcedure("create")
@@ -662,13 +675,28 @@ export const workflowRouter = createTRPCRouter({
 			});
 			return result;
 		}),
-	removeRunner: workflowProcedure("delete")
+	rebuildBoatRunner: workflowProcedure("create")
 		.input(apiFindOneWorkflowRunner)
 		.mutation(async ({ input, ctx }) => {
-			await removeWorkflowRunner(
+			await startBoatRunnerProvisioning(
 				input.workflowRunnerId,
 				ctx.session.activeOrganizationId,
 			);
+			await audit(ctx, {
+				action: "update",
+				resourceType: "workflow",
+				resourceId: input.workflowRunnerId,
+				resourceName: "Runner Boat machine",
+			});
+		}),
+	removeRunner: workflowProcedure("delete")
+		.input(apiFindOneWorkflowRunner)
+		.mutation(async ({ input, ctx }) => {
+			const runner = await removeWorkflowRunner(
+				input.workflowRunnerId,
+				ctx.session.activeOrganizationId,
+			);
+			await deleteBoatRunnerMachine(runner);
 			await audit(ctx, {
 				action: "delete",
 				resourceType: "workflow",
