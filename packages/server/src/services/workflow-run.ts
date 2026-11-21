@@ -1156,9 +1156,12 @@ export const initWorkflowRuns = async () => {
 	await initBoatRunners();
 	scheduleJob("dokploy-workflow-stale-runners", "* * * * *", () => {
 		failStaleRunnerRuns()
-			.then(releaseFinishedEphemeralRunners)
 			.catch((error) =>
 				console.error("Failed to check for stale runner runs", error),
+			)
+			.then(releaseFinishedEphemeralRunners)
+			.catch((error) =>
+				console.error("Failed to release finished Boat sandboxes", error),
 			);
 		syncBoatRunners().catch((error) =>
 			console.error("Failed to sync Boat runners", error),

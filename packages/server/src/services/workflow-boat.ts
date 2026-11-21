@@ -308,9 +308,13 @@ export const releaseBoatRunSandbox = async (
 	sandboxId: string | null,
 ) => {
 	const ids = new Set(sandboxId ? [sandboxId] : []);
+	// Without a known id the label lookup is the only way to find the sandbox, so its failure must surface.
 	const labelled = await client
 		.listSandboxIdsByLabel(`${BOAT_RUN_LABEL}=${workflowRunId}`)
-		.catch(() => []);
+		.catch((error) => {
+			if (!sandboxId) throw error;
+			return [];
+		});
 	for (const id of labelled) ids.add(id);
 	for (const id of ids) await client.deleteSandbox(id);
 };

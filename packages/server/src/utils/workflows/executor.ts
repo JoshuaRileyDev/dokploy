@@ -93,15 +93,13 @@ const untilAborted = (signal: AbortSignal, message: string) =>
 
 const sleep = (ms: number, signal?: AbortSignal) =>
 	new Promise<void>((resolve) => {
-		const timer = setTimeout(resolve, ms);
-		signal?.addEventListener(
-			"abort",
-			() => {
-				clearTimeout(timer);
-				resolve();
-			},
-			{ once: true },
-		);
+		const done = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		signal?.addEventListener("abort", done, { once: true });
 	});
 
 /** Creates the run's sandbox with a one-run runner in it; resolves once Boat reports the sandbox ready. */
@@ -182,9 +180,13 @@ const waitForBoatRunner = async (
 	for (;;) {
 		const current = await db.query.workflowRuns.findFirst({
 			where: eq(workflowRuns.workflowRunId, workflowRunId),
-			columns: { status: true },
+			columns: { status: true, cancelRequested: true },
 		});
 		if (current?.status !== "in_progress") return;
+		// A cancel from the UI is stored on the run for the runner, without aborting this executor.
+		if (current.cancelRequested && giveUpAt === null && !stop.aborted) {
+			giveUpAt = Date.now() + CANCEL_GRACE_MS;
+		}
 		if (stop.aborted && giveUpAt === null) {
 			await db
 				.update(workflowRuns)

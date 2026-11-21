@@ -177,6 +177,8 @@ export class RunRecorder {
 	private pending = Promise.resolve();
 	private mask = (line: string) => line;
 	private aborting = false;
+	// Completion, a forced stop and the stale check can all try to finish a run; only the first does.
+	private finishing = false;
 
 	private constructor(
 		readonly run: LoadedRun,
@@ -259,6 +261,7 @@ export class RunRecorder {
 
 	/** Records when a setup step finished, for the run page's setup breakdown. */
 	async mark(step: WorkflowSetupStep, at = new Date()) {
+		if (this.finishing) return;
 		const since = Date.parse(this.run.createdAt);
 		const label =
 			step === "connected" && this.run.runsOnBoat
@@ -308,6 +311,8 @@ export class RunRecorder {
 	}
 
 	private write(stream: WriteStream, line: string) {
+		// Work still settling after the run finished (e.g. input preparation) must not write to ended logs.
+		if (stream.writableEnded) return;
 		stream.write(`${new Date().toISOString()} ${this.mask(line)}\n`);
 	}
 
@@ -411,6 +416,8 @@ export class RunRecorder {
 		cancelled: boolean;
 		errorMessage?: string | null;
 	}) {
+		if (this.finishing) return null;
+		this.finishing = true;
 		await this.flush();
 		const stopped = cancelled || this.aborting;
 		let errorMessage = providedError ? this.mask(providedError) : null;
