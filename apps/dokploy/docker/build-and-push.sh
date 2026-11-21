@@ -25,7 +25,7 @@ fi
 
 docker buildx build \
 	--progress=plain \
-	--platform linux/arm64 \
+	--platform "${BUILD_PLATFORM:-linux/amd64}" \
 	--pull \
 	--tag "$IMAGE" \
 	--file Dockerfile \

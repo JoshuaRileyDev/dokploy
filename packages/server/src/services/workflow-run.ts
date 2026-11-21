@@ -68,6 +68,11 @@ import {
 	refreshBoatSnapshots,
 	releaseInterruptedBoatRuns,
 } from "./workflow-boat";
+import {
+	initBoatRunners,
+	syncBoatRunners,
+	wakeBoatRunnerForRun,
+} from "./workflow-boat-runner";
 import { failStaleRunnerRuns, hasMatchingRunner } from "./workflow-runner";
 
 export type WorkflowRun = typeof workflowRuns.$inferSelect;
@@ -578,6 +583,13 @@ export const createWorkflowRun = async (
 		await applyConcurrency(run);
 		// Runner runs wait in the database until a matching runner claims them.
 		await enqueueRun(run, repository.organizationId);
+		if (run.requiresRunner) {
+			wakeBoatRunnerForRun({
+				organizationId: repository.organizationId,
+				workflowRepositoryId: run.workflowRepositoryId,
+				runsOn: run.runsOn,
+			}).catch((error) => console.error("Failed to wake a Boat runner", error));
+		}
 	} else if (run.status === "failure") {
 		sendWorkflowRunNotifications(run.workflowRunId).catch((error) =>
 			console.error("Failed to send workflow notifications", error),
@@ -1096,9 +1108,13 @@ export const cancelWorkflowRun = async (
 /** Called once at startup: in-memory queue state is gone, so requeue waiting runs and fail interrupted ones. */
 export const initWorkflowRuns = async () => {
 	await syncWorkflowSchedules();
+	await initBoatRunners();
 	scheduleJob("dokploy-workflow-stale-runners", "* * * * *", () => {
 		failStaleRunnerRuns().catch((error) =>
 			console.error("Failed to check for stale runner runs", error),
+		);
+		syncBoatRunners().catch((error) =>
+			console.error("Failed to sync Boat runners", error),
 		);
 	});
 	scheduleJob(
