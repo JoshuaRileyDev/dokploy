@@ -6,11 +6,12 @@ import {
 	GitBranch,
 	Loader2,
 	RotateCcw,
+	Timer,
 	Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { DateTooltip } from "@/components/shared/date-tooltip";
@@ -35,8 +36,13 @@ import {
 } from "./status";
 import { eventLabel, githubRepositoryUrl } from "./utils";
 import { WorkflowLogViewer } from "./workflow-log-viewer";
+import {
+	SetupDuration,
+	WorkflowSetupTimeline,
+} from "./workflow-setup-timeline";
 
 const RUN_LOG = "run";
+const SETUP = "setup";
 
 interface Props {
 	workflowRunId: string;
@@ -58,15 +64,31 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 	const setArchived = api.workflow.setRunsArchived.useMutation();
 	const remove = api.workflow.removeRuns.useMutation();
 	const [selected, setSelected] = useState<string | null>(null);
+	// Set up is shown on its own only until the first job starts, unless the user picked it.
+	const showingSetupUntilJobs = useRef(false);
 
 	useEffect(() => {
-		if (!run || selected) return;
+		if (!run) return;
+		if (selected === SETUP && showingSetupUntilJobs.current) {
+			const next =
+				run.jobs[0]?.workflowJobId ?? (isFinished(run.status) ? RUN_LOG : null);
+			if (next) {
+				showingSetupUntilJobs.current = false;
+				setSelected(next);
+			}
+			return;
+		}
+		if (selected) return;
 		const initial =
 			run.jobs.find((job) => job.status === "failure") ??
 			run.jobs.find((job) => job.status === "in_progress") ??
 			run.jobs[0];
 		if (initial) setSelected(initial.workflowJobId);
 		else if (isFinished(run.status)) setSelected(RUN_LOG);
+		else if (run.status === "in_progress") {
+			showingSetupUntilJobs.current = true;
+			setSelected(SETUP);
+		}
 	}, [run, selected]);
 
 	if (isPending || !run) {
@@ -149,7 +171,9 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 								)}
 								{run.actor && <span>by {run.actor}</span>}
 								{run.server && <span>on {run.server.name}</span>}
-								{run.runner && <span>on runner {run.runner.name}</span>}
+								{run.runner && !run.runsOnBoat && (
+									<span>on runner {run.runner.name}</span>
+								)}
 								{run.runsOnBoat && (
 									<span>
 										on Boat
@@ -157,6 +181,11 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 									</span>
 								)}
 								<DateTooltip date={run.createdAt}>Triggered</DateTooltip>
+								{run.status !== "skipped" && (
+									<span>
+										Set up in <SetupDuration run={run} />
+									</span>
+								)}
 								<span>
 									Duration{" "}
 									<LiveDuration start={run.startedAt} end={run.finishedAt} />
@@ -278,6 +307,25 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 						<span className="px-2 pb-1 text-xs font-medium uppercase text-muted-foreground">
 							Jobs
 						</span>
+						{run.status !== "queued" && run.status !== "skipped" && (
+							<button
+								type="button"
+								onClick={() => {
+									showingSetupUntilJobs.current = false;
+									setSelected(SETUP);
+								}}
+								className={cn(
+									"flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
+									selected === SETUP && "bg-muted",
+								)}
+							>
+								<Timer className="size-4 shrink-0 text-muted-foreground" />
+								<span className="flex-1 truncate">Set up</span>
+								<span className="text-xs text-muted-foreground">
+									<SetupDuration run={run} />
+								</span>
+							</button>
+						)}
 						{run.jobs.length === 0 && !finished && (
 							<span className="px-2 py-1 text-sm text-muted-foreground">
 								{run.status === "queued"
@@ -325,7 +373,9 @@ export const ShowWorkflowRun = ({ workflowRunId }: Props) => {
 					</nav>
 
 					<div className="flex min-w-0 flex-col gap-3">
-						{selectedJob ? (
+						{selected === SETUP ? (
+							<WorkflowSetupTimeline run={run} />
+						) : selectedJob ? (
 							<>
 								<div className="flex items-center gap-2">
 									<StatusIcon status={selectedJob.status} />

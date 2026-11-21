@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import path from "node:path";
 import { db } from "@dokploy/server/db";
 import {
@@ -9,8 +10,19 @@ import {
 	workflowRuns,
 } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	or,
+	sql,
+} from "drizzle-orm";
 import type { z } from "zod";
+import { BoatClient } from "../utils/boat/client";
 import {
 	buildActRunScript,
 	DEFAULT_PLATFORM_IMAGES,
@@ -21,7 +33,9 @@ import {
 	RunRecorder,
 	workflowLogsDirectory,
 } from "../utils/workflows/run-recorder";
+import { findBoatSettings } from "./boat";
 import { resolveWorkflowEnv } from "./workflow";
+import { releaseBoatRunSandbox } from "./workflow-boat";
 
 export type WorkflowRunner = typeof workflowRunners.$inferSelect;
 
@@ -30,6 +44,29 @@ const REGISTRATION_TOKEN_TTL_MS = 60 * 60 * 1000;
 export const RUNNER_ONLINE_WINDOW_MS = 60 * 1000;
 /** In-progress runs on a runner that has been silent this long are failed. */
 const RUNNER_STALE_MS = 3 * 60 * 1000;
+
+// Dev can evaluate this module more than once, so the emitter lives on globalThis.
+const globalForRunners = globalThis as unknown as {
+	__dokployRunnerRunsQueued?: EventEmitter;
+};
+globalForRunners.__dokployRunnerRunsQueued ??=
+	new EventEmitter().setMaxListeners(0);
+const runnerRunsQueued = globalForRunners.__dokployRunnerRunsQueued;
+
+/** Wakes runners waiting in a claim request, so they don't wait for the next poll. */
+export const notifyRunnerRunQueued = () => runnerRunsQueued.emit("queued");
+
+/** Resolves when a run may have become claimable, or after `ms` at the latest. */
+export const waitForRunnerRunQueued = (ms: number) =>
+	new Promise<void>((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			runnerRunsQueued.off("queued", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		runnerRunsQueued.on("queued", done);
+	});
 
 const generateToken = (prefix: string) =>
 	`${prefix}_${randomBytes(32).toString("base64url")}`;
@@ -58,7 +95,10 @@ const normalizeLabels = (labels: string[]) => [
 
 export const findWorkflowRunners = async (organizationId: string) => {
 	const runners = await db.query.workflowRunners.findMany({
-		where: eq(workflowRunners.organizationId, organizationId),
+		where: and(
+			eq(workflowRunners.organizationId, organizationId),
+			isNull(workflowRunners.ephemeralRunId),
+		),
 		orderBy: desc(workflowRunners.createdAt),
 	});
 	const active = runners.length
@@ -96,6 +136,7 @@ export const findOwnedRunner = async (
 		where: and(
 			eq(workflowRunners.workflowRunnerId, workflowRunnerId),
 			eq(workflowRunners.organizationId, organizationId),
+			isNull(workflowRunners.ephemeralRunId),
 		),
 	});
 	if (!runner) {
@@ -276,6 +317,7 @@ export const hasMatchingRunner = async ({
 		.where(
 			and(
 				eq(workflowRunners.organizationId, organizationId),
+				isNull(workflowRunners.ephemeralRunId),
 				sql`${workflowRunners.labels} && ${sql.param(runsOn)}::text[]`,
 				sql`(cardinality(${workflowRunners.allowedRepositoryIds}) = 0 OR ${workflowRepositoryId} = ANY(${workflowRunners.allowedRepositoryIds}))`,
 			),
@@ -311,11 +353,203 @@ const recordingFor = (workflowRunId: string) => {
 	return entry;
 };
 
+export type PreparedRunnerScript = { script: string; maskValues: string[] };
+
+type EphemeralRun = {
+	recorder: RunRecorder;
+	prepared: Promise<PreparedRunnerScript>;
+	onClaim: () => void;
+	claimed?: boolean;
+};
+
+// The executor that created a Boat run's sandbox hands its recorder and prepared script to the claim.
+const globalForEphemeral = globalThis as unknown as {
+	__dokployEphemeralRuns?: Map<string, EphemeralRun>;
+};
+globalForEphemeral.__dokployEphemeralRuns ??= new Map();
+const ephemeralRuns = globalForEphemeral.__dokployEphemeralRuns;
+
+export const registerEphemeralRun = (
+	workflowRunId: string,
+	run: EphemeralRun,
+) => ephemeralRuns.set(workflowRunId, run);
+
+export const unregisterEphemeralRun = (workflowRunId: string) =>
+	ephemeralRuns.delete(workflowRunId);
+
+/** A runner credential that can only claim one Boat run, for the sandbox created for that run. */
+export const createEphemeralRunner = async (values: {
+	organizationId: string;
+	workflowRunId: string;
+	name: string;
+	labels: string[];
+}) => {
+	const token = generateToken("dkr");
+	const [runner] = await db
+		.insert(workflowRunners)
+		.values({
+			organizationId: values.organizationId,
+			name: values.name,
+			labels: values.labels,
+			tokenHash: hashRunnerToken(token),
+			ephemeralRunId: values.workflowRunId,
+		})
+		.returning();
+	return { runner: runner!, token };
+};
+
+/** Deletes a Boat run's sandbox, then its one-run runner. Safe to call more than once. */
+export const releaseEphemeralRunner = async (workflowRunId: string) => {
+	const runner = await db.query.workflowRunners.findFirst({
+		where: eq(workflowRunners.ephemeralRunId, workflowRunId),
+		columns: { workflowRunnerId: true, organizationId: true },
+	});
+	if (!runner) return;
+	const run = await db.query.workflowRuns.findFirst({
+		where: eq(workflowRuns.workflowRunId, workflowRunId),
+		columns: { boatSandboxId: true },
+	});
+	const settings = await findBoatSettings(runner.organizationId);
+	// The runner row is what the cleanup sweep finds, so it goes only once the sandbox is gone.
+	if (settings) {
+		await releaseBoatRunSandbox(
+			new BoatClient(settings.apiKey),
+			workflowRunId,
+			run?.boatSandboxId ?? null,
+		);
+	}
+	await db
+		.delete(workflowRunners)
+		.where(eq(workflowRunners.workflowRunnerId, runner.workflowRunnerId));
+};
+
+/** Releases one-run runners whose run is over, e.g. because Dokploy stopped before cleaning up after it. */
+export const releaseFinishedEphemeralRunners = async () => {
+	const leftovers = await db
+		.select({ ephemeralRunId: workflowRunners.ephemeralRunId })
+		.from(workflowRunners)
+		.leftJoin(
+			workflowRuns,
+			eq(workflowRuns.workflowRunId, workflowRunners.ephemeralRunId),
+		)
+		.where(
+			and(
+				isNotNull(workflowRunners.ephemeralRunId),
+				sql`${workflowRuns.status} IS DISTINCT FROM 'in_progress'`,
+			),
+		);
+	for (const { ephemeralRunId } of leftovers) {
+		await releaseEphemeralRunner(ephemeralRunId!).catch((error) =>
+			console.error(
+				`Failed to release the Boat sandbox of run ${ephemeralRunId}`,
+				error,
+			),
+		);
+	}
+};
+
+const releaseEphemeralRunnerInBackground = (workflowRunId: string) =>
+	releaseEphemeralRunner(workflowRunId).catch((error) =>
+		console.error(
+			`Failed to release the Boat sandbox of run ${workflowRunId}`,
+			error,
+		),
+	);
+
+const claimEphemeralRun = async (runner: WorkflowRunner) => {
+	const workflowRunId = runner.ephemeralRunId!;
+	const pending = ephemeralRuns.get(workflowRunId);
+	if (!pending) {
+		// Dokploy restarted and lost the prepared script. A one-run runner only claims while idle, so a
+		// run assigned to it never started; startup has already failed runs that weren't assigned.
+		const run = await db.query.workflowRuns.findFirst({
+			where: eq(workflowRuns.workflowRunId, workflowRunId),
+			columns: { status: true, workflowRunnerId: true },
+		});
+		if (
+			run?.status === "in_progress" &&
+			run.workflowRunnerId === runner.workflowRunnerId
+		) {
+			await finishRunnerRun(workflowRunId, {
+				exitCode: 1,
+				cancelled: false,
+				errorMessage:
+					"Dokploy restarted before the run's script reached its Boat sandbox. Re-run it.",
+			});
+			releaseEphemeralRunnerInBackground(workflowRunId);
+		}
+		return null;
+	}
+	// The same runner may claim again, e.g. when the first claim's response never reached it.
+	const [claimed] = await db
+		.update(workflowRuns)
+		.set({ workflowRunnerId: runner.workflowRunnerId })
+		.where(
+			and(
+				eq(workflowRuns.workflowRunId, workflowRunId),
+				eq(workflowRuns.status, "in_progress"),
+				or(
+					isNull(workflowRuns.workflowRunnerId),
+					eq(workflowRuns.workflowRunnerId, runner.workflowRunnerId),
+				),
+			),
+		)
+		.returning({ workflowRunId: workflowRuns.workflowRunId });
+	if (!claimed) return null;
+
+	const { recorder } = pending;
+	if (!pending.claimed) {
+		pending.claimed = true;
+		recorders.set(workflowRunId, Promise.resolve({ recorder }));
+		await recorder.mark("connected");
+		pending.onClaim();
+	}
+	let prepared: PreparedRunnerScript;
+	try {
+		prepared = await pending.prepared;
+	} catch (error) {
+		await finishRunnerRun(workflowRunId, {
+			exitCode: 1,
+			cancelled: false,
+			errorMessage: error instanceof Error ? error.message : String(error),
+		});
+		return null;
+	}
+	// The run may have been cancelled or failed while its inputs were being prepared.
+	const current = await db.query.workflowRuns.findFirst({
+		where: eq(workflowRuns.workflowRunId, workflowRunId),
+		columns: { status: true, cancelRequested: true },
+	});
+	if (current?.status !== "in_progress" || current.cancelRequested) return null;
+	return {
+		workflowRunId,
+		workflowName: recorder.run.workflowName,
+		runNumber: recorder.run.runNumber,
+		repository: `${recorder.run.repository.owner}/${recorder.run.repository.repository}`,
+		...prepared,
+	};
+};
+
+/** Records a run's result through its shared recorder: from the runner, or for it when it can't report. */
+export const finishRunnerRun = async (
+	workflowRunId: string,
+	result: { exitCode: number; cancelled: boolean; errorMessage: string | null },
+) => {
+	// Overlapping finishers share the cached recorder, whose finish() runs once, so it's dropped only afterwards.
+	const recording = await recordingFor(workflowRunId);
+	try {
+		await recording?.recorder.finish(result);
+	} finally {
+		recorders.delete(workflowRunId);
+	}
+};
+
 /** Atomically assigns the oldest queued run this runner can take, and returns the script to run it. */
 export const claimRunForRunner = async (
 	runner: WorkflowRunner,
 	workDir: string,
 ) => {
+	if (runner.ephemeralRunId) return claimEphemeralRun(runner);
 	const logPath = (runId: string) =>
 		path.join(workflowLogsDirectory(runId), "run.log");
 	const claimed = await db.execute<{ workflowRunId: string }>(sql`
@@ -363,6 +597,7 @@ export const claimRunForRunner = async (
 	try {
 		const { scriptInput, maskValues } = await prepareRunInputs(recorder.run);
 		recorder.setMaskValues(maskValues);
+		await recorder.mark("inputs_ready");
 		recorder.log(
 			`Running ${recorder.run.workflowPath} at ${recorder.run.sha.slice(0, 7)} on runner ${runner.name}`,
 		);
@@ -432,14 +667,14 @@ export const completeRunnerRun = async (
 ) => {
 	const run = await findRunnerRun(runner, workflowRunId);
 	if (run.status !== "in_progress") return;
-	const recording = await recordingFor(workflowRunId);
-	recorders.delete(workflowRunId);
-	if (!recording) return;
-	await recording.recorder.finish({
+	await finishRunnerRun(workflowRunId, {
 		exitCode,
 		cancelled: run.cancelRequested,
 		errorMessage,
 	});
+	// A queued run in the same concurrency group can be claimed now.
+	notifyRunnerRunQueued();
+	if (runner.ephemeralRunId) releaseEphemeralRunnerInBackground(workflowRunId);
 };
 
 /** Fails in-progress runs whose runner stopped polling, e.g. because the machine went to sleep or lost its connection. */
@@ -448,6 +683,7 @@ export const failStaleRunnerRuns = async () => {
 	const stale = await db
 		.select({
 			workflowRunId: workflowRuns.workflowRunId,
+			workflowRunnerId: workflowRuns.workflowRunnerId,
 			runnerName: workflowRunners.name,
 		})
 		.from(workflowRuns)
@@ -462,13 +698,18 @@ export const failStaleRunnerRuns = async () => {
 				lt(workflowRunners.lastSeenAt, cutoff),
 			),
 		);
-	for (const { workflowRunId, runnerName } of stale) {
-		const recording = await recordingFor(workflowRunId);
-		recorders.delete(workflowRunId);
-		await recording?.recorder.finish({
+	for (const { workflowRunId, runnerName, workflowRunnerId } of stale) {
+		// Finishing earlier stale runs takes time, during which this runner may have reported in.
+		const runner = await db.query.workflowRunners.findFirst({
+			where: eq(workflowRunners.workflowRunnerId, workflowRunnerId!),
+			columns: { lastSeenAt: true },
+		});
+		if (runner?.lastSeenAt && runner.lastSeenAt >= cutoff) continue;
+		await finishRunnerRun(workflowRunId, {
 			exitCode: 1,
 			cancelled: false,
 			errorMessage: `Runner ${runnerName} stopped responding.`,
 		});
+		releaseEphemeralRunnerInBackground(workflowRunId);
 	}
 };

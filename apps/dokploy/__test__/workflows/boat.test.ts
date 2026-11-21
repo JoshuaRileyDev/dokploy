@@ -147,3 +147,38 @@ describe("workflow queue", () => {
 		expect(executeWorkflowRun.mock.calls.map(([id]) => id)).toEqual(["b1"]);
 	});
 });
+
+describe("Boat run sandboxes", () => {
+	it("start a one-run runner from files Boat writes before the sandbox is ready", async () => {
+		const { boatRunRunnerSetup, BOAT_RUNS_DIR } = await import(
+			"@dokploy/server/services/workflow-boat"
+		);
+		const setup = boatRunRunnerSetup({
+			url: "https://dokploy.example.com",
+			workflowRunnerId: "r1",
+			name: "Boat: repo ci #1",
+			labels: ["ubuntu-latest"],
+			token: "dkr_secret",
+		});
+		expect(setup.files).toHaveLength(1);
+		const [file] = setup.files;
+		expect(file!.path.startsWith("/home/user/")).toBe(true);
+		expect(JSON.parse(file!.content)).toMatchObject({
+			url: "https://dokploy.example.com",
+			token: "dkr_secret",
+			workDir: BOAT_RUNS_DIR,
+		});
+		expect(setup.setupScript).toContain(`start --once --config ${file!.path}`);
+		expect(setup.setupScript).not.toContain("dkr_secret");
+	});
+
+	it("runs only trusted jobs directly on the sandbox", async () => {
+		const { boatPlatformImages } = await import(
+			"@dokploy/server/services/workflow-boat"
+		);
+		expect(boatPlatformImages(true)).toMatchObject({
+			"ubuntu-latest": "-self-hosted",
+		});
+		expect(boatPlatformImages(false)).toBeUndefined();
+	});
+});

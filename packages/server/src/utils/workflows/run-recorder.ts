@@ -5,23 +5,29 @@ import { db } from "@dokploy/server/db";
 import {
 	type WorkflowJobStatus,
 	type WorkflowRunStatus,
+	type WorkflowSetupStep,
 	type WorkflowStepState,
 	workflowJobs,
 	workflowRuns,
+	workflowSetupSteps,
 } from "@dokploy/server/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { resolveWorkflowEnv } from "../../services/workflow";
 import {
 	authGithub,
 	getGithubToken,
 	normalizeGithubUrl,
 } from "../providers/github";
-import type { ActRunScriptInput } from "./act";
+import { type ActRunScriptInput, SETUP_TIMING_PREFIX } from "./act";
 import { ActLogProcessor, jobDisplayName, LineBuffer } from "./act-log";
 import { syncWorkflowCheckRun } from "./check-runs";
 import { readWorkflowFile } from "./github";
 import { sendWorkflowRunNotifications } from "./notifications";
-import { disableWorkflowJobs } from "./parser";
+import {
+	disableWorkflowJobs,
+	workflowRemoteActions,
+	workflowUsesServices,
+} from "./parser";
 
 export const workflowLogsDirectory = (workflowRunId: string) =>
 	path.join(paths().LOGS_PATH, "workflows", workflowRunId);
@@ -43,33 +49,41 @@ const loadRun = (workflowRunId: string) =>
 type LoadedRun = NonNullable<Awaited<ReturnType<typeof loadRun>>>;
 
 /** Everything a machine needs to run this workflow with act, plus the values to mask in its output. */
-export const prepareRunInputs = async (run: LoadedRun) => {
+export const prepareRunInputs = async (
+	run: LoadedRun,
+	{ seedActions = false }: { seedActions?: boolean } = {},
+) => {
 	const github = run.repository.github;
 	if (!github) throw new Error("The repository's GitHub provider was removed");
 
 	const octokit = authGithub(github);
-	const token = await getGithubToken(octokit);
 	const base = new URL(normalizeGithubUrl(github.githubUrl));
-	const configured = run.trusted
-		? await resolveWorkflowEnv(run.workflowRepositoryId)
-		: { secrets: {}, variables: {} };
+	const { owner, repository } = run.repository;
+	const skippedJobs = run.targetJob ? [] : run.skippedJobs;
+	const [token, configured, workflowContent] = await Promise.all([
+		getGithubToken(octokit),
+		run.trusted
+			? resolveWorkflowEnv(run.workflowRepositoryId)
+			: { secrets: {}, variables: {} },
+		skippedJobs.length > 0 || seedActions
+			? readWorkflowFile(
+					octokit,
+					owner,
+					repository,
+					run.workflowPath,
+					run.sha,
+				).catch((error) => {
+					if (skippedJobs.length > 0) throw error;
+					return null;
+				})
+			: null,
+	]);
 	const secrets: Record<string, string> = run.trusted
 		? { ...configured.secrets, GITHUB_TOKEN: token }
 		: {};
-	const { owner, repository } = run.repository;
-	const skippedJobs = run.targetJob ? [] : run.skippedJobs;
 	const workflowOverride =
-		skippedJobs.length > 0
-			? disableWorkflowJobs(
-					await readWorkflowFile(
-						octokit,
-						owner,
-						repository,
-						run.workflowPath,
-						run.sha,
-					),
-					skippedJobs,
-				)
+		skippedJobs.length > 0 && workflowContent !== null
+			? disableWorkflowJobs(workflowContent, skippedJobs)
 			: undefined;
 
 	const scriptInput: Omit<ActRunScriptInput, "baseDir" | "platformImages"> = {
@@ -91,8 +105,18 @@ export const prepareRunInputs = async (run: LoadedRun) => {
 		variables: configured.variables,
 		inputs: run.inputs ?? {},
 		trusted: run.trusted,
+		seedActions: workflowContent
+			? workflowRemoteActions(workflowContent)
+			: undefined,
 	};
-	return { scriptInput, maskValues: [token, ...Object.values(secrets)] };
+	return {
+		scriptInput,
+		maskValues: [token, ...Object.values(secrets)],
+		// Unknown when the file couldn't be read, so assume services to keep them working.
+		usesServices: workflowContent
+			? workflowUsesServices(workflowContent)
+			: true,
+	};
 };
 
 type JobState = {
@@ -101,6 +125,34 @@ type JobState = {
 	status: WorkflowJobStatus;
 	steps: WorkflowStepState[];
 	log: WriteStream;
+};
+
+const SETUP_STEP_LABELS: Record<WorkflowSetupStep, string> = {
+	sandbox_ready: "Boat sandbox ready",
+	connected: "Connected over SSH",
+	inputs_ready: "Secrets and workflow file loaded",
+	repository_ready: "Repository checked out",
+	machine_prepared: "Machine prepared",
+	act_started: "act started",
+};
+
+// A timestamp from the machine's clock is used when it's plausible: runner output reaches Dokploy
+// in batches, so the time a line arrives can be a second late.
+const CLOCK_SKEW_MS = 60_000;
+
+const parseSetupTiming = (line: string) => {
+	if (!line.startsWith(SETUP_TIMING_PREFIX)) return null;
+	const [step, seconds] = line
+		.slice(SETUP_TIMING_PREFIX.length)
+		.trim()
+		.split(" ");
+	if (!workflowSetupSteps.includes(step as WorkflowSetupStep)) return null;
+	const reported = Number(seconds) * 1000;
+	const at =
+		Number.isFinite(reported) && Math.abs(reported - Date.now()) < CLOCK_SKEW_MS
+			? new Date(reported)
+			: new Date();
+	return { step: step as WorkflowSetupStep, at };
 };
 
 const finalRunStatus = (
@@ -125,6 +177,9 @@ export class RunRecorder {
 	private pending = Promise.resolve();
 	private mask = (line: string) => line;
 	private aborting = false;
+	// Completion, a forced stop and the stale check can all try to finish a run; only the first does.
+	private finishing = false;
+	private flushed = false;
 
 	private constructor(
 		readonly run: LoadedRun,
@@ -205,6 +260,29 @@ export class RunRecorder {
 		this.write(this.runLog, line);
 	}
 
+	/** Records when a setup step finished, for the run page's setup breakdown. */
+	async mark(step: WorkflowSetupStep, at = new Date()) {
+		// Lines already received are drained by finish() first, so their timings are still kept.
+		if (this.flushed) return;
+		const since = Date.parse(this.run.createdAt);
+		const label =
+			step === "connected" && this.run.runsOnBoat
+				? "Runner in the Boat sandbox connected"
+				: SETUP_STEP_LABELS[step];
+		this.log(
+			`${label} ${((at.getTime() - since) / 1000).toFixed(1)}s after the run was triggered`,
+		);
+		await db
+			.update(workflowRuns)
+			.set({
+				setupTimings: sql`${workflowRuns.setupTimings} || ${JSON.stringify([{ step, at: at.toISOString() }])}::jsonb`,
+			})
+			.where(eq(workflowRuns.workflowRunId, this.run.workflowRunId))
+			.catch((error) =>
+				console.error("Failed to record a workflow setup timing", error),
+			);
+	}
+
 	/** Accepts raw output chunks, which may split lines. */
 	pushChunk(stream: "stdout" | "stderr", chunk: string) {
 		this.pushLines(
@@ -235,6 +313,8 @@ export class RunRecorder {
 	}
 
 	private write(stream: WriteStream, line: string) {
+		// Work still settling after the run finished (e.g. input preparation) must not write to ended logs.
+		if (stream.writableEnded) return;
 		stream.write(`${new Date().toISOString()} ${this.mask(line)}\n`);
 	}
 
@@ -253,6 +333,11 @@ export class RunRecorder {
 	}
 
 	private async handleLine(line: string) {
+		const timing = parseSetupTiming(line.trim());
+		if (timing) {
+			await this.mark(timing.step, timing.at);
+			return;
+		}
 		for (const event of this.processor.process(line)) {
 			if (event.type === "log") {
 				const job = event.key ? this.jobs.get(event.key) : undefined;
@@ -261,6 +346,12 @@ export class RunRecorder {
 			}
 			if (event.type === "job_started") {
 				const position = this.jobs.size;
+				if (position === 0) {
+					const seconds = (Date.now() - Date.parse(this.run.createdAt)) / 1000;
+					this.log(
+						`First job started ${seconds.toFixed(1)}s after the run was triggered`,
+					);
+				}
 				const jobLogPath = path.join(this.logsDir, `job-${position}.log`);
 				const [row] = await db
 					.insert(workflowJobs)
@@ -327,7 +418,10 @@ export class RunRecorder {
 		cancelled: boolean;
 		errorMessage?: string | null;
 	}) {
+		if (this.finishing) return null;
+		this.finishing = true;
 		await this.flush();
+		this.flushed = true;
 		const stopped = cancelled || this.aborting;
 		let errorMessage = providedError ? this.mask(providedError) : null;
 		if (!errorMessage && exitCode !== 0 && this.jobs.size === 0 && !stopped) {

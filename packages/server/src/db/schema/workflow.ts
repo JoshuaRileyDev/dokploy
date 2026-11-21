@@ -53,6 +53,18 @@ export type WorkflowStepState = {
 	durationMs?: number;
 };
 
+/** Moments before a run's first job starts, recorded so the run page can show where setup time goes. */
+export const workflowSetupSteps = [
+	"sandbox_ready",
+	"connected",
+	"inputs_ready",
+	"repository_ready",
+	"machine_prepared",
+	"act_started",
+] as const;
+export type WorkflowSetupStep = (typeof workflowSetupSteps)[number];
+export type WorkflowSetupTiming = { step: WorkflowSetupStep; at: string };
+
 export const workflowRepositories = pgTable(
 	"workflow_repository",
 	{
@@ -188,6 +200,8 @@ export const workflowRunners = pgTable("workflow_runner", {
 	}),
 	boatError: text("boatError"),
 	boatLastActiveAt: text("boatLastActiveAt"),
+	// Set for the one-run runner inside a Boat run's sandbox; it can only claim that run and isn't listed.
+	ephemeralRunId: text("ephemeralRunId").unique(),
 	createdAt: text("createdAt")
 		.notNull()
 		.$defaultFn(() => new Date().toISOString()),
@@ -262,6 +276,10 @@ export const workflowRuns = pgTable(
 		startedAt: text("startedAt"),
 		finishedAt: text("finishedAt"),
 		archivedAt: text("archivedAt"),
+		setupTimings: jsonb("setupTimings")
+			.$type<WorkflowSetupTiming[]>()
+			.notNull()
+			.default([]),
 	},
 	(table) => [
 		index("workflow_run_repo_created_idx").on(

@@ -17,7 +17,10 @@ const connect = (target: SshTarget) =>
 		const client = new Client();
 		client
 			.once("ready", () => resolve(client))
-			.once("error", reject)
+			.once("error", (error) => {
+				client.end();
+				reject(error);
+			})
 			.connect({
 				host: target.ipAddress,
 				port: target.port,
@@ -55,33 +58,88 @@ const execOnClient = (
 		});
 	});
 
-/** Runs a script on the server and resolves with its exit code; `onAbort` runs on the same connection when `signal` fires. */
+const wait = (ms: number, signal?: AbortSignal) =>
+	new Promise<void>((resolve, reject) => {
+		signal?.throwIfAborted();
+		const timer = setTimeout(resolve, ms);
+		signal?.addEventListener(
+			"abort",
+			() => {
+				clearTimeout(timer);
+				reject(signal.reason);
+			},
+			{ once: true },
+		);
+	});
+
+/** Keeps retrying for `retryForMs`, for machines whose sshd may still be starting. */
+const connectWithRetry = async (
+	target: SshTarget,
+	retryForMs: number,
+	signal?: AbortSignal,
+) => {
+	const deadline = Date.now() + retryForMs;
+	for (let delay = 250; ; delay = Math.min(delay * 2, 2000)) {
+		signal?.throwIfAborted();
+		try {
+			return await connect(target);
+		} catch (error) {
+			if (Date.now() + delay >= deadline) throw error;
+			await wait(delay, signal);
+		}
+	}
+};
+
+export type SshSession = {
+	/** Runs a script and resolves with its exit code; `onAbortScript` runs on the same connection when `signal` fires. */
+	run: (options: {
+		script: string;
+		onStdout?: (chunk: string) => void;
+		onStderr?: (chunk: string) => void;
+		signal?: AbortSignal;
+		onAbortScript?: string;
+	}) => Promise<number>;
+	close: () => void;
+};
+
+/** Opens one connection that several scripts can run over, saving a handshake per script. */
+export const openSshSession = async (
+	target: SshTarget,
+	{
+		retryForMs = 0,
+		signal,
+	}: { retryForMs?: number; signal?: AbortSignal } = {},
+): Promise<SshSession> => {
+	const client = await connectWithRetry(target, retryForMs, signal);
+	return {
+		run: async ({ script, onStdout, onStderr, signal, onAbortScript }) => {
+			// The abort event has already fired for a signal aborted before this call.
+			signal?.throwIfAborted();
+			const abort = () => {
+				if (onAbortScript) {
+					execOnClient(client, onAbortScript).catch(() => {});
+				}
+			};
+			signal?.addEventListener("abort", abort, { once: true });
+			try {
+				return await execOnClient(client, script, onStdout, onStderr);
+			} finally {
+				signal?.removeEventListener("abort", abort);
+			}
+		},
+		close: () => client.end(),
+	};
+};
+
+/** Runs a script on the server over its own connection and resolves with its exit code. */
 export const runRemoteScript = async ({
 	target,
-	script,
-	onStdout,
-	onStderr,
-	signal,
-	onAbortScript,
-}: {
-	target: SshTarget;
-	script: string;
-	onStdout?: (chunk: string) => void;
-	onStderr?: (chunk: string) => void;
-	signal?: AbortSignal;
-	onAbortScript?: string;
-}) => {
-	const client = await connect(target);
-	const abort = () => {
-		if (onAbortScript) {
-			execOnClient(client, onAbortScript).catch(() => {});
-		}
-	};
-	signal?.addEventListener("abort", abort, { once: true });
+	...options
+}: Parameters<SshSession["run"]>[0] & { target: SshTarget }) => {
+	const session = await openSshSession(target);
 	try {
-		return await execOnClient(client, script, onStdout, onStderr);
+		return await session.run(options);
 	} finally {
-		signal?.removeEventListener("abort", abort);
-		client.end();
+		session.close();
 	}
 };

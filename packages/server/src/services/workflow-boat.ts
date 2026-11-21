@@ -8,7 +8,14 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import type { z } from "zod";
 import { BoatClient } from "../utils/boat/client";
-import { ACT_VERSION, DEFAULT_PLATFORM_IMAGES } from "../utils/workflows/act";
+import {
+	ACT_VERSION,
+	buildWarmActionCacheScript,
+} from "../utils/workflows/act";
+import {
+	BOAT_RUNNER_CLI,
+	installRunnerBundleScript,
+} from "../utils/workflows/runner-bundle";
 import { runRemoteScript } from "../utils/workflows/ssh";
 import {
 	type BoatSettings,
@@ -24,13 +31,36 @@ export const BOAT_RUN_LABEL = "dokploy-run";
 // Outlives the 6 hour run limit, so a sandbox Dokploy loses track of still stops on its own.
 export const BOAT_RUN_TTL_SECONDS = 7 * 60 * 60;
 
-const SNAPSHOT_IMAGES = [
-	...new Set([
-		DEFAULT_PLATFORM_IMAGES["ubuntu-latest"]!,
-		DEFAULT_PLATFORM_IMAGES["ubuntu-24.04"]!,
-		DEFAULT_PLATFORM_IMAGES["ubuntu-22.04"]!,
-	]),
-];
+// Boat starts a sandbox's daemons from the base image before laying the snapshot's files over them,
+// so the base image's containerd can keep running and fail to start the snapshot's newer runc shim
+// ("shim was started through the deprecated API but was built against the new API"). Restarting
+// costs seconds, so it only happens when the running daemons differ from the installed ones.
+export const BOAT_PREPARE_DOCKER_SCRIPT = [
+	"set -eu",
+	`running_docker=$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)`,
+	`installed_docker=$(dockerd --version | sed -E 's/^Docker version ([^,]+),.*/\\1/')`,
+	`running_containerd=$(sudo ctr version 2>/dev/null | awk '/^Server:/ { server = 1 } server && /Version:/ { print $2; exit }')`,
+	`installed_containerd=$(containerd --version | awk '{ print $3 }')`,
+	'if [ "$running_docker" != "$installed_docker" ] || [ "$running_containerd" != "$installed_containerd" ]; then',
+	'  echo "Restarting Docker (running ${running_docker:-none}, installed $installed_docker)"',
+	"  sudo systemctl restart containerd docker",
+	"fi",
+	"docker version --format '{{.Server.Version}}' >/dev/null",
+].join("\n");
+
+// Boat restores a snapshot's Docker images with `docker load` after the sandbox reports ready, about
+// 16s per runner image, and starting a container there takes seconds more. So the snapshot carries no
+// runner images, and trusted jobs run on the sandbox itself, which is a throwaway Ubuntu 24.04 VM like
+// a GitHub-hosted runner. Untrusted runs keep a container without the Docker socket, and so do
+// workflows with `services:`, which act only starts for jobs that run in a container.
+const SANDBOX_LABELS = ["ubuntu-latest", "ubuntu-24.04", "self-hosted"];
+
+export const boatPlatformImages = (onSandbox: boolean) =>
+	onSandbox
+		? Object.fromEntries(SANDBOX_LABELS.map((label) => [label, "-self-hosted"]))
+		: undefined;
+
+const DOCKER_CHECK_IMAGE = "ubuntu:24.04";
 
 const buildSnapshotScript = (keyComment: string) =>
 	[
@@ -46,29 +76,68 @@ const buildSnapshotScript = (keyComment: string) =>
 		"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -o Dpkg::Options::=--force-confold --only-upgrade docker-ce docker-ce-cli docker-ce-rootless-extras containerd.io",
 		"sudo systemctl restart docker",
 		"docker version --format 'Docker {{.Server.Version}}'",
-		...SNAPSHOT_IMAGES.map(
-			(image) => `echo "Pulling ${image}" && docker pull -q ${image}`,
-		),
 		'echo "Checking actions can be copied into job containers"',
-		`check=$(docker run -d --rm ${SNAPSHOT_IMAGES[0]} sleep 120)`,
+		`check=$(docker run -d --rm ${DOCKER_CHECK_IMAGE} sleep 120)`,
 		"mkdir -p /tmp/act-check/var/run/act/actions/check@v1 && echo ok > /tmp/act-check/var/run/act/actions/check@v1/ok",
 		'tar -C /tmp/act-check -c var/run/act/actions/check@v1 | docker cp - "$check:/"',
 		'docker exec "$check" cat /var/run/act/actions/check@v1/ok',
 		'docker rm -f "$check" >/dev/null && rm -rf /tmp/act-check',
+		`docker rmi -f ${DOCKER_CHECK_IMAGE} >/dev/null`,
+		'echo "Caching common actions"',
+		buildWarmActionCacheScript(),
+		'echo "Installing the Dokploy runner"',
+		installRunnerBundleScript(),
+		`${BOAT_RUNNER_CLI} --version`,
 		`mkdir -p ${BOAT_RUNS_DIR}`,
 		// The build key would otherwise be baked into every sandbox created from the snapshot.
 		`sed -i '/${keyComment}/d' ~/.ssh/authorized_keys`,
 		"sync",
 	].join("\n");
 
-/** Changes whenever the snapshot script changes, so stale snapshots get rebuilt. */
+let snapshotName: string | undefined;
+
+/** Changes whenever the snapshot script or the bundled runner changes, so stale snapshots get rebuilt. */
 export const boatSnapshotName = () => {
-	const hash = createHash("sha256")
-		.update(buildSnapshotScript(""))
-		.digest("hex")
-		.slice(0, 8);
-	return `dokploy-act-${ACT_VERSION.replaceAll(".", "-")}-${hash}`;
+	if (!snapshotName) {
+		const hash = createHash("sha256")
+			.update(buildSnapshotScript(""))
+			.digest("hex")
+			.slice(0, 8);
+		snapshotName = `dokploy-act-${ACT_VERSION.replaceAll(".", "-")}-${hash}`;
+	}
+	return snapshotName;
 };
+
+/** For display: a build without the runner bundle can't name a snapshot, and only building one should fail. */
+export const isCurrentBoatSnapshotName = (name: string | null) => {
+	try {
+		return name === boatSnapshotName();
+	} catch {
+		return false;
+	}
+};
+
+const RUN_RUNNER_CONFIG = "/home/user/.dokploy-run/runner.json";
+
+/** What a run's sandbox needs to start its runner: Boat writes the files and runs the script once it's ready. */
+export const boatRunRunnerSetup = (config: {
+	url: string;
+	workflowRunnerId: string;
+	name: string;
+	labels: string[];
+	token: string;
+}) => ({
+	files: [
+		{
+			path: RUN_RUNNER_CONFIG,
+			content: JSON.stringify({ ...config, workDir: BOAT_RUNS_DIR }),
+		},
+	],
+	setupScript: [
+		`chmod 600 ${RUN_RUNNER_CONFIG}`,
+		`exec ${BOAT_RUNNER_CLI} start --once --config ${RUN_RUNNER_CONFIG}`,
+	].join("\n"),
+});
 
 export const isBoatEnabledForWorkflows = async (organizationId: string) =>
 	!!(await findBoatSettings(organizationId))?.workflowsEnabled;
@@ -203,7 +272,7 @@ export const startBoatSnapshotBuild = (
 	);
 };
 
-/** Weekly, so `act-latest` style image tags don't drift far from upstream. */
+/** Weekly, so Docker, act and the cached actions don't drift far from upstream. */
 export const refreshBoatSnapshots = async () => {
 	const all = await db.query.boatSettings.findMany({
 		where: eq(boatSettings.workflowsEnabled, true),
@@ -239,9 +308,13 @@ export const releaseBoatRunSandbox = async (
 	sandboxId: string | null,
 ) => {
 	const ids = new Set(sandboxId ? [sandboxId] : []);
+	// Without a known id the label lookup is the only way to find the sandbox, so its failure must surface.
 	const labelled = await client
 		.listSandboxIdsByLabel(`${BOAT_RUN_LABEL}=${workflowRunId}`)
-		.catch(() => []);
+		.catch((error) => {
+			if (!sandboxId) throw error;
+			return [];
+		});
 	for (const id of labelled) ids.add(id);
 	for (const id of ids) await client.deleteSandbox(id);
 };

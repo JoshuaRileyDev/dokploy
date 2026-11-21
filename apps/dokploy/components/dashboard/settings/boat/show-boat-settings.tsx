@@ -229,7 +229,7 @@ const BoatWorkflowSettings = ({ boat }: { boat: Boat }) => {
 	return (
 		<Section
 			title="Workflows"
-			description="Each workflow run gets a fresh machine, created from a saved snapshot that already has act and the runner images, and deleted when the run finishes. Boat takes every run except jobs that match a runner's labels and repositories that pin a workflow server."
+			description="Each workflow run gets a fresh machine, created from a saved snapshot that already has act and common actions, and deleted when the run finishes. Jobs run directly on the machine, like on a GitHub-hosted runner. Boat takes every run except jobs that match a runner's labels and repositories that pin a workflow server."
 		>
 			<div className="grid gap-4 md:grid-cols-2">
 				<div className="flex items-center justify-between gap-4 md:col-span-2">

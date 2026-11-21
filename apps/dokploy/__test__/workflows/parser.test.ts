@@ -5,7 +5,9 @@ import {
 	jobWithNeeds,
 	parseWorkflow,
 	WorkflowParseError,
+	workflowRemoteActions,
 	workflowRunsOn,
+	workflowUsesServices,
 } from "@dokploy/server/utils/workflows/parser";
 import { describe, expect, it } from "vitest";
 
@@ -290,5 +292,54 @@ jobs:
 		expect(patched).not.toContain("refs/heads/main");
 		expect(patched.match(/if: false/g)).toHaveLength(2);
 		expect(patched).not.toContain("missing");
+	});
+});
+
+describe("workflowRemoteActions", () => {
+	it("lists the remote actions steps use, without local, Docker or reusable-workflow references", () => {
+		const content = `
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./local-action
+      - uses: docker://alpine:3.20
+      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v6
+      - run: echo hi
+  deploy:
+    uses: acme/workflows/.github/workflows/deploy.yml@main
+`;
+		expect(workflowRemoteActions(content)).toEqual([
+			"actions/checkout@v6",
+			"github/codeql-action/init@v3",
+		]);
+	});
+
+	it("returns nothing for a workflow it can't read", () => {
+		expect(workflowRemoteActions("jobs: [")).toEqual([]);
+	});
+});
+
+describe("workflowUsesServices", () => {
+	it("finds jobs with service containers", () => {
+		expect(
+			workflowUsesServices(
+				"on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    services:\n      db:\n        image: postgres:16\n    steps:\n      - run: true\n",
+			),
+		).toBe(true);
+		expect(
+			workflowUsesServices(
+				"on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
+			),
+		).toBe(false);
+		expect(
+			workflowUsesServices(
+				"on: push\njobs:\n  call:\n    uses: ./.github/workflows/test.yml\n",
+			),
+		).toBe(true);
+		expect(workflowUsesServices("jobs: [")).toBe(false);
 	});
 });

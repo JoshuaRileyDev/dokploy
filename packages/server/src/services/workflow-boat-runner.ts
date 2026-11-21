@@ -1,11 +1,13 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import path from "node:path";
 import { db } from "@dokploy/server/db";
 import { workflowRunners } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { BoatApiError, BoatClient, STOPPED_STATES } from "../utils/boat/client";
 import { ACT_VERSION } from "../utils/workflows/act";
+import {
+	BOAT_RUNNER_CLI,
+	installRunnerBundleScript,
+} from "../utils/workflows/runner-bundle";
 import { runRemoteScript } from "../utils/workflows/ssh";
 import { getDokployUrl } from "./admin";
 import {
@@ -24,7 +26,6 @@ import {
 const IDLE_STOP_MS = 10 * 60 * 1000;
 // Boat stops the machine on its own after this long in case Dokploy never does; outlives the 6 hour run limit.
 const MACHINE_TTL_SECONDS = 7 * 60 * 60;
-const RUNNER_DIR = "/home/user/dokploy-runner";
 
 // Dev can evaluate this module more than once, so in-flight work lives on globalThis.
 const globalForRunners = globalThis as unknown as {
@@ -40,53 +41,18 @@ const isGone = (error: unknown) =>
 const errorText = (error: unknown) =>
 	error instanceof Error ? error.message : String(error);
 
-/** The built runner package: `runner/` next to the server in the image, `apps/runner` in development. */
-const runnerBundleDir = () => {
-	const candidates = [
-		process.env.DOKPLOY_RUNNER_DIR,
-		path.join(process.cwd(), "runner"),
-		path.join(process.cwd(), "..", "runner"),
-	].filter((dir): dir is string => !!dir);
-	const found = candidates.find((dir) =>
-		existsSync(path.join(dir, "dist", "cli.js")),
-	);
-	if (!found) {
-		throw new Error(
-			"This Dokploy build doesn't include the workflow runner. In development, run `pnpm --filter=./apps/runner build` first.",
-		);
-	}
-	return found;
-};
-
-const writeFileCommand = (target: string, contents: Buffer) =>
-	`echo '${contents.toString("base64")}' | base64 -d > ${target}`;
-
 export const boatRunnerSetupScript = (
 	dokployUrl: string,
 	registrationToken: string,
 ) => {
-	const bundle = runnerBundleDir();
-	const distFiles = readdirSync(path.join(bundle, "dist")).filter((file) =>
-		file.endsWith(".js"),
-	);
-	const cli = `node ${RUNNER_DIR}/dist/cli.js`;
+	const cli = BOAT_RUNNER_CLI;
 	return [
 		"set -euo pipefail",
 		`echo "Installing act ${ACT_VERSION}"`,
 		`curl -fsSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin "v${ACT_VERSION}"`,
 		"act --version",
 		'echo "Installing the Dokploy runner"',
-		`rm -rf ${RUNNER_DIR} && mkdir -p ${RUNNER_DIR}/dist`,
-		writeFileCommand(
-			`${RUNNER_DIR}/package.json`,
-			readFileSync(path.join(bundle, "package.json")),
-		),
-		...distFiles.map((file) =>
-			writeFileCommand(
-				`${RUNNER_DIR}/dist/${file}`,
-				readFileSync(path.join(bundle, "dist", file)),
-			),
-		),
+		installRunnerBundleScript(),
 		`${cli} register --url '${dokployUrl}' --token '${registrationToken}'`,
 		// The runner is a systemd user service; lingering starts it at boot, with nobody logged in.
 		'sudo loginctl enable-linger "$(id -un)"',
@@ -296,6 +262,7 @@ export const wakeBoatRunnerForRun = async (run: {
 	const candidates = await db.query.workflowRunners.findMany({
 		where: and(
 			eq(workflowRunners.organizationId, run.organizationId),
+			isNull(workflowRunners.ephemeralRunId),
 			sql`${workflowRunners.labels} && ${sql.param(run.runsOn)}::text[]`,
 			sql`(cardinality(${workflowRunners.allowedRepositoryIds}) = 0 OR ${run.workflowRepositoryId} = ANY(${workflowRunners.allowedRepositoryIds}))`,
 		),

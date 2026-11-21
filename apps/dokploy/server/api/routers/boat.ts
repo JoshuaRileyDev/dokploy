@@ -1,10 +1,10 @@
 import {
-	boatSnapshotName,
 	findBoatBuildMachines,
 	findBoatSettings,
 	getBoatSummary,
 	IS_CLOUD,
 	isBoatSnapshotBuilding,
+	isCurrentBoatSnapshotName,
 	removeBoatBuildPool,
 	removeBoatConnection,
 	requireBoatSettings,
@@ -51,8 +51,9 @@ export const boatRouter = createTRPCRouter({
 		if (!summary) return null;
 		return {
 			...summary,
-			workflowSnapshotCurrent:
-				summary.workflowSnapshotName === boatSnapshotName(),
+			workflowSnapshotCurrent: isCurrentBoatSnapshotName(
+				summary.workflowSnapshotName,
+			),
 			workflowSnapshotBuilding: isBoatSnapshotBuilding(organizationId),
 		};
 	}),
