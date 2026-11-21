@@ -1,7 +1,9 @@
-import { claimRunForRunner } from "@dokploy/server";
+import { claimRunForRunner, waitForRunnerRunQueued } from "@dokploy/server";
 import { z } from "zod";
 import { runnerEndpoint } from "@/server/utils/workflow-runner-api";
 
+// Runs queued by this process wake the request at once; polling covers runs that become claimable
+// any other way, such as a concurrency group freeing up after a cancel.
 const POLL_INTERVAL_MS = 2000;
 
 const schema = z.object({
@@ -20,7 +22,9 @@ export default runnerEndpoint(schema, async ({ req, res, body, runner }) => {
 		const claimed = await claimRunForRunner(runner, body.workDir);
 		if (claimed) return res.status(200).json({ run: claimed });
 		if (Date.now() >= deadline) break;
-		await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+		await waitForRunnerRunQueued(
+			Math.min(POLL_INTERVAL_MS, deadline - Date.now()),
+		);
 	}
 	if (!closed) res.status(200).json({ run: null });
 });

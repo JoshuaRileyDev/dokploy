@@ -8,6 +8,7 @@ import {
 	BOAT_RUN_LABEL,
 	BOAT_RUN_TTL_SECONDS,
 	BOAT_RUNS_DIR,
+	boatPlatformImages,
 	ensureBoatSnapshot,
 	releaseBoatRunSandbox,
 } from "../../services/workflow-boat";
@@ -32,6 +33,7 @@ type Machine = {
 	description: string;
 	baseDir?: string;
 	prepareScript?: string;
+	platformImages?: Record<string, string>;
 	release: () => Promise<void>;
 };
 
@@ -39,12 +41,10 @@ type StartedRun = NonNullable<
 	Awaited<ReturnType<typeof RunRecorder.start>>
 >["run"];
 
-const elapsedSince = (start: number) =>
-	`${((Date.now() - start) / 1000).toFixed(1)}s`;
-
 const workflowServerMachine = async (
 	serverId: string,
 	workflowRunId: string,
+	recorder: RunRecorder,
 	signal: AbortSignal,
 ): Promise<Machine> => {
 	const server = await findServerById(serverId);
@@ -58,6 +58,7 @@ const workflowServerMachine = async (
 		privateKey: server.sshKey.privateKey,
 	};
 	const session = await openSshSession(target, { signal });
+	await recorder.mark("connected");
 	return {
 		session,
 		description: server.name,
@@ -73,10 +74,10 @@ const workflowServerMachine = async (
 
 const boatMachine = async (
 	run: StartedRun,
-	log: (line: string) => void,
+	recorder: RunRecorder,
 	signal: AbortSignal,
 ): Promise<Machine> => {
-	const start = Date.now();
+	const log = (line: string) => recorder.log(line);
 	const settings = await findBoatSettings(run.repository.organizationId);
 	if (!settings) {
 		throw new Error("Boat was disconnected from this organization.");
@@ -124,17 +125,18 @@ const boatMachine = async (
 			`Starting Boat sandbox ${sandbox.id} (${settings.workflowMachineType})`,
 		);
 		const { target } = await connectToBoatSandbox(client, sandbox.id, signal);
-		log(`Boat sandbox ready after ${elapsedSince(start)}`);
+		await recorder.mark("sandbox_ready");
 		const session = await openSshSession(target, {
 			retryForMs: 30_000,
 			signal,
 		});
-		log(`Connected over SSH after ${elapsedSince(start)}`);
+		await recorder.mark("connected");
 		return {
 			session,
 			description: `Boat sandbox ${sandbox.id}`,
 			baseDir: BOAT_RUNS_DIR,
 			prepareScript: BOAT_PREPARE_DOCKER_SCRIPT,
+			platformImages: boatPlatformImages(run.trusted),
 			release: async () => {
 				session.close();
 				await release();
@@ -171,13 +173,24 @@ export const executeWorkflowRun = async (
 	const machineSignal = AbortSignal.any([combined, preparing.signal]);
 	try {
 		const [inputs, acquired] = await Promise.allSettled([
-			prepareRunInputs(run, { seedActions: true }).catch((error) => {
-				preparing.abort(error);
-				throw error;
-			}),
+			prepareRunInputs(run, { seedActions: true }).then(
+				async (inputs) => {
+					await recorder.mark("inputs_ready");
+					return inputs;
+				},
+				(error) => {
+					preparing.abort(error);
+					throw error;
+				},
+			),
 			run.runsOnBoat
-				? boatMachine(run, (line) => recorder.log(line), machineSignal)
-				: workflowServerMachine(run.serverId!, workflowRunId, machineSignal),
+				? boatMachine(run, recorder, machineSignal)
+				: workflowServerMachine(
+						run.serverId!,
+						workflowRunId,
+						recorder,
+						machineSignal,
+					),
 		]);
 		if (acquired.status === "fulfilled") machine = acquired.value;
 		if (inputs.status === "rejected") throw inputs.reason;
@@ -193,6 +206,7 @@ export const executeWorkflowRun = async (
 				...scriptInput,
 				baseDir: machine!.baseDir,
 				prepareScript: machine!.prepareScript,
+				platformImages: machine!.platformImages,
 				managedCache: true,
 			}),
 			signal: combined,

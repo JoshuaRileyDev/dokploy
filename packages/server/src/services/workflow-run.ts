@@ -30,6 +30,7 @@ import {
 import { scheduledJobs, scheduleJob } from "node-schedule";
 import type { Octokit } from "octokit";
 import { authGithub } from "../utils/providers/github";
+import { buildRefreshRunnerCacheScript } from "../utils/workflows/act";
 import { syncWorkflowCheckRun } from "../utils/workflows/check-runs";
 import {
 	type NormalizedGithubEvent,
@@ -49,7 +50,6 @@ import {
 	cancelQueuedOrActiveRun,
 	enqueueWorkflowRun,
 } from "../utils/workflows/queue";
-import { buildRefreshRunnerCacheScript } from "../utils/workflows/act";
 import { workflowLogsDirectory } from "../utils/workflows/run-recorder";
 import { runRemoteScript } from "../utils/workflows/ssh";
 import {
@@ -76,7 +76,11 @@ import {
 	syncBoatRunners,
 	wakeBoatRunnerForRun,
 } from "./workflow-boat-runner";
-import { failStaleRunnerRuns, hasMatchingRunner } from "./workflow-runner";
+import {
+	failStaleRunnerRuns,
+	hasMatchingRunner,
+	notifyRunnerRunQueued,
+} from "./workflow-runner";
 
 export type WorkflowRun = typeof workflowRuns.$inferSelect;
 
@@ -619,6 +623,7 @@ export const createWorkflowRun = async (
 		// Runner runs wait in the database until a matching runner claims them.
 		await enqueueRun(run, repository.organizationId);
 		if (run.requiresRunner) {
+			notifyRunnerRunQueued();
 			wakeBoatRunnerForRun({
 				organizationId: repository.organizationId,
 				workflowRepositoryId: run.workflowRepositoryId,

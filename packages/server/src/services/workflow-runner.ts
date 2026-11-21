@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import path from "node:path";
 import { db } from "@dokploy/server/db";
 import {
@@ -30,6 +31,29 @@ const REGISTRATION_TOKEN_TTL_MS = 60 * 60 * 1000;
 export const RUNNER_ONLINE_WINDOW_MS = 60 * 1000;
 /** In-progress runs on a runner that has been silent this long are failed. */
 const RUNNER_STALE_MS = 3 * 60 * 1000;
+
+// Dev can evaluate this module more than once, so the emitter lives on globalThis.
+const globalForRunners = globalThis as unknown as {
+	__dokployRunnerRunsQueued?: EventEmitter;
+};
+globalForRunners.__dokployRunnerRunsQueued ??=
+	new EventEmitter().setMaxListeners(0);
+const runnerRunsQueued = globalForRunners.__dokployRunnerRunsQueued;
+
+/** Wakes runners waiting in a claim request, so they don't wait for the next poll. */
+export const notifyRunnerRunQueued = () => runnerRunsQueued.emit("queued");
+
+/** Resolves when a run may have become claimable, or after `ms` at the latest. */
+export const waitForRunnerRunQueued = (ms: number) =>
+	new Promise<void>((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			runnerRunsQueued.off("queued", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		runnerRunsQueued.on("queued", done);
+	});
 
 const generateToken = (prefix: string) =>
 	`${prefix}_${randomBytes(32).toString("base64url")}`;
@@ -363,6 +387,7 @@ export const claimRunForRunner = async (
 	try {
 		const { scriptInput, maskValues } = await prepareRunInputs(recorder.run);
 		recorder.setMaskValues(maskValues);
+		await recorder.mark("inputs_ready");
 		recorder.log(
 			`Running ${recorder.run.workflowPath} at ${recorder.run.sha.slice(0, 7)} on runner ${runner.name}`,
 		);
@@ -440,6 +465,8 @@ export const completeRunnerRun = async (
 		cancelled: run.cancelRequested,
 		errorMessage,
 	});
+	// A queued run in the same concurrency group can be claimed now.
+	notifyRunnerRunQueued();
 };
 
 /** Fails in-progress runs whose runner stopped polling, e.g. because the machine went to sleep or lost its connection. */

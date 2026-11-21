@@ -1,3 +1,4 @@
+import type { WorkflowSetupStep } from "@dokploy/server/db/schema";
 import { quote } from "shell-quote";
 
 export const ACT_VERSION = "0.2.89";
@@ -51,6 +52,14 @@ export type ActRunScriptInput = {
 	/** Remote actions to seed into act's cache while the repository is fetched (with `managedCache`). */
 	seedActions?: string[];
 };
+
+/** Printed by run scripts at setup milestones and turned into timings by the run recorder. */
+export const SETUP_TIMING_PREFIX = "::dokploy-setup-timing::";
+
+// The machine's clock is more precise than when the line reaches Dokploy; date has no %N on macOS,
+// which the recorder detects and falls back from.
+const setupTiming = (step: WorkflowSetupStep) =>
+	`echo "${SETUP_TIMING_PREFIX}${step} $(date +%s.%N)"`;
 
 export const runDirectory = (runId: string, baseDir = WORKFLOW_RUNS_PATH) =>
 	`${baseDir}/${runId}`;
@@ -141,6 +150,7 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 					"git checkout -q FETCH_HEAD",
 				]),
 		`git remote set-url origin ${quote([input.remoteUrl])}`,
+		setupTiming("repository_ready"),
 		...backgroundTasks.flatMap((_, index) => {
 			const log = quote([`${dir}/background-${index}.log`]);
 			return [
@@ -148,6 +158,7 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 				`cat ${log}`,
 			];
 		}),
+		...(backgroundTasks.length > 0 ? [setupTiming("machine_prepared")] : []),
 		...(input.workflowOverride === undefined
 			? []
 			: [
@@ -162,6 +173,7 @@ export const buildActRunScript = (input: ActRunScriptInput) => {
 		writeFile(`${dir}/vars.env`, toDotenv(input.variables)),
 		writeFile(`${dir}/inputs.env`, toDotenv(input.inputs)),
 		"set +e",
+		setupTiming("act_started"),
 		`${quote(buildActArgs(input, dir))} &`,
 		"ACT_PID=$!",
 		`echo $ACT_PID > ${quote([`${dir}/act.pid`])}`,

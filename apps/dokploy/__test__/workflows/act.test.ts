@@ -177,6 +177,21 @@ describe("managed caches", () => {
 		expect(() => execFileSync("bash", ["-n"], { input: script })).not.toThrow();
 	});
 
+	it("reports setup milestones in order, with machine preparation only when there is some", () => {
+		const prepared = buildActRunScript({ ...input, prepareScript: "true" });
+		const order = [
+			"git fetch",
+			"::dokploy-setup-timing::repository_ready",
+			"wait $BACKGROUND_0",
+			"::dokploy-setup-timing::machine_prepared",
+			"::dokploy-setup-timing::act_started",
+			"act push",
+		].map((text) => prepared.indexOf(text));
+		expect(order.every((index) => index >= 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toEqual(order);
+		expect(buildActRunScript(input)).not.toContain("machine_prepared");
+	});
+
 	it("seeds each action into the directory act names after the full `uses:`", () => {
 		const script = buildSeedActionsScript([
 			"github/codeql-action/init@v3",
