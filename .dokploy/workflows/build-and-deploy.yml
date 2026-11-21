@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-and-deploy:
-    name: Build ARM64 image and update Swarm
+    name: Build image and update Swarm
     runs-on: [self-hosted, dokploy-build]
     steps:
       - name: Require the deployment branch
@@ -79,7 +79,7 @@ jobs:
           PY
           printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry_host" --username "$REGISTRY_USERNAME" --password-stdin
 
-      - name: Build and push ARM64 image
+      - name: Build and push image
         if: ${{ inputs.deploy_only != true }}
         env:
           REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
@@ -98,7 +98,7 @@ jobs:
 
       - name: Update production Swarm service
         env:
-          DEPLOY_HOST: 37.27.252.79
+          DEPLOY_HOST: 173.249.16.152
           DEPLOY_USER: root
           REGISTRY_IMAGE: ${{ vars.REGISTRY_IMAGE }}
           REGISTRY_PULL_USERNAME: ${{ secrets.REGISTRY_PULL_USERNAME }}
