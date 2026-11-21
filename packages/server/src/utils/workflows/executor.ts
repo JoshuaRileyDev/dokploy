@@ -1,7 +1,8 @@
 import { db } from "@dokploy/server/db";
 import { workflowRuns } from "@dokploy/server/db/schema";
 import { eq } from "drizzle-orm";
-import { connectToBoatSandbox, findBoatSettings } from "../../services/boat";
+import { getDokployUrl } from "../../services/admin";
+import { findBoatSettings } from "../../services/boat";
 import { findServerById } from "../../services/server";
 import {
 	BOAT_PREPARE_DOCKER_SCRIPT,
@@ -9,9 +10,17 @@ import {
 	BOAT_RUN_TTL_SECONDS,
 	BOAT_RUNS_DIR,
 	boatPlatformImages,
+	boatRunRunnerSetup,
 	ensureBoatSnapshot,
-	releaseBoatRunSandbox,
 } from "../../services/workflow-boat";
+import {
+	createEphemeralRunner,
+	finishEphemeralRun,
+	type PreparedRunnerScript,
+	registerEphemeralRun,
+	releaseEphemeralRunner,
+	unregisterEphemeralRun,
+} from "../../services/workflow-runner";
 import { BoatClient } from "../boat/client";
 import {
 	buildActCancelScript,
@@ -27,13 +36,15 @@ import {
 } from "./ssh";
 
 const MAX_RUN_DURATION_MS = 6 * 60 * 60 * 1000;
+const RUN_LIMIT_MESSAGE = "The run exceeded the 6 hour limit and was stopped.";
+const RUNNER_START_TIMEOUT_MS = 2 * 60 * 1000;
+const FINISH_POLL_MS = 2000;
+// The runner hears about a cancel within seconds and gives act 20s to stop.
+const CANCEL_GRACE_MS = 60_000;
 
 type Machine = {
 	session: SshSession;
 	description: string;
-	baseDir?: string;
-	prepareScript?: string;
-	platformImages?: Record<string, string>;
 	release: () => Promise<void>;
 };
 
@@ -72,43 +83,80 @@ const workflowServerMachine = async (
 	};
 };
 
-const boatMachine = async (
+const untilAborted = (signal: AbortSignal, message: string) =>
+	new Promise<never>((_, reject) => {
+		if (signal.aborted) reject(new Error(message));
+		signal.addEventListener("abort", () => reject(new Error(message)), {
+			once: true,
+		});
+	});
+
+const rejectAfter = (ms: number, message: string) =>
+	new Promise<never>((_, reject) =>
+		setTimeout(() => reject(new Error(message)), ms).unref(),
+	);
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+	new Promise<void>((resolve) => {
+		const timer = setTimeout(resolve, ms);
+		signal?.addEventListener(
+			"abort",
+			() => {
+				clearTimeout(timer);
+				resolve();
+			},
+			{ once: true },
+		);
+	});
+
+/** Creates the run's sandbox with a one-run runner in it; resolves once Boat reports the sandbox ready. */
+const startBoatRunSandbox = async (
 	run: StartedRun,
 	recorder: RunRecorder,
 	signal: AbortSignal,
-): Promise<Machine> => {
-	const log = (line: string) => recorder.log(line);
-	const settings = await findBoatSettings(run.repository.organizationId);
+) => {
+	const { organizationId } = run.repository;
+	const settings = await findBoatSettings(organizationId);
 	if (!settings) {
 		throw new Error("Boat was disconnected from this organization.");
 	}
 	const client = new BoatClient(settings.apiKey);
-	signal.throwIfAborted();
 	// The snapshot build is shared with other runs, so a cancel stops waiting rather than the build.
 	const snapshot = await Promise.race([
-		ensureBoatSnapshot(run.repository.organizationId, {
-			log: (line) => log(`[boat snapshot] ${line}`),
+		ensureBoatSnapshot(organizationId, {
+			log: (line) => recorder.log(`[boat snapshot] ${line}`),
 		}),
-		new Promise<never>((_, reject) =>
-			signal.addEventListener(
-				"abort",
-				() => reject(new Error("Cancelled while preparing Boat")),
-				{ once: true },
-			),
-		),
+		untilAborted(signal, "Cancelled while preparing Boat"),
 	]);
-
+	const name =
+		`${run.repository.repository} ${run.workflowName} #${run.runNumber}`.slice(
+			0,
+			120,
+		);
+	const [{ runner, token }, url] = await Promise.all([
+		createEphemeralRunner({
+			organizationId,
+			workflowRunId: run.workflowRunId,
+			name: `Boat: ${name}`,
+			labels: run.runsOn,
+		}),
+		getDokployUrl(),
+	]);
 	const sandbox = await client.createSandbox(
 		{
 			type: settings.workflowMachineType,
 			from: snapshot,
-			name: `${run.repository.repository} ${run.workflowName} #${run.runNumber}`.slice(
-				0,
-				120,
-			),
+			name,
 			ttlSeconds: BOAT_RUN_TTL_SECONDS,
 			labels: { [BOAT_RUN_LABEL]: run.workflowRunId },
 			snapshots: false,
+			...boatRunRunnerSetup({
+				url,
+				workflowRunnerId: runner.workflowRunnerId,
+				name: runner.name,
+				labels: runner.labels,
+				token,
+			}),
 		},
 		run.workflowRunId,
 		signal,
@@ -117,38 +165,138 @@ const boatMachine = async (
 		.update(workflowRuns)
 		.set({ boatSandboxId: sandbox.id })
 		.where(eq(workflowRuns.workflowRunId, run.workflowRunId));
-	const release = () =>
-		releaseBoatRunSandbox(client, run.workflowRunId, sandbox.id);
+	recorder.log(
+		`Starting Boat sandbox ${sandbox.id} (${settings.workflowMachineType})`,
+	);
+	return {
+		url,
+		ready: client
+			.waitForSandbox(sandbox.id, signal)
+			.then(() => recorder.mark("sandbox_ready")),
+	};
+};
 
-	try {
-		log(
-			`Starting Boat sandbox ${sandbox.id} (${settings.workflowMachineType})`,
-		);
-		const { target } = await connectToBoatSandbox(client, sandbox.id, signal);
-		await recorder.mark("sandbox_ready");
-		const session = await openSshSession(target, {
-			retryForMs: 30_000,
-			signal,
+/** Waits for the sandbox's runner to finish the run, asking it to stop when the run is cancelled or times out. */
+const waitForBoatRunner = async (
+	workflowRunId: string,
+	signal: AbortSignal,
+	timeout: AbortSignal,
+) => {
+	const stop = AbortSignal.any([signal, timeout]);
+	let giveUpAt: number | null = null;
+	for (;;) {
+		const current = await db.query.workflowRuns.findFirst({
+			where: eq(workflowRuns.workflowRunId, workflowRunId),
+			columns: { status: true },
 		});
-		await recorder.mark("connected");
-		return {
-			session,
-			description: `Boat sandbox ${sandbox.id}`,
-			baseDir: BOAT_RUNS_DIR,
-			prepareScript: BOAT_PREPARE_DOCKER_SCRIPT,
-			platformImages: boatPlatformImages(run.trusted),
-			release: async () => {
-				session.close();
-				await release();
-			},
-		};
-	} catch (error) {
-		await release().catch(() => {});
-		throw error;
+		if (current?.status !== "in_progress") return;
+		if (stop.aborted && giveUpAt === null) {
+			await db
+				.update(workflowRuns)
+				.set({
+					cancelRequested: true,
+					...(timeout.aborted ? { errorMessage: RUN_LIMIT_MESSAGE } : {}),
+				})
+				.where(eq(workflowRuns.workflowRunId, workflowRunId));
+			giveUpAt = Date.now() + CANCEL_GRACE_MS;
+		}
+		if (giveUpAt !== null && Date.now() > giveUpAt) {
+			await finishEphemeralRun(workflowRunId, {
+				exitCode: 1,
+				cancelled: !timeout.aborted,
+				errorMessage: timeout.aborted
+					? RUN_LIMIT_MESSAGE
+					: "The Boat sandbox's runner didn't stop after the run was cancelled.",
+			});
+			return;
+		}
+		await sleep(FINISH_POLL_MS, giveUpAt === null ? stop : undefined);
 	}
 };
 
-/** Runs one workflow run to completion over SSH, on its workflow server or a fresh Boat sandbox. */
+/**
+ * Runs a Boat run through a runner inside its sandbox. The runner claims the run over HTTP like any
+ * runner, so the run keeps going if Dokploy restarts, and the sandbox is deleted when it finishes.
+ */
+const executeBoatRun = async (
+	recorder: RunRecorder,
+	signal: AbortSignal,
+	timeout: AbortSignal,
+) => {
+	const { run } = recorder;
+	const stop = AbortSignal.any([signal, timeout]);
+	let claimed = false;
+	let onClaim!: () => void;
+	const claim = new Promise<void>((resolve) => {
+		onClaim = () => {
+			claimed = true;
+			resolve();
+		};
+	});
+	const prepared: Promise<PreparedRunnerScript> = prepareRunInputs(run, {
+		seedActions: true,
+	}).then(async ({ scriptInput, maskValues }) => {
+		recorder.setMaskValues(maskValues);
+		await recorder.mark("inputs_ready");
+		recorder.log(
+			`Running ${run.workflowPath} at ${run.sha.slice(0, 7)} on a Boat sandbox`,
+		);
+		return {
+			script: buildActRunScript({
+				...scriptInput,
+				baseDir: BOAT_RUNS_DIR,
+				prepareScript: BOAT_PREPARE_DOCKER_SCRIPT,
+				platformImages: boatPlatformImages(run.trusted),
+				managedCache: true,
+			}),
+			maskValues,
+		};
+	});
+	prepared.catch(() => {});
+	registerEphemeralRun(run.workflowRunId, { recorder, prepared, onClaim });
+
+	try {
+		try {
+			const { url, ready } = await startBoatRunSandbox(run, recorder, stop);
+			await Promise.race([
+				claim,
+				prepared.then(() => claim),
+				ready.then(() => claim),
+				rejectAfter(
+					RUNNER_START_TIMEOUT_MS,
+					`The runner in the Boat sandbox didn't reach Dokploy at ${url} within 2 minutes. Boat sandboxes must be able to reach Dokploy at that address (Settings → Web Server).`,
+				),
+				untilAborted(stop, "Cancelled while starting the Boat sandbox"),
+			]);
+		} catch (error) {
+			if (!claimed) {
+				await recorder.finish({
+					exitCode: 1,
+					cancelled: signal.aborted,
+					errorMessage: timeout.aborted
+						? RUN_LIMIT_MESSAGE
+						: signal.aborted
+							? null
+							: error instanceof Error
+								? error.message
+								: String(error),
+				});
+				return;
+			}
+		}
+		await waitForBoatRunner(run.workflowRunId, signal, timeout);
+	} finally {
+		unregisterEphemeralRun(run.workflowRunId);
+		await releaseEphemeralRunner(run.workflowRunId).catch((error) =>
+			console.error(
+				`Failed to release the Boat sandbox of run ${run.workflowRunId}`,
+				error,
+			),
+		);
+	}
+};
+
+/** Runs one workflow run to completion: over SSH on its workflow server, or through a runner in a fresh Boat sandbox. */
 export const executeWorkflowRun = async (
 	workflowRunId: string,
 	signal: AbortSignal,
@@ -163,12 +311,16 @@ export const executeWorkflowRun = async (
 	combined.addEventListener("abort", () => recorder.markAborting(), {
 		once: true,
 	});
+	if (run.runsOnBoat) {
+		await executeBoatRun(recorder, signal, timeout);
+		return;
+	}
 
 	let exitCode = 1;
 	let errorMessage: string | null = null;
 	let machine: Machine | null = null;
-	// Inputs (tokens, secrets, the workflow file) and the machine are independent, so the machine
-	// boots while the inputs are fetched. Failing inputs stop the boot.
+	// Inputs (tokens, secrets, the workflow file) and the connection are independent, so they're
+	// fetched together. Failing inputs stop the connection attempt.
 	const preparing = new AbortController();
 	const machineSignal = AbortSignal.any([combined, preparing.signal]);
 	try {
@@ -183,14 +335,12 @@ export const executeWorkflowRun = async (
 					throw error;
 				},
 			),
-			run.runsOnBoat
-				? boatMachine(run, recorder, machineSignal)
-				: workflowServerMachine(
-						run.serverId!,
-						workflowRunId,
-						recorder,
-						machineSignal,
-					),
+			workflowServerMachine(
+				run.serverId!,
+				workflowRunId,
+				recorder,
+				machineSignal,
+			),
 		]);
 		if (acquired.status === "fulfilled") machine = acquired.value;
 		if (inputs.status === "rejected") throw inputs.reason;
@@ -202,15 +352,9 @@ export const executeWorkflowRun = async (
 		);
 
 		exitCode = await machine!.session.run({
-			script: buildActRunScript({
-				...scriptInput,
-				baseDir: machine!.baseDir,
-				prepareScript: machine!.prepareScript,
-				platformImages: machine!.platformImages,
-				managedCache: true,
-			}),
+			script: buildActRunScript({ ...scriptInput, managedCache: true }),
 			signal: combined,
-			onAbortScript: buildActCancelScript(workflowRunId, machine!.baseDir),
+			onAbortScript: buildActCancelScript(workflowRunId),
 			onStdout: (chunk) => recorder.pushChunk("stdout", chunk),
 			onStderr: (chunk) => recorder.pushChunk("stderr", chunk),
 		});
@@ -222,9 +366,7 @@ export const executeWorkflowRun = async (
 		?.release()
 		.catch((error) => recorder.log(`Cleanup failed: ${error.message}`));
 
-	if (timeout.aborted) {
-		errorMessage = "The run exceeded the 6 hour limit and was stopped.";
-	}
+	if (timeout.aborted) errorMessage = RUN_LIMIT_MESSAGE;
 	await recorder.finish({
 		exitCode,
 		cancelled: signal.aborted,

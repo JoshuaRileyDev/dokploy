@@ -12,6 +12,10 @@ import {
 	ACT_VERSION,
 	buildWarmActionCacheScript,
 } from "../utils/workflows/act";
+import {
+	BOAT_RUNNER_CLI,
+	installRunnerBundleScript,
+} from "../utils/workflows/runner-bundle";
 import { runRemoteScript } from "../utils/workflows/ssh";
 import {
 	type BoatSettings,
@@ -80,20 +84,50 @@ const buildSnapshotScript = (keyComment: string) =>
 		`docker rmi -f ${DOCKER_CHECK_IMAGE} >/dev/null`,
 		'echo "Caching common actions"',
 		buildWarmActionCacheScript(),
+		'echo "Installing the Dokploy runner"',
+		installRunnerBundleScript(),
+		`${BOAT_RUNNER_CLI} --version`,
 		`mkdir -p ${BOAT_RUNS_DIR}`,
 		// The build key would otherwise be baked into every sandbox created from the snapshot.
 		`sed -i '/${keyComment}/d' ~/.ssh/authorized_keys`,
 		"sync",
 	].join("\n");
 
-/** Changes whenever the snapshot script changes, so stale snapshots get rebuilt. */
+let snapshotName: string | undefined;
+
+/** Changes whenever the snapshot script or the bundled runner changes, so stale snapshots get rebuilt. */
 export const boatSnapshotName = () => {
-	const hash = createHash("sha256")
-		.update(buildSnapshotScript(""))
-		.digest("hex")
-		.slice(0, 8);
-	return `dokploy-act-${ACT_VERSION.replaceAll(".", "-")}-${hash}`;
+	if (!snapshotName) {
+		const hash = createHash("sha256")
+			.update(buildSnapshotScript(""))
+			.digest("hex")
+			.slice(0, 8);
+		snapshotName = `dokploy-act-${ACT_VERSION.replaceAll(".", "-")}-${hash}`;
+	}
+	return snapshotName;
 };
+
+const RUN_RUNNER_CONFIG = "/home/user/.dokploy-run/runner.json";
+
+/** What a run's sandbox needs to start its runner: Boat writes the files and runs the script once it's ready. */
+export const boatRunRunnerSetup = (config: {
+	url: string;
+	workflowRunnerId: string;
+	name: string;
+	labels: string[];
+	token: string;
+}) => ({
+	files: [
+		{
+			path: RUN_RUNNER_CONFIG,
+			content: JSON.stringify({ ...config, workDir: BOAT_RUNS_DIR }),
+		},
+	],
+	setupScript: [
+		`chmod 600 ${RUN_RUNNER_CONFIG}`,
+		`exec ${BOAT_RUNNER_CLI} start --once --config ${RUN_RUNNER_CONFIG}`,
+	].join("\n"),
+});
 
 export const isBoatEnabledForWorkflows = async (organizationId: string) =>
 	!!(await findBoatSettings(organizationId))?.workflowsEnabled;

@@ -10,8 +10,18 @@ import {
 	workflowRuns,
 } from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	sql,
+} from "drizzle-orm";
 import type { z } from "zod";
+import { BoatClient } from "../utils/boat/client";
 import {
 	buildActRunScript,
 	DEFAULT_PLATFORM_IMAGES,
@@ -22,7 +32,9 @@ import {
 	RunRecorder,
 	workflowLogsDirectory,
 } from "../utils/workflows/run-recorder";
+import { findBoatSettings } from "./boat";
 import { resolveWorkflowEnv } from "./workflow";
+import { releaseBoatRunSandbox } from "./workflow-boat";
 
 export type WorkflowRunner = typeof workflowRunners.$inferSelect;
 
@@ -82,7 +94,10 @@ const normalizeLabels = (labels: string[]) => [
 
 export const findWorkflowRunners = async (organizationId: string) => {
 	const runners = await db.query.workflowRunners.findMany({
-		where: eq(workflowRunners.organizationId, organizationId),
+		where: and(
+			eq(workflowRunners.organizationId, organizationId),
+			isNull(workflowRunners.ephemeralRunId),
+		),
 		orderBy: desc(workflowRunners.createdAt),
 	});
 	const active = runners.length
@@ -120,6 +135,7 @@ export const findOwnedRunner = async (
 		where: and(
 			eq(workflowRunners.workflowRunnerId, workflowRunnerId),
 			eq(workflowRunners.organizationId, organizationId),
+			isNull(workflowRunners.ephemeralRunId),
 		),
 	});
 	if (!runner) {
@@ -300,6 +316,7 @@ export const hasMatchingRunner = async ({
 		.where(
 			and(
 				eq(workflowRunners.organizationId, organizationId),
+				isNull(workflowRunners.ephemeralRunId),
 				sql`${workflowRunners.labels} && ${sql.param(runsOn)}::text[]`,
 				sql`(cardinality(${workflowRunners.allowedRepositoryIds}) = 0 OR ${workflowRepositoryId} = ANY(${workflowRunners.allowedRepositoryIds}))`,
 			),
@@ -335,11 +352,161 @@ const recordingFor = (workflowRunId: string) => {
 	return entry;
 };
 
+export type PreparedRunnerScript = { script: string; maskValues: string[] };
+
+type EphemeralRun = {
+	recorder: RunRecorder;
+	prepared: Promise<PreparedRunnerScript>;
+	onClaim: () => void;
+};
+
+// The executor that created a Boat run's sandbox hands its recorder and prepared script to the claim.
+const globalForEphemeral = globalThis as unknown as {
+	__dokployEphemeralRuns?: Map<string, EphemeralRun>;
+};
+globalForEphemeral.__dokployEphemeralRuns ??= new Map();
+const ephemeralRuns = globalForEphemeral.__dokployEphemeralRuns;
+
+export const registerEphemeralRun = (
+	workflowRunId: string,
+	run: EphemeralRun,
+) => ephemeralRuns.set(workflowRunId, run);
+
+export const unregisterEphemeralRun = (workflowRunId: string) =>
+	ephemeralRuns.delete(workflowRunId);
+
+/** A runner credential that can only claim one Boat run, for the sandbox created for that run. */
+export const createEphemeralRunner = async (values: {
+	organizationId: string;
+	workflowRunId: string;
+	name: string;
+	labels: string[];
+}) => {
+	const token = generateToken("dkr");
+	const [runner] = await db
+		.insert(workflowRunners)
+		.values({
+			organizationId: values.organizationId,
+			name: values.name,
+			labels: values.labels,
+			tokenHash: hashRunnerToken(token),
+			ephemeralRunId: values.workflowRunId,
+		})
+		.returning();
+	return { runner: runner!, token };
+};
+
+/** Removes a Boat run's one-run runner and deletes its sandbox. Safe to call more than once. */
+export const releaseEphemeralRunner = async (workflowRunId: string) => {
+	const [runner] = await db
+		.delete(workflowRunners)
+		.where(eq(workflowRunners.ephemeralRunId, workflowRunId))
+		.returning({ organizationId: workflowRunners.organizationId });
+	if (!runner) return;
+	const run = await db.query.workflowRuns.findFirst({
+		where: eq(workflowRuns.workflowRunId, workflowRunId),
+		columns: { boatSandboxId: true },
+	});
+	const settings = await findBoatSettings(runner.organizationId);
+	if (!settings) return;
+	await releaseBoatRunSandbox(
+		new BoatClient(settings.apiKey),
+		workflowRunId,
+		run?.boatSandboxId ?? null,
+	);
+};
+
+/** Releases one-run runners whose run is over, e.g. because Dokploy stopped before cleaning up after it. */
+export const releaseFinishedEphemeralRunners = async () => {
+	const leftovers = await db
+		.select({ ephemeralRunId: workflowRunners.ephemeralRunId })
+		.from(workflowRunners)
+		.leftJoin(
+			workflowRuns,
+			eq(workflowRuns.workflowRunId, workflowRunners.ephemeralRunId),
+		)
+		.where(
+			and(
+				isNotNull(workflowRunners.ephemeralRunId),
+				sql`${workflowRuns.status} IS DISTINCT FROM 'in_progress'`,
+			),
+		);
+	for (const { ephemeralRunId } of leftovers) {
+		await releaseEphemeralRunner(ephemeralRunId!).catch((error) =>
+			console.error(
+				`Failed to release the Boat sandbox of run ${ephemeralRunId}`,
+				error,
+			),
+		);
+	}
+};
+
+const releaseEphemeralRunnerInBackground = (workflowRunId: string) =>
+	releaseEphemeralRunner(workflowRunId).catch((error) =>
+		console.error(
+			`Failed to release the Boat sandbox of run ${workflowRunId}`,
+			error,
+		),
+	);
+
+const claimEphemeralRun = async (runner: WorkflowRunner) => {
+	const workflowRunId = runner.ephemeralRunId!;
+	const pending = ephemeralRuns.get(workflowRunId);
+	// Without the executor (e.g. Dokploy restarted before the claim), startup has already failed the run.
+	if (!pending) return null;
+	const [claimed] = await db
+		.update(workflowRuns)
+		.set({ workflowRunnerId: runner.workflowRunnerId })
+		.where(
+			and(
+				eq(workflowRuns.workflowRunId, workflowRunId),
+				eq(workflowRuns.status, "in_progress"),
+				isNull(workflowRuns.workflowRunnerId),
+			),
+		)
+		.returning({ workflowRunId: workflowRuns.workflowRunId });
+	if (!claimed) return null;
+
+	const { recorder } = pending;
+	recorders.set(workflowRunId, Promise.resolve({ recorder }));
+	await recorder.mark("connected");
+	pending.onClaim();
+	let prepared: PreparedRunnerScript;
+	try {
+		prepared = await pending.prepared;
+	} catch (error) {
+		await finishEphemeralRun(workflowRunId, {
+			exitCode: 1,
+			cancelled: false,
+			errorMessage: error instanceof Error ? error.message : String(error),
+		});
+		return null;
+	}
+	return {
+		workflowRunId,
+		workflowName: recorder.run.workflowName,
+		runNumber: recorder.run.runNumber,
+		repository: `${recorder.run.repository.owner}/${recorder.run.repository.repository}`,
+		...prepared,
+	};
+};
+
+/** Records a Boat run's result when its runner can't, e.g. because it never started or ignored a cancel. */
+export const finishEphemeralRun = async (
+	workflowRunId: string,
+	result: { exitCode: number; cancelled: boolean; errorMessage: string | null },
+) => {
+	const recording = await recordingFor(workflowRunId);
+	recorders.delete(workflowRunId);
+	await recording?.recorder.finish(result);
+};
+
 /** Atomically assigns the oldest queued run this runner can take, and returns the script to run it. */
 export const claimRunForRunner = async (
 	runner: WorkflowRunner,
 	workDir: string,
 ) => {
+	if (runner.ephemeralRunId) return claimEphemeralRun(runner);
 	const logPath = (runId: string) =>
 		path.join(workflowLogsDirectory(runId), "run.log");
 	const claimed = await db.execute<{ workflowRunId: string }>(sql`
@@ -467,6 +634,7 @@ export const completeRunnerRun = async (
 	});
 	// A queued run in the same concurrency group can be claimed now.
 	notifyRunnerRunQueued();
+	if (runner.ephemeralRunId) releaseEphemeralRunnerInBackground(workflowRunId);
 };
 
 /** Fails in-progress runs whose runner stopped polling, e.g. because the machine went to sleep or lost its connection. */
@@ -497,5 +665,6 @@ export const failStaleRunnerRuns = async () => {
 			cancelled: false,
 			errorMessage: `Runner ${runnerName} stopped responding.`,
 		});
+		releaseEphemeralRunnerInBackground(workflowRunId);
 	}
 };

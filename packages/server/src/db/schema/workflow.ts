@@ -200,6 +200,8 @@ export const workflowRunners = pgTable("workflow_runner", {
 	}),
 	boatError: text("boatError"),
 	boatLastActiveAt: text("boatLastActiveAt"),
+	// Set for the one-run runner inside a Boat run's sandbox; it can only claim that run and isn't listed.
+	ephemeralRunId: text("ephemeralRunId").unique(),
 	createdAt: text("createdAt")
 		.notNull()
 		.$defaultFn(() => new Date().toISOString()),

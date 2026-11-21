@@ -80,6 +80,7 @@ import {
 	failStaleRunnerRuns,
 	hasMatchingRunner,
 	notifyRunnerRunQueued,
+	releaseFinishedEphemeralRunners,
 } from "./workflow-runner";
 
 export type WorkflowRun = typeof workflowRuns.$inferSelect;
@@ -1127,7 +1128,11 @@ export const cancelWorkflowRun = async (
 			.set({ errorMessage: reason })
 			.where(eq(workflowRuns.workflowRunId, workflowRunId));
 	}
-	if (run.requiresRunner && run.status === "in_progress") {
+	// A runner, including the one in a Boat run's sandbox, stops the run when it next reports in.
+	if (
+		run.status === "in_progress" &&
+		(run.requiresRunner || run.workflowRunnerId)
+	) {
 		await db
 			.update(workflowRuns)
 			.set({ cancelRequested: true })
@@ -1150,9 +1155,11 @@ export const initWorkflowRuns = async () => {
 	await syncWorkflowSchedules();
 	await initBoatRunners();
 	scheduleJob("dokploy-workflow-stale-runners", "* * * * *", () => {
-		failStaleRunnerRuns().catch((error) =>
-			console.error("Failed to check for stale runner runs", error),
-		);
+		failStaleRunnerRuns()
+			.then(releaseFinishedEphemeralRunners)
+			.catch((error) =>
+				console.error("Failed to check for stale runner runs", error),
+			);
 		syncBoatRunners().catch((error) =>
 			console.error("Failed to sync Boat runners", error),
 		);
@@ -1195,6 +1202,8 @@ export const initWorkflowRuns = async () => {
 			and(
 				eq(workflowRuns.status, "in_progress"),
 				eq(workflowRuns.requiresRunner, false),
+				// Boat runs whose sandbox runner has claimed them carry on, and clean up when they finish.
+				isNull(workflowRuns.workflowRunnerId),
 			),
 		)
 		.returning({ workflowRunId: workflowRuns.workflowRunId });

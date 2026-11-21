@@ -109,6 +109,10 @@ export class BoatClient {
 			labels?: Record<string, string>;
 			/** `false` erases the disk on stop and skips background captures. */
 			snapshots?: boolean;
+			/** Written under /home/user or /tmp before the sandbox reports ready; 256KB in total. */
+			files?: { path: string; content: string }[];
+			/** Runs as the sandbox user in the background once the sandbox is ready, after `files` are written. */
+			setupScript?: string;
 		},
 		idempotencyKey?: string,
 		signal?: AbortSignal,

@@ -111,7 +111,7 @@ export const buildSetupTimeline = (run: SetupRun): SetupTimeline => {
 		},
 		{
 			key: "ssh",
-			label: "Connecting over SSH",
+			label: run.runsOnBoat ? "Starting the runner" : "Connecting over SSH",
 			start: run.runsOnBoat ? mark("sandbox_ready") : picked,
 			end: mark("connected"),
 			open: !run.requiresRunner,

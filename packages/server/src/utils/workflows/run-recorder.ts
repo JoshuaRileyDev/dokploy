@@ -249,8 +249,12 @@ export class RunRecorder {
 	/** Records when a setup step finished, for the run page's setup breakdown. */
 	async mark(step: WorkflowSetupStep, at = new Date()) {
 		const since = Date.parse(this.run.createdAt);
+		const label =
+			step === "connected" && this.run.runsOnBoat
+				? "Runner in the Boat sandbox connected"
+				: SETUP_STEP_LABELS[step];
 		this.log(
-			`${SETUP_STEP_LABELS[step]} ${((at.getTime() - since) / 1000).toFixed(1)}s after the run was triggered`,
+			`${label} ${((at.getTime() - since) / 1000).toFixed(1)}s after the run was triggered`,
 		);
 		await db
 			.update(workflowRuns)
