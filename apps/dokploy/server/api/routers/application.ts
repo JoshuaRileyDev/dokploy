@@ -41,11 +41,15 @@ import { db } from "@dokploy/server/db";
 import { canEditDeployGitSource } from "@dokploy/server/services/git-provider";
 import {
 	addNewService,
+	assertNoTraefikLabels,
 	checkEnvironmentAccess,
 	checkServiceAccess,
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
+	getDomainRestriction,
 	hasPermission,
+	isDomainAllowed,
+	previewViolation,
 } from "@dokploy/server/services/permission";
 
 import { TRPCError } from "@trpc/server";
@@ -216,13 +220,18 @@ export const applicationRouter = createTRPCRouter({
 				input.serverId,
 			);
 
-			const domain = await createDomain({
+			const domain = isDomainAllowed(await getDomainRestriction(ctx), {
 				host,
-				port: 80,
 				https: false,
-				applicationId: newApplication.applicationId,
-				domainType: "application",
-			});
+			})
+				? await createDomain({
+						host,
+						port: 80,
+						https: false,
+						applicationId: newApplication.applicationId,
+						domainType: "application",
+					})
+				: null;
 
 			await audit(ctx, {
 				action: "create",
@@ -262,7 +271,7 @@ export const applicationRouter = createTRPCRouter({
 
 			return {
 				applicationId: newApplication.applicationId,
-				domainUrl: `http://${domain.host}`,
+				domainUrl: domain ? `http://${domain.host}` : null,
 			};
 		}),
 
@@ -819,6 +828,30 @@ export const applicationRouter = createTRPCRouter({
 				service: ["create"],
 			});
 			await assertServiceCredentialAccess(ctx.session, input);
+			await assertNoTraefikLabels(ctx, input.labelsSwarm, () =>
+				findApplicationById(input.applicationId),
+			);
+
+			if (
+				input.isPreviewDeploymentsActive !== undefined ||
+				input.previewWildcard !== undefined ||
+				input.previewHttps !== undefined ||
+				input.previewPath !== undefined
+			) {
+				const restriction = await getDomainRestriction(ctx);
+				if (restriction) {
+					const current = await findApplicationById(input.applicationId);
+					const message = previewViolation(restriction, {
+						active:
+							input.isPreviewDeploymentsActive ??
+							current.isPreviewDeploymentsActive,
+						wildcard: input.previewWildcard ?? current.previewWildcard,
+						https: input.previewHttps ?? current.previewHttps,
+						path: input.previewPath ?? current.previewPath,
+					});
+					if (message) throw new TRPCError({ code: "FORBIDDEN", message });
+				}
+			}
 
 			if (
 				input.previewWildcard !== undefined ||

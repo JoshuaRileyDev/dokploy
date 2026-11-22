@@ -7,6 +7,7 @@ import {
 	BlocksIcon,
 	BookIcon,
 	BotIcon,
+	Box,
 	Boxes,
 	ChevronRight,
 	ChevronsUpDown,
@@ -106,7 +107,6 @@ import { cn } from "@/lib/utils";
 import type { AppRouter } from "@/server/api/root";
 import { api } from "@/utils/api";
 import { TrialBanner } from "../dashboard/billing/trial-banner";
-import { TrialPlanPrompt } from "../dashboard/billing/trial-plan-prompt";
 import { AddOrganization } from "../dashboard/organization/handle-organization";
 import { DialogAction } from "../shared/dialog-action";
 import { Logo } from "../shared/logo";
@@ -216,6 +216,13 @@ export const MENU: Menu = {
 			url: "/dashboard/schedules",
 			icon: Clock,
 			isEnabled: ({ permissions }) => !!permissions?.organization.update,
+		},
+		{
+			isSingle: true,
+			title: "Sandboxes",
+			url: "/dashboard/sandboxes",
+			icon: Box,
+			isEnabled: ({ permissions }) => !!permissions?.sandbox.read,
 		},
 		{
 			isSingle: true,
@@ -1286,7 +1293,6 @@ export default function Page({ children }: Props) {
 			</Sidebar>
 			<SidebarInset>
 				{isCloud === true && <TrialBanner />}
-				{isCloud === true && <TrialPlanPrompt />}
 				{!includesProjects && (
 					<header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
 						<div className="flex items-center justify-between w-full px-4">

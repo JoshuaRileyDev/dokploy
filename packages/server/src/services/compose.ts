@@ -12,9 +12,12 @@ import {
 	getBuildComposeCommand,
 	getComposeConfigCommand,
 	getComposeRemoteBuildCommand,
+	getDeployedComposeConfigCommand,
 	getPushImagesCommand,
 	getRemoteImageRef,
+	getStartComposeCommand,
 	type PrebuiltImages,
+	parseDeployedComposeConfig,
 	resolveBuiltImages,
 	sanitizeImageTag,
 } from "@dokploy/server/utils/builders/compose";
@@ -773,23 +776,17 @@ export const removeCompose = async (
 export const startCompose = async (composeId: string) => {
 	const compose = await findComposeById(composeId);
 	try {
-		const { COMPOSE_PATH } = paths(!!compose.serverId);
-
-		const projectPath = join(COMPOSE_PATH, compose.appName, "code");
-		const path =
-			compose.sourceType === "raw" ? "docker-compose.yml" : compose.composePath;
-		const baseCommand = `env -i PATH="$PATH" docker compose -p ${quote([compose.appName])} -f ${quote([path])} up -d`;
 		if (compose.composeType === "docker-compose") {
-			if (compose.serverId) {
-				await execAsyncRemote(
-					compose.serverId,
-					`cd ${projectPath} && ${baseCommand}`,
-				);
-			} else {
-				await execAsync(baseCommand, {
-					cwd: projectPath,
-				});
-			}
+			const run = (command: string) =>
+				compose.serverId
+					? execAsyncRemote(compose.serverId, command)
+					: execAsync(command);
+			const { stdout } = await run(
+				getDeployedComposeConfigCommand(compose.appName),
+			);
+			await run(
+				getStartComposeCommand(compose, parseDeployedComposeConfig(stdout)),
+			);
 		}
 
 		await updateCompose(composeId, {

@@ -20,6 +20,7 @@ const FREE_TIER_RESOURCES = [
 	"api",
 	"telemetryProvider",
 	"workflow",
+	"sandbox",
 ];
 
 const ENTERPRISE_RESOURCES = [

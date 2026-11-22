@@ -33,7 +33,7 @@
 		"portless": "^0.15.6",
 		"tsx": "4.22.4"
 	},
-	"packageManager": "pnpm@10.22.0",
+	"packageManager": "pnpm@10.34.9",
 	"engines": {
 		"node": "^24.22.1",
 		"pnpm": ">=9.12.0"

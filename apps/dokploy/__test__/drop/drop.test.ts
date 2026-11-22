@@ -74,6 +74,9 @@ const baseApp: ApplicationNested = {
 	previewPort: 3000,
 	previewLimit: 0,
 	previewForwardAuthEnabled: false,
+	ssoAllowedEmails: null,
+	ssoAllowedGroups: null,
+	ssoAllowedEmailDomains: null,
 	previewWildcard: "",
 	environment: {
 		env: "",

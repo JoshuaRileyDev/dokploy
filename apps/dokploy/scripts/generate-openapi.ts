@@ -61,6 +61,7 @@ async function generateOpenAPI() {
 				"rollback",
 				"volumeBackups",
 				"environment",
+				"sandbox",
 			],
 		});
 
