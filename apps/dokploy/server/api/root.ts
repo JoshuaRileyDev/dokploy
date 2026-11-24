@@ -32,6 +32,7 @@ import { notificationRouter } from "./routers/notification";
 import { notificationTargetRouter } from "./routers/notification-target";
 import { organizationRouter } from "./routers/organization";
 import { overviewRouter } from "./routers/overview";
+import { ownershipTransferRouter } from "./routers/ownership-transfer";
 import { patchRouter } from "./routers/patch";
 import { portRouter } from "./routers/port";
 import { postgresRouter } from "./routers/postgres";
@@ -124,6 +125,7 @@ export const appRouter = createTRPCRouter({
 	vaultProvider: vaultProviderRouter,
 	ai: aiRouter,
 	organization: organizationRouter,
+	ownershipTransfer: ownershipTransferRouter,
 	licenseKey: licenseKeyRouter,
 	sso: ssoRouter,
 	scim: scimRouter,

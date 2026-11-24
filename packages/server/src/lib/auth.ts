@@ -28,6 +28,10 @@ import {
 	updateWebServerSettings,
 } from "../services/web-server-settings";
 import {
+	DISPOSABLE_EMAIL_MESSAGE,
+	isDisposableEmail,
+} from "../utils/disposable-email";
+import {
 	isWeakNewPassword,
 	STRONG_PASSWORD_MESSAGE,
 } from "../utils/password-validation";
@@ -126,7 +130,13 @@ const createBetterAuth = () =>
 			"/scim/list-provider-connections",
 			"/scim/get-provider-connection",
 			"/scim/delete-provider-connection",
-			...(!IS_CLOUD ? ["/verify-email"] : []),
+			...(!IS_CLOUD
+				? [
+						"/verify-email",
+						"/organization/update-member-role",
+						"/organization/invite-member",
+					]
+				: []),
 		],
 		secret: betterAuthSecret,
 		onAPIError: {
@@ -297,6 +307,11 @@ const createBetterAuth = () =>
 						if (context?.path.includes("/scim")) {
 							return { data: { emailVerified: true } };
 						}
+						if (IS_CLOUD && (await isDisposableEmail(_user.email))) {
+							throw new APIError("BAD_REQUEST", {
+								message: DISPOSABLE_EMAIL_MESSAGE,
+							});
+						}
 						if (!IS_CLOUD) {
 							const xDokployToken =
 								context?.request?.headers?.get("x-dokploy-token");
@@ -353,6 +368,7 @@ const createBetterAuth = () =>
 						if (!IS_CLOUD && !isAdminPresent) {
 							await updateWebServerSettings({
 								serverIp: await getPublicIpWithFallback(),
+								instanceOwnerId: user.id,
 							});
 						}
 
