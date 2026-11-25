@@ -24,6 +24,10 @@ import {
 import { createAuditLog } from "../services/proprietary/audit-log";
 import { resolveOrganizationDefaultRole } from "../services/proprietary/license-key";
 import {
+	isSensitiveActionAllowed,
+	SENSITIVE_VERIFICATION_REQUIRED,
+} from "../services/sensitive-action";
+import {
 	getWebServerSettings,
 	updateWebServerSettings,
 } from "../services/web-server-settings";
@@ -111,6 +115,34 @@ const recordSessionActivity = async (session: {
 	}
 };
 
+const SENSITIVE_AUTH_PATHS = [
+	"/organization/remove-member",
+	"/organization/cancel-invitation",
+	"/organization/leave",
+	"/organization/create-role",
+	"/organization/update-role",
+	"/organization/delete-role",
+	"/api-key/delete",
+	"/sso/update-provider",
+	"/sso/delete-provider",
+	"/passkey/generate-register-options",
+	"/passkey/verify-registration",
+	"/passkey/delete-passkey",
+	"/link-social",
+	"/unlink-account",
+	"/two-factor/enable",
+	"/two-factor/disable",
+	"/two-factor/get-totp-uri",
+	"/two-factor/generate-backup-codes",
+	"/change-password",
+];
+
+// Read-only, or only lowers privilege (an impersonated session can never pass the check).
+const UNGUARDED_ADMIN_PATHS = [
+	"/admin/list-users",
+	"/admin/stop-impersonating",
+];
+
 const createBetterAuth = () =>
 	betterAuth({
 		database: drizzleAdapter(db, {
@@ -194,6 +226,27 @@ const createBetterAuth = () =>
 					...(ctx.context.baseURL ? [new URL(ctx.context.baseURL).origin] : []),
 					...(await resolveTrustedOrigins()),
 				].filter(Boolean);
+
+				if (
+					SENSITIVE_AUTH_PATHS.includes(ctx.path) ||
+					(ctx.path.startsWith("/admin/") &&
+						!UNGUARDED_ADMIN_PATHS.includes(ctx.path))
+				) {
+					const current = await getSessionFromCtx(ctx);
+					// Calls without a cookie come from server-side auth.api.* usage, already guarded by tRPC.
+					if (
+						current &&
+						!(await isSensitiveActionAllowed({
+							sessionId: current.session.id,
+							// better-auth authenticates these routes by cookie only, so an x-api-key header must not exempt them.
+							isApiKeyRequest: false,
+						}))
+					) {
+						throw new APIError("FORBIDDEN", {
+							message: SENSITIVE_VERIFICATION_REQUIRED,
+						});
+					}
+				}
 
 				if (ctx.path === "/admin/remove-user") {
 					throw new APIError("FORBIDDEN", {
@@ -681,6 +734,8 @@ const _auth = {
 	generateSCIMToken: api.generateSCIMToken,
 	listSCIMProviderConnections: api.listSCIMProviderConnections,
 	deleteSCIMProviderConnection: api.deleteSCIMProviderConnection,
+	verifyPassword: api.verifyPassword,
+	verifyTOTP: api.verifyTOTP,
 };
 
 export type AuthType = typeof _auth;

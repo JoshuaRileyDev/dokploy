@@ -60,6 +60,7 @@ import { zfd } from "zod-form-data";
 import {
 	createTRPCRouter,
 	protectedProcedure,
+	requireSensitiveVerification,
 	withPermission,
 } from "@/server/api/trpc";
 import {
@@ -400,6 +401,7 @@ export const applicationRouter = createTRPCRouter({
 		}),
 
 	delete: protectedProcedure
+		.use(requireSensitiveVerification)
 		.input(apiFindOneApplication)
 		.mutation(async ({ input, ctx }) => {
 			await checkServiceAccess(ctx, input.applicationId, "delete");
