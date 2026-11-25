@@ -232,8 +232,12 @@ const createBetterAuth = () =>
 					(ctx.path.startsWith("/admin/") &&
 						!UNGUARDED_ADMIN_PATHS.includes(ctx.path))
 				) {
-					const current = await getSessionFromCtx(ctx);
-					// Calls without a cookie come from server-side auth.api.* usage, already guarded by tRPC.
+					// getSessionFromCtx would miss bearer (mobile) sessions here, since this hook runs before the bearer plugin's.
+					const current =
+						await globalForAuth.betterAuthInstance?.api.getSession({
+							headers: ctx.headers ?? new Headers(),
+						});
+					// Calls without a session come from server-side auth.api.* usage, already guarded by tRPC.
 					if (
 						current &&
 						!(await isSensitiveActionAllowed({

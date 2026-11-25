@@ -39,6 +39,9 @@ vi.mock("@dokploy/server/db", () => {
 });
 vi.mock("@dokploy/server/lib/auth", () => ({ validateRequest: vi.fn() }));
 vi.mock("@/server/api/utils/audit", () => ({ audit: vi.fn() }));
+vi.mock("@dokploy/server/services/sensitive-action", () => ({
+	isSensitiveActionAllowed: vi.fn(async () => true),
+}));
 
 const { applicationRouter } = await import("@/server/api/routers/application");
 const caller = applicationRouter.createCaller({
