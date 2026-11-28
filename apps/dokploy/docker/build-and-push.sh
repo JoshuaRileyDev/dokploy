@@ -23,15 +23,12 @@ if [[ ! -f apps/dokploy/.env.production ]]; then
 	printf 'Created apps/dokploy/.env.production from %s\n' "$EXAMPLE_ENV"
 fi
 
-# Docker's built-in builder pushes through containerd's HTTP client, which gives up
-# 30s after a layer is sent. The registry commits large layers to R2 more slowly
-# than that, so push from a standalone BuildKit, which waits for the response.
-# The workflow uses a fresh DOCKER_CONFIG per run, so keep builder state elsewhere.
-export BUILDX_CONFIG="${BUILDX_CONFIG:-$HOME/.docker/buildx}"
-BUILDER="${BUILDX_BUILDER:-dokploy-push}"
-if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
-	docker buildx create --name "$BUILDER" --driver docker-container >/dev/null
-fi
+# Build with the daemon's built-in builder. A standalone BuildKit container
+# (#45, for slow commits on the old R2-backed registry) keeps its state in a
+# Docker volume, and the Boat runner's per-minute snapshots stop and restart
+# such containers, killing the build mid-way. BUILDX_BUILDER can still pick
+# another builder.
+BUILDER="${BUILDX_BUILDER:-default}"
 
 docker buildx build \
 	--builder "$BUILDER" \
