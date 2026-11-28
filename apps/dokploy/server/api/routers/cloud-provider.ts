@@ -9,10 +9,12 @@ import {
 	findServerById,
 	findServerProvisioningInOrganization,
 	findServerProvisionings,
+	generateCloudServerKey,
 	getCloudCatalog,
 	getCloudProviderDefinition,
 	getServerCosts,
 	listCloudProviderDefinitions,
+	listExistingCloudServers,
 	redactCloudProviderAccount,
 	removeCloudProviderAccount,
 	resolveTestCredentials,
@@ -23,15 +25,20 @@ import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, withPermission } from "@/server/api/trpc";
 import { audit } from "@/server/api/utils/audit";
 import {
+	apiAdoptCloudServer,
 	apiCreateCloudProviderAccount,
 	apiFindOneCloudProviderAccount,
 	apiFindProvisioningByServer,
 	apiFindServerProvisioning,
+	apiGenerateCloudServerKey,
 	apiProvisionCloudServer,
 	apiTestCloudProviderAccount,
 	apiUpdateCloudProviderAccount,
 } from "@/server/db/schema";
-import { provisionCloudServer } from "@/server/utils/provision-server";
+import {
+	adoptExistingCloudServer,
+	provisionCloudServer,
+} from "@/server/utils/provision-server";
 
 const accountLabel = (account: { providerType: string; name: string }) =>
 	`${getCloudProviderDefinition(account.providerType).label} account ${account.name}`;
@@ -137,6 +144,37 @@ export const cloudProviderRouter = createTRPCRouter({
 		.input(apiProvisionCloudServer)
 		.mutation(({ ctx, input }) => provisionCloudServer(ctx, input)),
 
+	existingServers: withPermission("server", "create")
+		.input(apiFindOneCloudProviderAccount)
+		.query(async ({ ctx, input }) => {
+			const account = await findCloudProviderAccountInOrganization(
+				input.cloudProviderAccountId,
+				ctx.session.activeOrganizationId,
+			);
+			return listExistingCloudServers(account);
+		}),
+
+	// Only the public key is returned; the private key stays in Dokploy.
+	generateServerKey: withPermission("server", "create")
+		.input(apiGenerateCloudServerKey)
+		.mutation(async ({ ctx, input }) => {
+			const key = await generateCloudServerKey(
+				input.name,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "create",
+				resourceType: "sshKey",
+				resourceId: key.sshKeyId,
+				resourceName: key.name,
+			});
+			return key;
+		}),
+
+	adoptServer: withPermission("server", "create")
+		.input(apiAdoptCloudServer)
+		.mutation(({ ctx, input }) => adoptExistingCloudServer(ctx, input)),
+
 	costs: withPermission("server", "read").query(({ ctx }) =>
 		getServerCosts(ctx.session.activeOrganizationId),
 	),
@@ -172,6 +210,7 @@ export const cloudProviderRouter = createTRPCRouter({
 				});
 			}
 			if (
+				!provisioning.config.existing &&
 				!provisioning.serverId &&
 				provisioning.providerServerId &&
 				!provisioning.providerServerDeletedAt

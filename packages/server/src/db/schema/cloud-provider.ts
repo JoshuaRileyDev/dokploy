@@ -60,6 +60,8 @@ export interface ServerProvisioningConfig {
 	serverType: string;
 	image: string;
 	role: "deploy" | "build";
+	/** Set when an existing provider server was added instead of created. */
+	existing?: boolean;
 }
 
 export const serverProvisioning = pgTable(
@@ -175,6 +177,33 @@ export const apiProvisionCloudServer = z.object({
 	image: z.string().min(1),
 	role: z.enum(["deploy", "build"]).default("deploy"),
 });
+
+export const apiGenerateCloudServerKey = z.object({
+	name: z.string().trim().min(1).max(100),
+});
+
+export const apiAdoptCloudServer = z
+	.object({
+		cloudProviderAccountId: z.string().min(1),
+		providerServerId: z.string().min(1),
+		name: z.string().trim().min(1, "Name is required").max(100),
+		role: z.enum(["deploy", "build"]).default("deploy"),
+		sshKeyId: z.string().min(1, "Choose an SSH key"),
+		username: z.string().trim().min(1).default("root"),
+		port: z.number().int().min(1).max(65535).default(22),
+		/**
+		 * How the key gets onto the server: it's already there, Dokploy logs in
+		 * once with the password to add it, or the provider adds it.
+		 */
+		access: z.enum(["key", "password", "provider"]).default("key"),
+		// Used once to add the SSH key, never stored.
+		password: z.string().optional(),
+		runSetup: z.boolean().default(true),
+	})
+	.refine((input) => input.access !== "password" || !!input.password, {
+		message: "Enter the password",
+		path: ["password"],
+	});
 
 export const apiFindServerProvisioning = z.object({
 	serverProvisioningId: z.string().min(1),

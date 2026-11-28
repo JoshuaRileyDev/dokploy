@@ -236,4 +236,64 @@ describe("contabo adapter", () => {
 		).toBe(true);
 		expect(cloudProviders.contabo.removal).toBe("cancel");
 	});
+
+	it("lists the account's servers with their keys and specs", async () => {
+		mockContabo({
+			"GET /v1/compute/instances": () =>
+				json(
+					page([
+						{
+							instanceId: 7,
+							displayName: "",
+							name: "vmi7",
+							status: "running",
+							productId: "V153",
+							productName: "VPS 1 SSD",
+							region: "EU",
+							imageId: "u24",
+							cpuCores: 4,
+							ramMb: 8192,
+							diskMb: 102400,
+							sshKeys: [11, 12],
+							ipConfig: { v4: { ip: "203.0.113.7" }, v6: { ip: "" } },
+						},
+					]),
+				),
+		});
+
+		const servers = await client().listServers?.();
+
+		expect(servers).toEqual([
+			{
+				id: "7",
+				name: "vmi7",
+				status: "running",
+				ipv4: "203.0.113.7",
+				ipv6: null,
+				serverType: "V153",
+				serverTypeLabel: "VPS 1 SSD",
+				location: "EU",
+				image: "u24",
+				cores: 4,
+				memoryGb: 8,
+				diskGb: 100,
+				sshKeyIds: ["11", "12"],
+			},
+		]);
+		expect(cloudProviders.contabo.existingServers).toBe(true);
+	});
+
+	it("adds keys to an existing server through the password reset", async () => {
+		let body: Record<string, unknown> = {};
+		mockContabo({
+			"POST /v1/compute/instances/7/actions/resetPassword": (init) => {
+				body = JSON.parse(String(init?.body));
+				return json(page([{ instanceId: 7, action: "resetPassword" }]), 201);
+			},
+		});
+
+		await client().setServerSshKeys?.("7", ["11", "99"]);
+
+		expect(body).toEqual({ sshKeys: [11, 99] });
+	});
 });

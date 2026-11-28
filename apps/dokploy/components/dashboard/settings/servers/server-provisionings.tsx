@@ -33,6 +33,7 @@ export const isRunning = (status: Provisioning["status"]) =>
  * still billing, and this row is the only place it can be removed from.
  */
 export const hasOrphanedServer = (provisioning: Provisioning) =>
+	!provisioning.config.existing &&
 	provisioning.status === "failed" &&
 	!provisioning.serverId &&
 	!!provisioning.providerServerId &&
@@ -183,7 +184,11 @@ const ProvisioningRow = ({ provisioning }: { provisioning: Provisioning }) => {
 								{done && <Check className="size-3" />}
 								{active && <Loader2 className="size-3 animate-spin" />}
 								{errored && <X className="size-3" />}
-								<span className="truncate">{step.label}</span>
+								<span className="truncate">
+									{index === 0 && provisioning.config.existing
+										? "Add SSH key"
+										: step.label}
+								</span>
 							</span>
 						</li>
 					);

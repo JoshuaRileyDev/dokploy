@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
 	type CloudCatalog,
 	type CloudCredentials,
+	type CloudExistingServer,
 	type CloudLocation,
 	type CloudProviderClient,
 	type CloudProviderDefinition,
@@ -98,6 +99,9 @@ interface ContaboInstance {
 	cpuCores?: number;
 	ramMb?: number;
 	diskMb?: number;
+	region?: string;
+	imageId?: string | null;
+	sshKeys?: number[];
 	ipConfig?: { v4?: { ip?: string }; v6?: { ip?: string } };
 }
 
@@ -392,6 +396,43 @@ class ContaboClient implements CloudProviderClient {
 		};
 	}
 
+	async listServers(): Promise<CloudExistingServer[]> {
+		const instances = await this.listAll<ContaboInstance>(
+			"/v1/compute/instances",
+		);
+		return instances.map((instance) => {
+			const product = PRODUCTS.find((p) => p.id === instance.productId);
+			return {
+				id: String(instance.instanceId),
+				name:
+					instance.displayName || instance.name || String(instance.instanceId),
+				status: instance.status,
+				ipv4: instance.ipConfig?.v4?.ip || null,
+				ipv6: instance.ipConfig?.v6?.ip || null,
+				serverType: instance.productId ?? "",
+				serverTypeLabel:
+					instance.productName ?? product?.name ?? instance.productId ?? "",
+				location: instance.region ?? "",
+				image: instance.imageId ?? null,
+				cores: instance.cpuCores ?? null,
+				memoryGb: instance.ramMb ? Math.round(instance.ramMb / 1024) : null,
+				diskGb: instance.diskMb
+					? Math.round(instance.diskMb / 1024)
+					: (product?.diskGb ?? null),
+				sshKeyIds: (instance.sshKeys ?? []).map(String),
+			};
+		});
+	}
+
+	// Contabo's only way to change the keys of an installed server. It
+	// replaces the server's key list, so callers pass the keys it already has.
+	async setServerSshKeys(serverId: string, sshKeyIds: string[]) {
+		await this.request(
+			`/v1/compute/instances/${encodeURIComponent(serverId)}/actions/resetPassword`,
+			{ method: "POST", body: { sshKeys: sshKeyIds.map(Number) } },
+		);
+	}
+
 	async importSshKey(name: string, publicKey: string) {
 		const response = await this.request<Envelope<{ secretId: number }>>(
 			"/v1/secrets",
@@ -492,6 +533,9 @@ export const contabo: CloudProviderDefinition = {
 	credentialsHelpUrl: "https://my.contabo.com/api/details",
 	sshUsername: "root",
 	removal: "cancel",
+	existingServers: true,
+	addsSshKeys:
+		"Contabo adds the key through its password reset, which restarts the server and can remove keys you added to it by hand outside Contabo. It doesn't reinstall the server, so files and apps are kept.",
 	// New Contabo servers regularly take 10 to 20 minutes before they run.
 	bootTimeoutMs: 25 * 60_000,
 	createClient: (credentials) => new ContaboClient(credentials),
