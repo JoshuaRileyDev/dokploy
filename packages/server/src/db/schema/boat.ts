@@ -72,6 +72,18 @@ export const apiSaveBoatBuildSettings = z.object({
 	idleStopMinutes: z.number().int().min(1).max(240),
 });
 
+export const apiSetServiceBoatBuildPool = z
+	.object({
+		applicationId: z.string().min(1).optional(),
+		composeId: z.string().min(1).optional(),
+		enabled: z.boolean(),
+		// Defaults to the registry the service already has.
+		buildRegistryId: z.string().min(1).optional(),
+	})
+	.refine((input) => !!input.applicationId !== !!input.composeId, {
+		message: "Pass either applicationId or composeId",
+	});
+
 export const boatBuildMachineStatus = pgEnum("boatBuildMachineStatus", [
 	"provisioning",
 	"ready",

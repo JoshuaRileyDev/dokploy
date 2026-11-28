@@ -3,11 +3,13 @@ import path from "node:path";
 import { db } from "@dokploy/server/db";
 import {
 	type apiSaveBoatBuildSettings,
+	type apiSetServiceBoatBuildPool,
 	applications,
 	boatBuildMachines,
 	compose,
 	deployments,
 	legacyServerType,
+	registry,
 	server,
 	sshKeys,
 } from "@dokploy/server/db/schema";
@@ -694,4 +696,96 @@ export const recordBoatBuildFailure = async (
 	} else {
 		await updateApplicationStatus(target.serviceId, "error");
 	}
+};
+
+/**
+ * Points an application or compose service at the Boat build pool, or back to
+ * building on its deploy server. The pool only takes a service that has a
+ * registry, so one is required, and a dedicated build server is cleared since
+ * it would win over the pool.
+ */
+export const setServiceBoatBuildPool = async (
+	input: z.infer<typeof apiSetServiceBoatBuildPool>,
+	organizationId: string,
+) => {
+	const isCompose = !!input.composeId;
+	const service = isCompose
+		? await db.query.compose.findFirst({
+				where: eq(compose.composeId, input.composeId as string),
+				columns: { name: true, buildRegistryId: true },
+			})
+		: await db.query.applications.findFirst({
+				where: eq(applications.applicationId, input.applicationId as string),
+				columns: { name: true, buildRegistryId: true, sourceType: true },
+			});
+	if (!service) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Service not found" });
+	}
+
+	if (!input.enabled) {
+		const values = { boatBuildPool: false };
+		if (isCompose) {
+			await db
+				.update(compose)
+				.set(values)
+				.where(eq(compose.composeId, input.composeId as string));
+		} else {
+			await db
+				.update(applications)
+				.set(values)
+				.where(eq(applications.applicationId, input.applicationId as string));
+		}
+		return { name: service.name, boatBuildPool: false };
+	}
+
+	if ("sourceType" in service && service.sourceType === "docker") {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				"This application deploys a Docker image, so there's nothing to build",
+		});
+	}
+	const settings = await requireBoatSettings(organizationId);
+	if (!settings.buildsEnabled) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Turn on Boat builds in Settings → Boat first",
+		});
+	}
+	const buildRegistryId = input.buildRegistryId ?? service.buildRegistryId;
+	if (!buildRegistryId) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				"Pass buildRegistryId: builds on Boat are pushed to a registry the deploy server pulls from",
+		});
+	}
+	const buildRegistry = await db.query.registry.findFirst({
+		where: and(
+			eq(registry.registryId, buildRegistryId),
+			eq(registry.organizationId, organizationId),
+		),
+		columns: { registryId: true },
+	});
+	if (!buildRegistry) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Registry not found" });
+	}
+
+	const values = {
+		boatBuildPool: true,
+		buildServerId: null,
+		buildRegistryId,
+	};
+	if (isCompose) {
+		await db
+			.update(compose)
+			.set(values)
+			.where(eq(compose.composeId, input.composeId as string));
+	} else {
+		await db
+			.update(applications)
+			.set(values)
+			.where(eq(applications.applicationId, input.applicationId as string));
+	}
+	return { name: service.name, ...values };
 };

@@ -201,6 +201,16 @@ export const transferRouter = createTRPCRouter({
 			});
 		}),
 	planServer: protectedProcedure
+		// The REST generator can't express the nested newServer object as GET
+		// query parameters, and failing on it took down every REST route.
+		.meta({
+			openapi: {
+				path: "/transfer.planServer",
+				method: "GET",
+				override: true,
+				enabled: false,
+			},
+		})
 		.input(apiPlanServerMigration)
 		.query(async ({ input, ctx }) => {
 			await checkServerMigrationAccess(ctx, input, !!input.newServer);

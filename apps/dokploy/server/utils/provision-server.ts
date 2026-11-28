@@ -1,11 +1,15 @@
 import {
+	adoptCloudServer,
 	countInProgressProvisionings,
 	findServersByUserId,
 	findUserById,
 	IS_CLOUD,
 	startCloudServerProvisioning,
 } from "@dokploy/server";
-import type { apiProvisionCloudServer } from "@dokploy/server/db/schema";
+import type {
+	apiAdoptCloudServer,
+	apiProvisionCloudServer,
+} from "@dokploy/server/db/schema";
 import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 import { audit } from "@/server/api/utils/audit";
@@ -16,39 +20,65 @@ interface ProvisionCtx {
 	session: { activeOrganizationId: string };
 }
 
+// Jobs only register their server minutes later, so count them now or
+// back-to-back requests could all pass the check.
+const checkServerQuota = async (ctx: ProvisionCtx) => {
+	if (!IS_CLOUD) return;
+	const owner = await findUserById(ctx.user.ownerId);
+	const servers = await findServersByUserId(owner.id);
+	const pending = await countInProgressProvisionings(
+		ctx.session.activeOrganizationId,
+	);
+	if (servers.length + pending >= owner.serversQuantity) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "You cannot create more servers",
+		});
+	}
+};
+
+const afterServerCreated =
+	(ctx: ProvisionCtx, name: string, metadata: Record<string, string>) =>
+	async (serverId: string) => {
+		await applyDockerCleanupSchedule(
+			serverId,
+			ctx.session.activeOrganizationId,
+			true,
+		);
+		await audit(ctx, {
+			action: "create",
+			resourceType: "server",
+			resourceId: serverId,
+			resourceName: name,
+			metadata,
+		});
+	};
+
 /** Starts provisioning after the cloud plan's server quota check. */
 export const provisionCloudServer = async (
 	ctx: ProvisionCtx,
 	input: z.infer<typeof apiProvisionCloudServer>,
 ) => {
-	if (IS_CLOUD) {
-		const owner = await findUserById(ctx.user.ownerId);
-		const servers = await findServersByUserId(owner.id);
-		// Jobs only register their server minutes later, so count them now
-		// or back-to-back requests could all pass the check.
-		const pending = await countInProgressProvisionings(
-			ctx.session.activeOrganizationId,
-		);
-		if (servers.length + pending >= owner.serversQuantity) {
-			throw new TRPCError({
-				code: "BAD_REQUEST",
-				message: "You cannot create more servers",
-			});
-		}
-	}
-	const organizationId = ctx.session.activeOrganizationId;
+	await checkServerQuota(ctx);
 	return startCloudServerProvisioning(
 		input,
-		organizationId,
-		async (serverId) => {
-			await applyDockerCleanupSchedule(serverId, organizationId, true);
-			await audit(ctx, {
-				action: "create",
-				resourceType: "server",
-				resourceId: serverId,
-				resourceName: input.name,
-				metadata: { location: input.location },
-			});
-		},
+		ctx.session.activeOrganizationId,
+		afterServerCreated(ctx, input.name, { location: input.location }),
+	);
+};
+
+/** Adds a server already on a provider account, after the quota check. */
+export const adoptExistingCloudServer = async (
+	ctx: ProvisionCtx,
+	input: z.infer<typeof apiAdoptCloudServer>,
+) => {
+	await checkServerQuota(ctx);
+	return adoptCloudServer(
+		input,
+		ctx.session.activeOrganizationId,
+		afterServerCreated(ctx, input.name, {
+			providerServerId: input.providerServerId,
+			access: input.access,
+		}),
 	);
 };

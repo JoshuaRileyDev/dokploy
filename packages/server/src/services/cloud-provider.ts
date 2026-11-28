@@ -1,6 +1,7 @@
 import { db } from "@dokploy/server/db";
 import { isUniqueConstraintViolation } from "@dokploy/server/db/errors";
 import {
+	type apiAdoptCloudServer,
 	type apiCreateCloudProviderAccount,
 	type apiProvisionCloudServer,
 	cloudProviderAccount,
@@ -19,9 +20,9 @@ import {
 } from "@dokploy/server/utils/cloud-providers";
 import { generateSSHKey } from "@dokploy/server/utils/filesystem/ssh";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { Client } from "ssh2";
+import { Client, type ConnectConfig } from "ssh2";
 import type { z } from "zod";
 import { createServer } from "./server";
 
@@ -409,6 +410,7 @@ const waitForSsh = async (
 	privateKey: string,
 	onAttempt: (elapsedSeconds: number) => void,
 	timeoutMs = 5 * 60_000,
+	port = 22,
 ) => {
 	const startedAt = Date.now();
 	while (Date.now() - startedAt < timeoutMs) {
@@ -425,7 +427,7 @@ const waitForSsh = async (
 				})
 				.connect({
 					host,
-					port: 22,
+					port,
 					username,
 					privateKey,
 					readyTimeout: 15_000,
@@ -479,6 +481,52 @@ export const startCloudServerProvisioning = async (
 	);
 
 	return provisioning;
+};
+
+/** Runs Dokploy's server setup, mirroring its progress onto the job. */
+const installOnServer = async (
+	serverProvisioningId: string,
+	serverId: string,
+) => {
+	await updateProvisioning(serverProvisioningId, {
+		status: "installing",
+		serverId,
+		message: "Installing Docker, Traefik and build tools",
+	});
+
+	let setupFailed = false;
+	let lastLine = "";
+	await serverSetup(serverId, (data) => {
+		const text = String(data ?? "");
+		if (text.includes("❌")) setupFailed = true;
+		const line = text
+			.split("\n")
+			.map((part) =>
+				part
+					.replace(/[✅❌🔄]/gu, "")
+					.replace(/:\s*$/, "")
+					.trim(),
+			)
+			.filter(Boolean)
+			.pop();
+		if (line && line !== lastLine) {
+			lastLine = line;
+			void updateProvisioning(serverProvisioningId, {
+				message: line.slice(0, 500),
+			});
+		}
+	});
+
+	if (setupFailed) {
+		throw new Error(
+			`Server setup did not finish: ${lastLine || "see the server's deployment logs"}`,
+		);
+	}
+
+	await updateProvisioning(serverProvisioningId, {
+		status: "completed",
+		message: "Server is ready",
+	});
 };
 
 const runProvisioning = async (
@@ -582,43 +630,7 @@ const runProvisioning = async (
 			console.error("Post-create hook failed for provisioned server:", error),
 		);
 
-		await updateProvisioning(id, {
-			status: "installing",
-			serverId: dokployServerId,
-			message: "Installing Docker, Traefik and build tools",
-		});
-
-		let setupFailed = false;
-		let lastLine = "";
-		await serverSetup(dokployServerId, (data) => {
-			const text = String(data ?? "");
-			if (text.includes("❌")) setupFailed = true;
-			const line = text
-				.split("\n")
-				.map((part) =>
-					part
-						.replace(/[✅❌🔄]/gu, "")
-						.replace(/:\s*$/, "")
-						.trim(),
-				)
-				.filter(Boolean)
-				.pop();
-			if (line && line !== lastLine) {
-				lastLine = line;
-				void updateProvisioning(id, { message: line.slice(0, 500) });
-			}
-		});
-
-		if (setupFailed) {
-			throw new Error(
-				`Server setup did not finish: ${lastLine || "see the server's deployment logs"}`,
-			);
-		}
-
-		await updateProvisioning(id, {
-			status: "completed",
-			message: "Server is ready",
-		});
+		await installOnServer(id, dokployServerId);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Unknown error";
 
@@ -744,4 +756,388 @@ export const waitForServerProvisioning = async (
 		await new Promise((resolve) => setTimeout(resolve, pollMs));
 	}
 	throw new Error("Timed out waiting for the server to be provisioned");
+};
+
+const openSsh = (config: ConnectConfig) =>
+	new Promise<Client>((resolve, reject) => {
+		const client = new Client();
+		client
+			.once("ready", () => resolve(client))
+			.once("error", (error) => {
+				client.end();
+				reject(error);
+			});
+		if (config.password) {
+			// Servers that turn off plain password auth usually still accept the
+			// same password through keyboard-interactive.
+			client.on(
+				"keyboard-interactive",
+				(_name, _instr, _lang, prompts, finish) =>
+					finish(prompts.map(() => config.password as string)),
+			);
+		}
+		client.connect({
+			readyTimeout: 20_000,
+			tryKeyboard: !!config.password,
+			...config,
+		});
+	});
+
+const runSsh = (client: Client, command: string) =>
+	new Promise<{ code: number; output: string }>((resolve, reject) => {
+		client.exec(command, (error, stream) => {
+			if (error) return reject(error);
+			let output = "";
+			stream
+				.on("data", (data: Buffer) => {
+					output += data.toString();
+				})
+				.on("close", (code: number | null) =>
+					resolve({ code: code ?? 0, output }),
+				)
+				.stderr.on("data", (data: Buffer) => {
+					output += data.toString();
+				});
+		});
+	});
+
+const sshFailure = (error: unknown) => {
+	const message = error instanceof Error ? error.message : String(error);
+	if (/authentication methods failed/i.test(message))
+		return "login was refused";
+	if (/timed out/i.test(message)) return "the connection timed out";
+	if (/ECONNREFUSED/.test(message)) return "nothing is listening on that port";
+	if (/EHOSTUNREACH|ENETUNREACH|ENOTFOUND/.test(message)) {
+		return "the address can't be reached";
+	}
+	return message;
+};
+
+/** Appends the key to the user's authorized_keys unless it's already there. */
+const installPublicKey = async (
+	connection: ConnectConfig,
+	publicKey: string,
+) => {
+	const key = publicKey.trim();
+	if (!/^[A-Za-z0-9@.+/=_ -]+$/.test(key)) {
+		throw new Error("The SSH key's public key has unexpected characters");
+	}
+	const file = "~/.ssh/authorized_keys";
+	const command = [
+		"umask 077",
+		"mkdir -p ~/.ssh",
+		`touch ${file}`,
+		// Appending to a file without a final newline would join two keys.
+		`if [ -s ${file} ] && [ -n "$(tail -c1 ${file})" ]; then echo >> ${file}; fi`,
+		`grep -qxF '${key}' ${file} || echo '${key}' >> ${file}`,
+	].join(" && ");
+	const client = await openSsh(connection);
+	try {
+		const result = await runSsh(client, command);
+		if (result.code !== 0) {
+			throw new Error(
+				`Adding the key failed: ${result.output.trim() || `exit code ${result.code}`}`,
+			);
+		}
+	} finally {
+		client.end();
+	}
+};
+
+export const generateCloudServerKey = async (
+	name: string,
+	organizationId: string,
+) => {
+	const keys = await generateSSHKey("ed25519");
+	const [sshKey] = await db
+		.insert(sshKeys)
+		.values({
+			name,
+			description: "Generated by Dokploy to connect to an existing server",
+			publicKey: keys.publicKey,
+			privateKey: keys.privateKey,
+			organizationId,
+		})
+		.returning();
+	if (!sshKey) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "Failed to store the SSH key",
+		});
+	}
+	return {
+		sshKeyId: sshKey.sshKeyId,
+		name: sshKey.name,
+		publicKey: sshKey.publicKey,
+	};
+};
+
+const existingClientFor = (account: CloudProviderAccount) => {
+	const definition = getCloudProviderDefinition(account.providerType);
+	const client = clientFor(account);
+	if (!definition.existingServers || !client.listServers) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: `Existing ${definition.label} servers can't be added from here`,
+		});
+	}
+	return { definition, client, listServers: client.listServers.bind(client) };
+};
+
+/** Servers on the account, with the Dokploy server each is already registered as. */
+export const listExistingCloudServers = async (
+	account: CloudProviderAccount,
+) => {
+	const { listServers } = existingClientFor(account);
+	const providerServers = await listServers().catch((error) => {
+		throw toTRPCError(error, "Could not list servers");
+	});
+	const [registered, linked] = await Promise.all([
+		db.query.server.findMany({
+			where: eq(server.organizationId, account.organizationId),
+			columns: { serverId: true, name: true, ipAddress: true },
+		}),
+		db.query.serverProvisioning.findMany({
+			where: and(
+				eq(
+					serverProvisioning.cloudProviderAccountId,
+					account.cloudProviderAccountId,
+				),
+				isNotNull(serverProvisioning.serverId),
+			),
+			columns: { providerServerId: true, serverId: true },
+		}),
+	]);
+	return providerServers.map((providerServer) => {
+		const linkedServerId = linked.find(
+			(row) => row.providerServerId === providerServer.id,
+		)?.serverId;
+		const match = registered.find(
+			(candidate) =>
+				candidate.serverId === linkedServerId ||
+				(!!providerServer.ipv4 && candidate.ipAddress === providerServer.ipv4),
+		);
+		return {
+			...providerServer,
+			dokployServer: match
+				? { serverId: match.serverId, name: match.name }
+				: null,
+		};
+	});
+};
+
+/**
+ * Registers a server that already exists on the provider account. When the
+ * key is already on the server or a password is given, the login is checked
+ * before anything is saved; when the provider adds the key, that and the rest
+ * run in the background like provisioning.
+ */
+export const adoptCloudServer = async (
+	input: z.infer<typeof apiAdoptCloudServer>,
+	organizationId: string,
+	onServerCreated?: (serverId: string) => Promise<void>,
+) => {
+	const account = await findCloudProviderAccountInOrganization(
+		input.cloudProviderAccountId,
+		organizationId,
+	);
+	const { definition, client } = existingClientFor(account);
+	if (
+		input.access === "provider" &&
+		(!definition.addsSshKeys || !client.setServerSshKeys)
+	) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: `${definition.label} can't add SSH keys to existing servers`,
+		});
+	}
+	const providerServer = (await listExistingCloudServers(account)).find(
+		(candidate) => candidate.id === input.providerServerId,
+	);
+	if (!providerServer) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: `That server is no longer on the ${definition.label} account`,
+		});
+	}
+	if (providerServer.dokployServer) {
+		throw new TRPCError({
+			code: "CONFLICT",
+			message: `This server is already in Dokploy as ${providerServer.dokployServer.name}`,
+		});
+	}
+	const host = providerServer.ipv4;
+	if (!host) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "This server has no public IPv4 address",
+		});
+	}
+	if (providerServer.status !== "running") {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: `${definition.label} reports this server as ${providerServer.status}. Start it first.`,
+		});
+	}
+
+	const sshKey = await db.query.sshKeys.findFirst({
+		where: and(
+			eq(sshKeys.sshKeyId, input.sshKeyId),
+			eq(sshKeys.organizationId, organizationId),
+		),
+	});
+	if (!sshKey) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "SSH key not found" });
+	}
+
+	const target = `${input.username}@${host}${input.port === 22 ? "" : `:${input.port}`}`;
+	const connection = { host, port: input.port, username: input.username };
+
+	if (input.access === "password") {
+		await installPublicKey(
+			{ ...connection, password: input.password },
+			sshKey.publicKey,
+		).catch((error) => {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: `Could not add the key to ${target} with the password: ${sshFailure(error)}`,
+			});
+		});
+	}
+	if (input.access !== "provider") {
+		await openSsh({ ...connection, privateKey: sshKey.privateKey })
+			.then((ssh) => ssh.end())
+			.catch((error) => {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message:
+						input.access === "password"
+							? `The key was added, but logging in to ${target} with it failed: ${sshFailure(error)}`
+							: `Could not log in to ${target} with ${sshKey.name}: ${sshFailure(error)}. Add its public key to ~/.ssh/authorized_keys on the server, or choose another way to add it.`,
+				});
+			});
+	}
+
+	const [provisioning] = await db
+		.insert(serverProvisioning)
+		.values({
+			cloudProviderAccountId: account.cloudProviderAccountId,
+			organizationId,
+			providerType: account.providerType,
+			status:
+				input.access === "provider" ? "creating_server" : "waiting_for_ssh",
+			message:
+				input.access === "provider"
+					? `Asking ${definition.label} to add the SSH key`
+					: "Connected over SSH",
+			providerServerId: providerServer.id,
+			ipAddress: host,
+			config: {
+				name: input.name,
+				location: providerServer.location,
+				serverType: providerServer.serverTypeLabel || providerServer.serverType,
+				image: providerServer.image ?? "",
+				role: input.role,
+				existing: true,
+			},
+		})
+		.returning();
+	if (!provisioning) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "Failed to save the server",
+		});
+	}
+	const id = provisioning.serverProvisioningId;
+
+	const finish = async () => {
+		if (input.access === "provider") {
+			const providerSshKeyId = await client.importSshKey(
+				`dokploy-${input.name.replace(/[^a-zA-Z0-9-]/g, "-")}-${nanoid(6)}`,
+				sshKey.publicKey,
+			);
+			await updateProvisioning(id, { providerSshKeyId });
+			await client.setServerSshKeys?.(providerServer.id, [
+				...providerServer.sshKeyIds,
+				providerSshKeyId,
+			]);
+			await updateProvisioning(id, {
+				message: `Waiting for ${definition.label} to restart the server`,
+			});
+			await waitForRunning(client, providerServer.id, definition.bootTimeoutMs);
+			await updateProvisioning(id, {
+				status: "waiting_for_ssh",
+				message: `Waiting for the key to work on ${host}`,
+			});
+			await waitForSsh(
+				host,
+				input.username,
+				sshKey.privateKey,
+				(elapsed) => {
+					void updateProvisioning(id, {
+						message: `Waiting for the key to work on ${host} (${elapsed}s)`,
+					});
+				},
+				15 * 60_000,
+				input.port,
+			);
+		}
+
+		const dokployServer = await createServer(
+			{
+				name: input.name,
+				description: `${definition.label} ${providerServer.serverTypeLabel || providerServer.serverType} in ${providerServer.location}`,
+				ipAddress: host,
+				port: input.port,
+				username: input.username,
+				sshKeyId: sshKey.sshKeyId,
+				serverType: input.role,
+				enableDockerCleanup: true,
+			},
+			organizationId,
+		);
+		await updateProvisioning(id, {
+			serverId: dokployServer.serverId,
+			...(!input.runSetup && {
+				status: "completed",
+				message: "Added without running setup",
+			}),
+		});
+		await onServerCreated?.(dokployServer.serverId).catch((error) =>
+			console.error("Post-create hook failed for added server:", error),
+		);
+		if (input.runSetup) {
+			await installOnServer(id, dokployServer.serverId);
+		}
+		return dokployServer.serverId;
+	};
+
+	const run = finish().catch(async (error) => {
+		const message = error instanceof Error ? error.message : "Unknown error";
+		const current = await db.query.serverProvisioning.findFirst({
+			where: eq(serverProvisioning.serverProvisioningId, id),
+			columns: { serverId: true },
+		});
+		// This server was the user's before Dokploy touched it, so a failure
+		// never deletes or cancels it.
+		await updateProvisioning(id, {
+			status: "failed",
+			error: current?.serverId
+				? `${message}. Open the server and run Setup Server to retry.`
+				: `${message}. The server on ${definition.label} wasn't changed by Dokploy beyond the SSH key; dismiss this and try again.`,
+		});
+		throw error;
+	});
+
+	// With the login already proven, registering is quick, so the caller
+	// learns about a failure there; setup and provider key changes carry on.
+	if (input.access !== "provider" && !input.runSetup) {
+		await run;
+	} else {
+		void run.catch((error) =>
+			console.error("Adding an existing cloud server failed:", error),
+		);
+	}
+
+	return provisioning;
 };

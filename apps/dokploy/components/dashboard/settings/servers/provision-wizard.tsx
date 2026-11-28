@@ -8,6 +8,7 @@ import {
 	Loader2,
 	MemoryStick,
 	Plus,
+	Server,
 	SlidersHorizontal,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -229,11 +230,14 @@ export const ProvisionWizard = ({
 	onShowProgress,
 	onProvisioned,
 	onConfigureManually,
+	onUseExisting,
 }: {
 	hasProvisionings: boolean;
 	onShowProgress: () => void;
 	onProvisioned: () => void;
 	onConfigureManually: (selection: ServerSelection) => void;
+	/** Shown when a connected provider can add servers already on the account. */
+	onUseExisting?: () => void;
 }) => {
 	const utils = api.useUtils();
 	const { data, isPending, error } = api.cloudProvider.compare.useQuery(
@@ -551,6 +555,17 @@ export const ProvisionWizard = ({
 						<DialogDescription>{titles[step].description}</DialogDescription>
 					</div>
 					<div className="flex shrink-0 items-center gap-2 pr-6">
+						{onUseExisting && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={onUseExisting}
+								className="h-8"
+							>
+								<Server className="size-4" />
+								<span className="sr-only sm:not-sr-only">Existing server</span>
+							</Button>
+						)}
 						{hasProvisionings && (
 							<Button
 								variant="ghost"

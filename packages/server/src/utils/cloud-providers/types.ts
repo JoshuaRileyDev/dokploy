@@ -131,6 +131,25 @@ export interface CloudVolume {
 	server: { id: string; ipv4: string | null; ipv6: string | null } | null;
 }
 
+/** A server already on the provider account, for adding it to Dokploy. */
+export interface CloudExistingServer {
+	id: string;
+	name: string;
+	/** The provider's raw status, e.g. "running". */
+	status: string;
+	ipv4: string | null;
+	ipv6: string | null;
+	serverType: string;
+	serverTypeLabel: string;
+	location: string;
+	image: string | null;
+	cores: number | null;
+	memoryGb: number | null;
+	diskGb: number | null;
+	/** Provider SSH key IDs already attached to the server. */
+	sshKeyIds: string[];
+}
+
 export interface CreateCloudServerInput {
 	name: string;
 	location: string;
@@ -156,6 +175,13 @@ export interface CloudProviderClient {
 	listServerCosts?(): Promise<CloudCostReport>;
 	/** Optional: providers without block storage are skipped. */
 	listVolumes?(): Promise<CloudVolume[]>;
+	/** Required when the definition sets `existingServers`. */
+	listServers?(): Promise<CloudExistingServer[]>;
+	/**
+	 * Required when the definition sets `addsSshKeys`. Puts these provider
+	 * SSH keys on an existing server; the change may land after it returns.
+	 */
+	setServerSshKeys?(serverId: string, sshKeyIds: string[]): Promise<void>;
 }
 
 export interface CloudProviderDefinition {
@@ -173,6 +199,16 @@ export interface CloudProviderDefinition {
 	 * throwing away a month that's already billed. Defaults to "delete".
 	 */
 	removal?: "delete" | "cancel";
+	/**
+	 * Servers already on the account can be picked and added to Dokploy
+	 * instead of creating one. The client must implement `listServers`.
+	 */
+	existingServers?: boolean;
+	/**
+	 * Set when the provider can add an SSH key to an existing server; says
+	 * what that does to the server, for the confirmation shown first.
+	 */
+	addsSshKeys?: string;
 	/** How long a new server may take to start. Defaults to five minutes. */
 	bootTimeoutMs?: number;
 	/**

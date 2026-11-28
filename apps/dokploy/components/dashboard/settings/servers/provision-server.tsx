@@ -43,6 +43,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { api, type RouterOutputs } from "@/utils/api";
 import { defaultImage } from "./default-image";
+import { ExistingServer } from "./existing-server";
 import { ProvisionWizard, type ServerSelection } from "./provision-wizard";
 import {
 	hasOrphanedServer,
@@ -83,6 +84,7 @@ type Step =
 			provider: ProviderDefinition;
 			initial?: ServerSelection;
 	  }
+	| { kind: "existing" }
 	| { kind: "progress" };
 
 export const ProvisionServer = () => {
@@ -96,6 +98,11 @@ export const ProvisionServer = () => {
 	const { data: accounts } = api.cloudProvider.all.useQuery(undefined, {
 		enabled: isOpen,
 	});
+
+	const existingAccounts = (accounts ?? []).filter(
+		(account) =>
+			providers?.find((p) => p.type === account.providerType)?.existingServers,
+	);
 
 	const onOpenChange = (open: boolean) => {
 		setIsOpen(open);
@@ -123,7 +130,9 @@ export const ProvisionServer = () => {
 			<DialogContent
 				className={cn(
 					"max-h-[92vh] overflow-y-auto",
-					step.kind === "configure" ? "sm:max-w-3xl" : "sm:max-w-2xl",
+					step.kind === "configure" || step.kind === "existing"
+						? "sm:max-w-3xl"
+						: "sm:max-w-2xl",
 				)}
 			>
 				{step.kind === "browse" && (
@@ -131,6 +140,11 @@ export const ProvisionServer = () => {
 						hasProvisionings={provisionings.length > 0}
 						onShowProgress={() => setStep({ kind: "progress" })}
 						onProvisioned={() => setStep({ kind: "progress" })}
+						onUseExisting={
+							existingAccounts.length > 0
+								? () => setStep({ kind: "existing" })
+								: undefined
+						}
 						onConfigureManually={(selection) => {
 							const provider = providers?.find(
 								(p) => p.type === selection.providerType,
@@ -152,6 +166,14 @@ export const ProvisionServer = () => {
 						}
 						onBack={() => setStep({ kind: "browse" })}
 						onProvisioned={() => setStep({ kind: "progress" })}
+					/>
+				)}
+				{step.kind === "existing" && (
+					<ExistingServer
+						providers={providers ?? []}
+						accounts={existingAccounts}
+						onBack={() => setStep({ kind: "browse" })}
+						onAdded={() => setStep({ kind: "progress" })}
 					/>
 				)}
 				{step.kind === "progress" && (
