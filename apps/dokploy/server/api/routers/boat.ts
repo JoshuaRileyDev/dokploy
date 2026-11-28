@@ -12,9 +12,13 @@ import {
 	saveBoatBuildSettings,
 	saveBoatConnection,
 	saveBoatWorkflowSettings,
+	setServiceBoatBuildPool,
 	startBoatSnapshotBuild,
 } from "@dokploy/server";
-import { resolvePermissions } from "@dokploy/server/services/permission";
+import {
+	checkServicePermissionAndAccess,
+	resolvePermissions,
+} from "@dokploy/server/services/permission";
 import { TRPCError } from "@trpc/server";
 import {
 	createTRPCRouter,
@@ -27,6 +31,7 @@ import {
 	apiSaveBoatBuildSettings,
 	apiSaveBoatConnection,
 	apiSaveBoatWorkflowSettings,
+	apiSetServiceBoatBuildPool,
 } from "@/server/db/schema";
 
 // Boat machines run repository code with the organization's credentials, so like workflows this is self-hosted only.
@@ -141,5 +146,27 @@ export const boatRouter = createTRPCRouter({
 				resourceId: input.serverId,
 				resourceName: "Boat build machine",
 			});
+		}),
+	// Same access as editing the service's build server in its Advanced tab.
+	setServiceBuildPool: protectedProcedure
+		.input(apiSetServiceBoatBuildPool)
+		.mutation(async ({ input, ctx }) => {
+			assertSelfHosted();
+			const serviceId = (input.applicationId ?? input.composeId) as string;
+			await checkServicePermissionAndAccess(ctx, serviceId, {
+				service: ["create"],
+			});
+			const result = await setServiceBoatBuildPool(
+				input,
+				ctx.session.activeOrganizationId,
+			);
+			await audit(ctx, {
+				action: "update",
+				resourceType: input.composeId ? "compose" : "application",
+				resourceId: serviceId,
+				resourceName: result.name,
+				metadata: { boatBuildPool: input.enabled },
+			});
+			return result;
 		}),
 });
